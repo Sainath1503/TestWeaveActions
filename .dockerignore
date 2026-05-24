@@ -1,0 +1,7 @@
+target/
+.git/
+.idea/
+.vscode/
+temp/
+TestSuites/Reports/
+**/*.log

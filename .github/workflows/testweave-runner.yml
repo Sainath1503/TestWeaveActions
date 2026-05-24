@@ -26,7 +26,17 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Build TestWeave runner
-        run: mvn -q -DskipTests package
+        run: |
+          rm -rf target
+          mvn -q -DskipTests package
+      - name: Verify TestWeave runner jar
+        run: |
+          jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
+          unzip -p target/api-validator-1.0-SNAPSHOT.jar META-INF/MANIFEST.MF | grep 'Multi-Release: true'
+      - name: Check TestWeave suite file
+        run: |
+          test -f "${{ inputs.suite_file }}"
+          ls -l "${{ inputs.suite_file }}"
       - name: Run TestWeave suite
         run: |
           java -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
@@ -35,7 +45,8 @@ jobs:
             --threads "${{ inputs.threads }}" \
             --report target/testweave-report
       - name: Upload TestWeave report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: testweave-report
-          path: target/testweave-report
+          path: target/testweave-report/**

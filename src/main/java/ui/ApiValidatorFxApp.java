@@ -1156,7 +1156,6 @@ public class ApiValidatorFxApp extends Application {
                         "Deploy TestWeave GitHub Actions workflow");
                 githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
                         "Update TestWeave test suite workbook");
-                syncLatestLocalTestSuiteReportToGithub();
                 return null;
             }
         };
@@ -1184,7 +1183,6 @@ public class ApiValidatorFxApp extends Application {
                         "Update TestWeave GitHub Actions workflow before run");
                 githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
                         "Update TestWeave test suite workbook before run");
-                syncLatestLocalTestSuiteReportToGithub();
                 JSONObject inputs = new JSONObject()
                         .put("suite_file", "testweave/test-suite.xlsx")
                         .put("parallel", String.valueOf(testSuiteParallelExecutionCheck.isSelected()))
@@ -1346,16 +1344,6 @@ public class ApiValidatorFxApp extends Application {
     private void syncGithubFileIfPresent(Path file, String githubPath) throws Exception {
         if (Files.exists(file) && Files.isRegularFile(file)) {
             githubPutFile(githubPath, Files.readAllBytes(file), "Sync TestWeave container setup");
-        }
-    }
-
-    private void syncLatestLocalTestSuiteReportToGithub() throws Exception {
-        Path reportPath = lastTestSuiteReportPath != null && Files.exists(lastTestSuiteReportPath)
-                ? lastTestSuiteReportPath
-                : latestTestSuiteReportPath();
-        if (reportPath != null && Files.exists(reportPath)) {
-            githubPutFile("testweave/reference-report.html", Files.readAllBytes(reportPath),
-                    "Update latest local TestWeave reference report");
         }
     }
 

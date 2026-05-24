@@ -1,0 +1,42 @@
+{
+  "variables": [
+    {
+      "name": "root_0_.aisle",
+      "jsonPath": "$[0].aisle",
+      "type": "string",
+      "value": "1236"
+    },
+    {
+      "name": "root_0_.book_name",
+      "jsonPath": "$[0].book_name",
+      "type": "string",
+      "value": "RestAssured SBA Assesment"
+    },
+    {
+      "name": "root_0_.isbn",
+      "jsonPath": "$[0].isbn",
+      "type": "string",
+      "value": "ABCDEF"
+    },
+    {
+      "name": "root_1_.aisle",
+      "jsonPath": "$[1].aisle",
+      "type": "string",
+      "value": "8911"
+    },
+    {
+      "name": "root_1_.book_name",
+      "jsonPath": "$[1].book_name",
+      "type": "string",
+      "value": "RestAssured SBA Assesment2"
+    },
+    {
+      "name": "root_1_.isbn",
+      "jsonPath": "$[1].isbn",
+      "type": "string",
+      "value": "SKLDJD"
+    }
+  ],
+  "format": "api-validator-response-variables",
+  "version": 1
+}

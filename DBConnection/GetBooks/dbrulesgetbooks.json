@@ -1,0 +1,20 @@
+[
+  {
+    "apiField": "isbn",
+    "description": "ISBN Should Match",
+    "operator": "=",
+    "dbColumn": "isbn"
+  },
+  {
+    "apiField": "aisle",
+    "description": "Aisle Should Match",
+    "operator": "=",
+    "dbColumn": "aisle"
+  },
+  {
+    "apiField": "book_name",
+    "description": "BookName Should Match",
+    "operator": "=",
+    "dbColumn": "book_name"
+  }
+]

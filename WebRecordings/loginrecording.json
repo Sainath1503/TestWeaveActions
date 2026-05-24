@@ -1,0 +1,83 @@
+{
+  "startUrl": "https://rahulshettyacademy.com/loginpagePractise/",
+  "steps": [
+    {
+      "note": "page loaded",
+      "suggested": false,
+      "action": "Navigate",
+      "selector": "",
+      "value": "https://rahulshettyacademy.com/loginpagePractise/"
+    },
+    {
+      "note": "",
+      "suggested": false,
+      "action": "Click",
+      "selector": "#username",
+      "value": ""
+    },
+    {
+      "note": "",
+      "suggested": false,
+      "action": "Type",
+      "selector": "#username",
+      "value": "Sainath"
+    },
+    {
+      "note": "",
+      "suggested": false,
+      "action": "Click",
+      "selector": "#password",
+      "value": ""
+    },
+    {
+      "note": "password input",
+      "suggested": false,
+      "action": "Type",
+      "selector": "#password",
+      "value": "Sai@ss15031993"
+    },
+    {
+      "note": "Student\nTeacher\nConsultant",
+      "suggested": false,
+      "action": "Click",
+      "selector": "select.form-control",
+      "value": ""
+    },
+    {
+      "note": "I Agree to the terms and conditions",
+      "suggested": false,
+      "action": "Click",
+      "selector": "label.text-info",
+      "value": ""
+    },
+    {
+      "note": "",
+      "suggested": false,
+      "action": "Click",
+      "selector": "#terms",
+      "value": ""
+    },
+    {
+      "note": "",
+      "suggested": false,
+      "action": "Validate Text",
+      "selector": "//*[@id=\"login-form\"]/div[6]/label/span[2]/a",
+      "value": "terms and conditions"
+    },
+    {
+      "note": "",
+      "suggested": false,
+      "action": "Click",
+      "selector": "#signInBtn",
+      "value": ""
+    },
+    {
+      "note": "Incorrect username/password.",
+      "suggested": false,
+      "action": "Click",
+      "selector": "div.alert.alert-danger",
+      "value": ""
+    }
+  ],
+  "testName": "Login Flow Test"
+}

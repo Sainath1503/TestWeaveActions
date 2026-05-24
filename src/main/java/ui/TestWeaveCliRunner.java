@@ -1,7 +1,12 @@
 package ui;
 
+import compare.JsonComparator;
 import model.ApiRequest;
 import model.ApiResponse;
+import model.DbConnectionConfig;
+import model.DbValidationReport;
+import model.DbValidationResult;
+import model.DbValidationRule;
 import model.PerformanceTestResult;
 import model.WebTestCase;
 import model.WebTestExecutionResult;
@@ -9,7 +14,9 @@ import model.WebTestRunReport;
 import model.WebTestStep;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 import service.ApiService;
+import service.DbValidationService;
 import service.PerformanceTestService;
 import service.PlaywrightRecorderController;
 
@@ -24,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Matcher;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -40,9 +48,12 @@ public class TestWeaveCliRunner {
             "DB_COLUMN_VALIDATION", "WEB_TEST", "PERFORMANCE_TEST", "Run", "Execution Mode", "Status");
 
     private final ApiService apiService = new ApiService();
+    private final JsonComparator comparator = new JsonComparator();
+    private final DbValidationService dbValidationService = new DbValidationService();
     private final PerformanceTestService performanceTestService = new PerformanceTestService();
     private final PlaywrightRecorderController playwrightRecorderController = new PlaywrightRecorderController();
     private final AtomicBoolean failed = new AtomicBoolean(false);
+    private Path suitePath;
 
     public static void main(String[] args) throws Exception {
         configureCiLogging();
@@ -59,6 +70,7 @@ public class TestWeaveCliRunner {
     private void run(String[] args) throws Exception {
         Map<String, String> options = parseArgs(args);
         Path suite = Path.of(options.getOrDefault("suite", "testweave/test-suite.xlsx"));
+        suitePath = suite;
         boolean parallel = Boolean.parseBoolean(options.getOrDefault("parallel", "false"));
         int threads = Math.max(1, Integer.parseInt(options.getOrDefault("threads", "1")));
         Path reportDir = Path.of(options.getOrDefault("report", "target/testweave-report"));
@@ -116,17 +128,30 @@ public class TestWeaveCliRunner {
             } else if (!row.getOrDefault("Hit Request", "").isBlank()) {
                 ApiResponse response = apiService.sendRequest(buildRequest(row));
                 boolean passed = response.statusCode < 400;
+                if (hasValidationColumns(row)) {
+                    Map<String, String> variables = new LinkedHashMap<>();
+                    runApiFieldValidation(row, response.rawBody, variables, result);
+                    runJsonCompare(row, response.rawBody, result);
+                    runDbValidation(row, response.rawBody, variables, result);
+                    passed = passed && validationsPassed(result);
+                } else {
+                    addValidation(result, "HTTP", "Status Code", "Success (<400)",
+                            String.valueOf(response.statusCode), passed, "HTTP " + response.statusCode);
+                }
                 result.put("Status", passed ? "Passed" : "Failed");
                 result.put("Message", "HTTP " + response.statusCode + ", duration: " + response.timeMs + " ms");
                 failed.compareAndSet(false, !passed);
             } else {
                 result.put("Status", "Passed");
                 result.put("Message", "Manual step completed.");
+                addValidation(result, "Manual Step", "Manual", "", "Completed", true, "Manual step completed.");
             }
         } catch (Exception e) {
             failed.set(true);
             result.put("Status", "Failed");
             result.put("Message", e.getMessage());
+            addValidation(result, "Step Error", "Execution failed", "", "", false,
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
         result.put("Finished", LocalDateTime.now().toString());
         return result;
@@ -135,6 +160,11 @@ public class TestWeaveCliRunner {
     private void executeWebTest(Map<String, String> row, Map<String, String> result) throws Exception {
         WebTestRunReport webReport = playwrightRecorderController.runTest(buildWebTestCase(row), webHeadless(row), webSlowMo(row));
         boolean passed = webReport.failed == 0 && webReport.total > 0;
+        for (WebTestExecutionResult stepResult : webReport.results) {
+            addValidation(result, stepResult.action, nullToBlank(stepResult.selector),
+                    nullToBlank(stepResult.expectedValue), stepResult.passed ? "PASS" : "FAIL",
+                    stepResult.passed, nullToBlank(stepResult.message));
+        }
         result.put("Status", passed ? "Passed" : "Failed");
         result.put("Message", "Web steps executed: " + webReport.total
                 + ", passed: " + webReport.passed + ", failed: " + webReport.failed
@@ -203,12 +233,157 @@ public class TestWeaveCliRunner {
                 Math.max(1, performance.optInt("threads", 1)),
                 Math.max(1, performance.optInt("iterationsPerThread", 1)));
         boolean passed = performanceResult.errors == 0;
+        addValidation(result, "Performance Test",
+                Math.max(1, performance.optInt("threads", 1)) + " threads x "
+                        + Math.max(1, performance.optInt("iterationsPerThread", 1)) + " iterations",
+                "0 errors", performanceResult.errors + " errors / " + performanceResult.samples + " samples",
+                passed, "HTML report generated: " + nullToBlank(performanceResult.reportIndexPath == null
+                        ? "" : performanceResult.reportIndexPath.toString()));
         result.put("Status", passed ? "Passed" : "Failed");
         result.put("Message", "Performance samples: " + performanceResult.samples
                 + ", errors: " + performanceResult.errors
                 + ", report: " + nullToBlank(performanceResult.reportIndexPath == null
                 ? "" : performanceResult.reportIndexPath.toString()));
         failed.compareAndSet(false, !passed);
+    }
+
+    private boolean hasValidationColumns(Map<String, String> row) {
+        return !row.getOrDefault("API_FIELD_VALIDATION", "").isBlank()
+                || !row.getOrDefault("JSON_COMPARE", "").isBlank()
+                || !row.getOrDefault("DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("DB_CONNECTION", "").isBlank()
+                || !row.getOrDefault("DB_QUERY", "").isBlank()
+                || !row.getOrDefault("API_DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("DB_COLUMN_VALIDATION", "").isBlank();
+    }
+
+    private void runApiFieldValidation(Map<String, String> row, String responseBody,
+                                       Map<String, String> variables, Map<String, String> result) {
+        String validationJson = row.getOrDefault("API_FIELD_VALIDATION", "");
+        if (validationJson.isBlank()) {
+            return;
+        }
+        JSONArray validations = parseOptionalJsonObject(validationJson).optJSONArray("validations");
+        if (validations == null) {
+            validations = parseOptionalJsonArray(validationJson);
+        }
+        Object responseJson = responseBody == null || responseBody.isBlank()
+                ? new JSONObject()
+                : new JSONTokener(responseBody).nextValue();
+        for (int i = 0; i < validations.length(); i++) {
+            JSONObject validation = validations.optJSONObject(i);
+            if (validation == null) {
+                continue;
+            }
+            String path = validation.optString("jsonPath");
+            Object actual = extractJsonPathValue(responseJson, path);
+            String actualValue = actual == null || actual == JSONObject.NULL ? "" : String.valueOf(actual);
+            String actualType = jsonValueType(actual);
+            String nullRule = validation.optString("nullValidation");
+            String typeRule = validation.optString("typeValidation");
+            String expected = resolveRunnerVariables(validation.optString("expectedValueOrVariable"), variables);
+            List<String> errors = fieldValidationErrors(actualType, actualValue, nullRule, typeRule, expected);
+            boolean passed = errors.isEmpty();
+            addValidation(result, path, "Null: " + nullRule + ", Type: " + typeRule,
+                    expected, actualValue, passed, String.join(", ", errors));
+        }
+    }
+
+    private void runJsonCompare(Map<String, String> row, String responseBody, Map<String, String> result) throws Exception {
+        String compareJson = row.getOrDefault("JSON_COMPARE", "");
+        if (compareJson.isBlank()) {
+            return;
+        }
+        JSONObject config = new JSONObject(compareJson);
+        JSONObject expectedResponse = config.optJSONObject("expectedResponse");
+        if (expectedResponse == null) {
+            addValidation(result, "JSON_COMPARE", "JSON Compare", "", "",
+                    false, "JSON_COMPARE step does not contain expectedResponse details.");
+            return;
+        }
+        Path expectedPath = resolveWorkbookRelativePath(suitePath,
+                expectedResponse.optString("path"), expectedResponse.optString("relativePath"));
+        String expected = Files.readString(expectedPath, StandardCharsets.UTF_8);
+        boolean strict = "STRICT".equalsIgnoreCase(config.optString("compareMode"))
+                || "Strict".equalsIgnoreCase(config.optString("compareMode"));
+        List<Object[]> compareResults = comparator.compare(expected, responseBody, strict, true);
+        for (Object[] compareResult : compareResults) {
+            String type = valueAt(compareResult, 0);
+            boolean passed = "Match".equals(type) || "Message".equals(type);
+            addValidation(result, valueAt(compareResult, 1), "JSON " + type,
+                    valueAt(compareResult, 2), valueAt(compareResult, 3),
+                    passed, passed ? "" : "JSON comparison mismatch");
+        }
+    }
+
+    private void runDbValidation(Map<String, String> row, String responseBody,
+                                 Map<String, String> variables, Map<String, String> result) throws Exception {
+        boolean hasDbValidation = !row.getOrDefault("DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("DB_CONNECTION", "").isBlank()
+                || !row.getOrDefault("DB_QUERY", "").isBlank()
+                || !row.getOrDefault("API_DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("DB_COLUMN_VALIDATION", "").isBlank();
+        if (!hasDbValidation) {
+            return;
+        }
+        JSONObject dbValidation = parseOptionalJsonObject(row.get("DB_VALIDATION"));
+        String sqlTemplate = row.getOrDefault("DB_QUERY", "");
+        if (sqlTemplate.isBlank()) {
+            sqlTemplate = dbValidation.optString("sqlQuery");
+        }
+        String sqlQuery = resolveRunnerVariables(sqlTemplate, variables);
+        DbConnectionConfig config = runnerDbConnectionConfig(suitePath, row.get("DB_CONNECTION"));
+
+        JSONArray apiDbValidations = parseOptionalJsonArray(row.get("API_DB_VALIDATION"));
+        if (!apiDbValidations.isEmpty()) {
+            List<DbValidationRule> rules = new ArrayList<>();
+            for (int i = 0; i < apiDbValidations.length(); i++) {
+                JSONObject json = apiDbValidations.optJSONObject(i);
+                if (json == null) {
+                    continue;
+                }
+                DbValidationRule rule = new DbValidationRule();
+                rule.apiField = json.optString("apiField");
+                rule.dbColumn = json.optString("dbColumn");
+                rule.operator = json.optString("operator", "=");
+                rule.description = json.optString("description");
+                rules.add(rule);
+            }
+            if (!rules.isEmpty()) {
+                DbValidationReport dbReport = dbValidationService.validate(config, sqlQuery, rules, responseBody, variables);
+                for (DbValidationResult dbResult : dbReport.results) {
+                    addValidation(result, dbResult.field, "API-DB " + dbResult.operator,
+                            dbResult.expectedValue, dbResult.actualValue,
+                            dbResult.passed, dbResult.message);
+                }
+            }
+        }
+
+        JSONArray dbColumnValidations = parseOptionalJsonArray(row.get("DB_COLUMN_VALIDATION"));
+        JSONArray legacyColumnValidations = dbValidation.optJSONArray("dbColumnValidations");
+        if (dbColumnValidations.isEmpty() && legacyColumnValidations != null) {
+            dbColumnValidations = legacyColumnValidations;
+        }
+        if (!dbColumnValidations.isEmpty()) {
+            List<Map<String, Object>> rows = dbValidationService.executeQuery(config, sqlQuery, responseBody, variables);
+            for (int i = 0; i < dbColumnValidations.length(); i++) {
+                JSONObject validation = dbColumnValidations.optJSONObject(i);
+                if (validation == null) {
+                    continue;
+                }
+                Object actual = dbColumnActualValue(rows, validation.optString("dbColumnName"));
+                String actualType = dbValueType(actual);
+                String actualValue = actual == null ? "" : String.valueOf(actual);
+                String expected = resolveRunnerVariables(validation.optString("expectedValueOrVariable"), variables);
+                List<String> errors = dbColumnValidationErrors(actualType, actualValue,
+                        validation.optString("nullValidation"), validation.optString("typeValidation"), expected);
+                boolean passed = errors.isEmpty();
+                addValidation(result, validation.optString("dbColumnName"),
+                        "DB Column Null: " + validation.optString("nullValidation")
+                                + ", Type: " + validation.optString("typeValidation"),
+                        expected, actualValue, passed, String.join(", ", errors));
+            }
+        }
     }
 
     private ApiRequest buildRequest(Map<String, String> row) {
@@ -382,6 +557,368 @@ public class TestWeaveCliRunner {
         return values;
     }
 
+    private void addValidation(Map<String, String> result, String field, String validation,
+                               String expected, String actual, boolean passed, String message) {
+        JSONArray validations = new JSONArray(result.getOrDefault("Validations", "[]"));
+        validations.put(new JSONObject()
+                .put("status", passed ? "PASS" : "FAIL")
+                .put("field", field == null ? "" : field)
+                .put("validation", validation == null ? "" : validation)
+                .put("expected", expected == null ? "" : expected)
+                .put("actual", actual == null ? "" : actual)
+                .put("message", message == null ? "" : message));
+        result.put("Validations", validations.toString());
+    }
+
+    private boolean validationsPassed(Map<String, String> result) {
+        JSONArray validations = new JSONArray(result.getOrDefault("Validations", "[]"));
+        for (int i = 0; i < validations.length(); i++) {
+            JSONObject validation = validations.optJSONObject(i);
+            if (validation != null && "FAIL".equalsIgnoreCase(validation.optString("status"))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private JSONObject parseOptionalJsonObject(String value) {
+        if (value == null || value.isBlank()) {
+            return new JSONObject();
+        }
+        try {
+            return new JSONObject(value);
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private JSONArray parseOptionalJsonArray(String value) {
+        if (value == null || value.isBlank()) {
+            return new JSONArray();
+        }
+        try {
+            return new JSONArray(value);
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private String resolveRunnerVariables(String text, Map<String, String> variables) {
+        if (text == null) {
+            return "";
+        }
+        String resolved = text;
+        for (Map.Entry<String, String> entry : variables.entrySet()) {
+            resolved = resolved.replace("${" + entry.getKey() + "}", entry.getValue());
+        }
+        return resolveVariables(resolved);
+    }
+
+    private Path resolveWorkbookRelativePath(Path workbookPath, String absolutePath, String relativePath) {
+        if (absolutePath != null && !absolutePath.isBlank() && Files.exists(Path.of(absolutePath))) {
+            return Path.of(absolutePath);
+        }
+        Path workbookDirectory = workbookPath == null ? null : workbookPath.toAbsolutePath().getParent();
+        if (workbookDirectory != null && relativePath != null && !relativePath.isBlank()) {
+            Path resolved = workbookDirectory.resolve(relativePath).normalize();
+            if (Files.exists(resolved)) {
+                return resolved;
+            }
+        }
+        Path projectRoot = Path.of("").toAbsolutePath().normalize();
+        Path projectRelative = projectRelativeSupportPath(relativePath);
+        if (projectRelative != null && Files.exists(projectRelative)) {
+            return projectRelative;
+        }
+        projectRelative = projectRelativeSupportPath(absolutePath);
+        if (projectRelative != null && Files.exists(projectRelative)) {
+            return projectRelative;
+        }
+        if (absolutePath != null && !absolutePath.isBlank()) {
+            Path byFileName = findByFileName(projectRoot, pathFileName(absolutePath));
+            if (byFileName != null) {
+                return byFileName;
+            }
+        }
+        if (relativePath != null && !relativePath.isBlank()) {
+            Path byFileName = findByFileName(projectRoot, pathFileName(relativePath));
+            if (byFileName != null) {
+                return byFileName;
+            }
+        }
+        return Path.of(absolutePath == null || absolutePath.isBlank() ? relativePath : absolutePath);
+    }
+
+    private Path projectRelativeSupportPath(String pathText) {
+        if (pathText == null || pathText.isBlank()) {
+            return null;
+        }
+        String normalized = pathText.replace('\\', '/');
+        int marker = normalized.lastIndexOf("api-validator/");
+        if (marker >= 0) {
+            normalized = normalized.substring(marker + "api-validator/".length());
+        }
+        while (normalized.startsWith("../")) {
+            normalized = normalized.substring(3);
+        }
+        Path resolved = Path.of("").toAbsolutePath().normalize().resolve(normalized).normalize();
+        return resolved.startsWith(Path.of("").toAbsolutePath().normalize()) ? resolved : null;
+    }
+
+    private String pathFileName(String pathText) {
+        if (pathText == null) {
+            return "";
+        }
+        String normalized = pathText.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        return slash >= 0 ? normalized.substring(slash + 1) : normalized;
+    }
+
+    private Path findByFileName(Path root, String fileName) {
+        if (fileName == null || fileName.isBlank() || !Files.isDirectory(root)) {
+            return null;
+        }
+        try (var paths = Files.walk(root, 5)) {
+            return paths
+                    .filter(Files::isRegularFile)
+                    .filter(path -> fileName.equals(path.getFileName().toString()))
+                    .findFirst()
+                    .orElse(null);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private DbConnectionConfig runnerDbConnectionConfig(Path workbookPath, String connectionJson) throws Exception {
+        JSONObject connection = parseOptionalJsonObject(connectionJson);
+        JSONObject json = connection;
+        String path = connection.optString("path");
+        String relativePath = connection.optString("relativePath");
+        if (!path.isBlank() || !relativePath.isBlank()) {
+            Path connectionPath = resolveWorkbookRelativePath(workbookPath, path, relativePath);
+            if (Files.exists(connectionPath)) {
+                json = new JSONObject(Files.readString(connectionPath, StandardCharsets.UTF_8));
+            }
+        }
+        DbConnectionConfig config = new DbConnectionConfig();
+        config.databaseType = json.optString("databaseType", connection.optString("databaseType", "MySQL"));
+        config.jdbcUrl = json.optString("jdbcUrl", connection.optString("jdbcUrl"));
+        config.username = json.optString("username", connection.optString("username"));
+        config.password = json.optString("password", connection.optString("password"));
+        config.driverClass = json.optString("driverClass", connection.optString("driverClass"));
+        return config;
+    }
+
+    private Object extractJsonPathValue(Object root, String path) {
+        String normalized = path == null ? "" : path.trim();
+        if (normalized.isEmpty() || "$".equals(normalized)) {
+            return root;
+        }
+        if (normalized.startsWith("$.")) {
+            normalized = normalized.substring(2);
+        } else if (normalized.startsWith("$")) {
+            normalized = normalized.substring(1);
+        }
+        Object current = root;
+        for (String part : normalized.split("\\.")) {
+            if (!part.isBlank()) {
+                current = stepIntoJsonPath(current, part);
+            }
+        }
+        return current;
+    }
+
+    private Object stepIntoJsonPath(Object current, String part) {
+        String remaining = part;
+        int bracketIndex = remaining.indexOf('[');
+        Object value = bracketIndex <= 0 ? current : objectJsonField(current, remaining.substring(0, bracketIndex));
+        if (bracketIndex < 0) {
+            return objectJsonField(current, remaining);
+        }
+        while (bracketIndex >= 0) {
+            int closeIndex = remaining.indexOf(']', bracketIndex);
+            int index = Integer.parseInt(remaining.substring(bracketIndex + 1, closeIndex).trim());
+            if (!(value instanceof JSONArray array)) {
+                throw new IllegalArgumentException("Path segment is not an array: " + part);
+            }
+            value = array.get(index);
+            bracketIndex = remaining.indexOf('[', closeIndex);
+        }
+        return value;
+    }
+
+    private Object objectJsonField(Object current, String fieldName) {
+        if (fieldName == null || fieldName.isBlank()) {
+            return current;
+        }
+        if (current instanceof JSONObject object) {
+            if (!object.has(fieldName)) {
+                throw new IllegalArgumentException("Response field not found: " + fieldName);
+            }
+            return object.get(fieldName);
+        }
+        if (current instanceof JSONArray array) {
+            if (array.isEmpty()) {
+                throw new IllegalArgumentException("Response array is empty for field: " + fieldName);
+            }
+            return objectJsonField(array.get(0), fieldName);
+        }
+        throw new IllegalArgumentException("Path segment is not an object: " + fieldName);
+    }
+
+    private String jsonValueType(Object value) {
+        if (value == null || value == JSONObject.NULL) {
+            return "null";
+        }
+        if (value instanceof JSONObject) {
+            return "object";
+        }
+        if (value instanceof JSONArray) {
+            return "array";
+        }
+        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
+            return "integer";
+        }
+        if (value instanceof Number) {
+            return "number";
+        }
+        if (value instanceof Boolean) {
+            return "boolean";
+        }
+        return "string";
+    }
+
+    private List<String> fieldValidationErrors(String actualType, String actualValue,
+                                               String nullRule, String typeRule, String expectedValue) {
+        List<String> errors = new ArrayList<>();
+        if ("Not Null".equals(nullRule) && "null".equals(actualType)) {
+            errors.add("expected not null");
+        } else if ("Null".equals(nullRule) && !"null".equals(actualType)) {
+            errors.add("expected null");
+        }
+        if (!typeRule.isBlank() && !"Skip".equals(typeRule) && !typeRule.equals(actualType)) {
+            if (!("number".equals(typeRule) && "integer".equals(actualType))) {
+                errors.add("expected " + typeRule);
+            }
+        }
+        if (!expectedValue.isBlank() && !expectedValue.equals(actualValue)) {
+            errors.add("expected value mismatch");
+        }
+        return errors;
+    }
+
+    private Object dbColumnActualValue(List<Map<String, Object>> rows, String columnReference) {
+        if (rows == null || rows.isEmpty()) {
+            throw new IllegalArgumentException("DB query returned no rows.");
+        }
+        String columnName = columnReference == null ? "" : columnReference.trim();
+        int rowIndex = 0;
+        Matcher matcher = java.util.regex.Pattern.compile("^(.+)\\[(\\d+)]$").matcher(columnName);
+        if (matcher.matches()) {
+            columnName = matcher.group(1).trim();
+            rowIndex = Integer.parseInt(matcher.group(2));
+        }
+        if (rowIndex >= rows.size()) {
+            throw new IllegalArgumentException("DB row index " + rowIndex + " is not available for " + columnName);
+        }
+        Map<String, Object> row = rows.get(rowIndex);
+        if (!row.containsKey(columnName)) {
+            throw new IllegalArgumentException("DB column not found: " + columnName);
+        }
+        return row.get(columnName);
+    }
+
+    private List<String> dbColumnValidationErrors(String actualType, String actualValue,
+                                                  String nullRule, String typeRule, String expectedValue) {
+        List<String> errors = new ArrayList<>();
+        boolean isNull = "null".equals(actualType);
+        boolean isEmpty = actualValue == null || actualValue.isEmpty();
+        boolean isBlank = actualValue == null || actualValue.isBlank();
+        if ("Not Null".equals(nullRule) && isNull) {
+            errors.add("expected not null");
+        } else if ("Null".equals(nullRule) && !isNull) {
+            errors.add("expected null");
+        } else if ("Not Empty".equals(nullRule) && (isNull || isEmpty)) {
+            errors.add("expected not empty");
+        } else if ("Empty".equals(nullRule) && !isEmpty) {
+            errors.add("expected empty");
+        } else if ("Not Blank".equals(nullRule) && (isNull || isBlank)) {
+            errors.add("expected not blank");
+        } else if ("Blank".equals(nullRule) && !isBlank) {
+            errors.add("expected blank");
+        }
+        if (!typeRule.isBlank() && !"Skip".equals(typeRule) && !dbTypeMatches(typeRule, actualType, actualValue)) {
+            errors.add("expected " + typeRule);
+        }
+        if (!expectedValue.isBlank() && !expectedValue.equals(actualValue)) {
+            errors.add("expected value mismatch");
+        }
+        return errors;
+    }
+
+    private boolean dbTypeMatches(String expectedType, String actualType, String actualValue) {
+        if (expectedType.equals(actualType)) {
+            return true;
+        }
+        if ("number".equals(expectedType) && ("integer".equals(actualType) || "decimal".equals(actualType))) {
+            return true;
+        }
+        if ("datetime".equals(expectedType) && "timestamp".equals(actualType)) {
+            return true;
+        }
+        if ("timestamp".equals(expectedType) && "datetime".equals(actualType)) {
+            return true;
+        }
+        if ("uuid".equals(expectedType)) {
+            return actualValue.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
+        }
+        if ("json".equals(expectedType)) {
+            String trimmed = actualValue.trim();
+            try {
+                if (trimmed.startsWith("{")) {
+                    new JSONObject(trimmed);
+                    return true;
+                }
+                if (trimmed.startsWith("[")) {
+                    new JSONArray(trimmed);
+                    return true;
+                }
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private String dbValueType(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
+            return "integer";
+        }
+        if (value instanceof java.math.BigDecimal || value instanceof Float || value instanceof Double) {
+            return "decimal";
+        }
+        if (value instanceof Number) {
+            return "number";
+        }
+        if (value instanceof Boolean) {
+            return "boolean";
+        }
+        if (value instanceof java.sql.Date || value instanceof java.time.LocalDate) {
+            return "date";
+        }
+        if (value instanceof java.sql.Time || value instanceof java.time.LocalTime) {
+            return "time";
+        }
+        if (value instanceof java.sql.Timestamp || value instanceof java.time.Instant
+                || value instanceof java.time.LocalDateTime || value instanceof java.time.OffsetDateTime) {
+            return "timestamp";
+        }
+        return "string";
+    }
+
     private void writeReports(Path reportDir, List<Map<String, String>> results) throws Exception {
         JSONArray json = new JSONArray(results);
         Files.writeString(reportDir.resolve("testweave-results.json"), json.toString(2), StandardCharsets.UTF_8);
@@ -458,7 +995,65 @@ public class TestWeaveCliRunner {
                     .append("<td class='mono'>").append(escapeHtml(result.getOrDefault("Message", ""))).append("</td>")
                     .append("</tr>");
         }
-        html.append("</table></main></body></html>");
+        html.append("</table>");
+
+        html.append("<h2 class='section-title'>Field Level Validations</h2>");
+        for (Map<String, String> result : results) {
+            JSONArray validations = validationsFor(result);
+            String passedText = isPassed(result) ? "PASS" : "FAIL";
+            html.append("<section class='card' style='margin-bottom:18px'>")
+                    .append("<div style='display:flex;justify-content:space-between;gap:16px;align-items:flex-start'>")
+                    .append("<div><h2 style='margin:0 0 8px;color:#1e5ed6'>")
+                    .append(escapeHtml(result.getOrDefault("Test Step", "")))
+                    .append("</h2><div class='label'>")
+                    .append(escapeHtml(result.getOrDefault("Test Suite", "")))
+                    .append(" / ")
+                    .append(escapeHtml(result.getOrDefault("Test Case", "")))
+                    .append("</div></div><div class='status ")
+                    .append(isPassed(result) ? "pass" : "fail")
+                    .append("'>")
+                    .append(passedText)
+                    .append("</div></div>");
+            html.append("<div class='summary' style='grid-template-columns:repeat(4,minmax(120px,1fr));margin-top:14px'>")
+                    .append(summaryCard("Step Type", stepType(result), ""))
+                    .append(summaryCard("Status", result.getOrDefault("Status", ""), isPassed(result) ? "pass" : "fail"))
+                    .append(summaryCard("Validations", String.valueOf(validations.length()), ""))
+                    .append(summaryCard("Result", isPassed(result) ? "Passed" : "Failed", isPassed(result) ? "pass" : "fail"))
+                    .append("</div>");
+            if (isFailed(result) && !result.getOrDefault("Message", "").isBlank()) {
+                html.append("<div style='background:#fff1f1;border:1px solid #fecaca;border-radius:8px;padding:14px;margin:12px 0;color:#991b1b'>")
+                        .append("<strong>Failure Error Message</strong><br>")
+                        .append(escapeHtml(result.getOrDefault("Message", "")))
+                        .append("</div>");
+            }
+            html.append("<table><tr>");
+            for (String header : List.of("Status", "Field", "Validation", "Expected", "Actual", "Message")) {
+                html.append("<th>").append(header).append("</th>");
+            }
+            html.append("</tr>");
+            if (validations.isEmpty()) {
+                html.append("<tr><td colspan='6'>No validation rows were produced for this step.</td></tr>");
+            }
+            for (int i = 0; i < validations.length(); i++) {
+                JSONObject validation = validations.optJSONObject(i);
+                if (validation == null) {
+                    continue;
+                }
+                boolean passedValidation = "PASS".equalsIgnoreCase(validation.optString("status"));
+                html.append("<tr>")
+                        .append("<td class='status ").append(passedValidation ? "pass" : "fail").append("'>")
+                        .append(escapeHtml(validation.optString("status"))).append("</td>")
+                        .append("<td>").append(escapeHtml(validation.optString("field"))).append("</td>")
+                        .append("<td>").append(escapeHtml(validation.optString("validation"))).append("</td>")
+                        .append("<td class='mono'>").append(escapeHtml(validation.optString("expected"))).append("</td>")
+                        .append("<td class='mono'>").append(escapeHtml(validation.optString("actual"))).append("</td>")
+                        .append("<td>").append(escapeHtml(validation.optString("message"))).append("</td>")
+                        .append("</tr>");
+            }
+            html.append("</table></section>");
+        }
+
+        html.append("</main></body></html>");
         return html.toString();
     }
 
@@ -483,6 +1078,34 @@ public class TestWeaveCliRunner {
 
     private boolean isFailed(Map<String, String> result) {
         return result.getOrDefault("Status", "").toLowerCase().startsWith("failed");
+    }
+
+    private JSONArray validationsFor(Map<String, String> result) {
+        return new JSONArray(result.getOrDefault("Validations", "[]"));
+    }
+
+    private String stepType(Map<String, String> result) {
+        if (!result.getOrDefault("WEB_TEST", "").isBlank()) {
+            return "Web Test";
+        }
+        if (!result.getOrDefault("PERFORMANCE_TEST", "").isBlank()) {
+            return "Performance Test";
+        }
+        if (!result.getOrDefault("DB_VALIDATION", "").isBlank()
+                || !result.getOrDefault("API_DB_VALIDATION", "").isBlank()
+                || !result.getOrDefault("DB_COLUMN_VALIDATION", "").isBlank()) {
+            return "DB Validation";
+        }
+        if (!result.getOrDefault("JSON_COMPARE", "").isBlank()) {
+            return "JSON Compare";
+        }
+        if (!result.getOrDefault("API_FIELD_VALIDATION", "").isBlank()) {
+            return "Field Validation";
+        }
+        if (!result.getOrDefault("Hit Request", "").isBlank()) {
+            return "API Request";
+        }
+        return "Manual";
     }
 
     private void printSummary(List<Map<String, String>> results) {
@@ -539,6 +1162,10 @@ public class TestWeaveCliRunner {
 
     private String nullToBlank(String value) {
         return value == null ? "" : value;
+    }
+
+    private String valueAt(Object[] values, int index) {
+        return values != null && index < values.length && values[index] != null ? String.valueOf(values[index]) : "";
     }
 
     private String escapeHtml(String value) {

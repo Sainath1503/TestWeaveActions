@@ -15,11 +15,12 @@ import java.util.Map;
 public class ApiService {
 
     public ApiResponse sendRequest(ApiRequest request) {
+        int timeoutMs = httpTimeoutMs();
         RestAssuredConfig config = RestAssured.config().httpClient(
                 HttpClientConfig.httpClientConfig()
-                        .setParam("http.connection.timeout", 15000)
-                        .setParam("http.socket.timeout", 15000)
-                        .setParam("http.connection-manager.timeout", 15000L)
+                        .setParam("http.connection.timeout", timeoutMs)
+                        .setParam("http.socket.timeout", timeoutMs)
+                        .setParam("http.connection-manager.timeout", (long) timeoutMs)
         );
 
         io.restassured.specification.RequestSpecification req = RestAssured.given()
@@ -68,6 +69,21 @@ public class ApiService {
         apiResponse.cookiesText = buildCookiesText(response);
         apiResponse.sizeBytes = apiResponse.rawBody.getBytes().length;
         return apiResponse;
+    }
+
+    private int httpTimeoutMs() {
+        String value = System.getProperty("testweave.http.timeout.ms");
+        if (value == null || value.isBlank()) {
+            value = System.getenv("TESTWEAVE_HTTP_TIMEOUT_MS");
+        }
+        if (value != null && !value.isBlank()) {
+            try {
+                return Math.max(1000, Integer.parseInt(value.trim()));
+            } catch (NumberFormatException ignored) {
+                return 60000;
+            }
+        }
+        return 60000;
     }
 
     public String prettyPrintJson(String text) {

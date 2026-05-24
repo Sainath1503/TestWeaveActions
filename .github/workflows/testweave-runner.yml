@@ -21,41 +21,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Build TestWeave runner
-        run: |
-          rm -rf target
-          mvn -q -DskipTests package
-      - name: Verify TestWeave runner jar
-        run: |
-          jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
-          if unzip -p target/api-validator-1.0-SNAPSHOT.jar META-INF/MANIFEST.MF | grep -q 'Multi-Release: true'; then
-            echo 'Multi-Release manifest entry found.'
-          else
-            echo 'Multi-Release manifest entry not found; continuing because Log4j2 plugin cache is present.'
-          fi
       - name: Check TestWeave suite file
         run: |
           test -f "${{ inputs.suite_file }}"
           ls -l "${{ inputs.suite_file }}"
-      - name: Install Playwright browser
+      - name: Run TestWeave suite in Docker Compose
+        env:
+          SUITE_FILE: ${{ inputs.suite_file }}
+          TESTWEAVE_PARALLEL: ${{ inputs.parallel }}
+          TESTWEAVE_THREADS: ${{ inputs.threads }}
+          TESTWEAVE_HTTP_TIMEOUT_MS: '60000'
         run: |
-          java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
-      - name: Run TestWeave suite
-        run: |
-          java \
-            -Dtestweave.http.timeout.ms=60000 \
-            -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \
-            -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \
-            -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \
-            -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
-            --suite "${{ inputs.suite_file }}" \
-            --parallel "${{ inputs.parallel }}" \
-            --threads "${{ inputs.threads }}" \
-            --report target/testweave-report
+          trap 'docker compose -f docker-compose.testweave.yml down -v --remove-orphans' EXIT
+          docker compose -f docker-compose.testweave.yml up --build --abort-on-container-exit --exit-code-from testweave
       - name: Upload TestWeave report
         if: always()
         uses: actions/upload-artifact@v4

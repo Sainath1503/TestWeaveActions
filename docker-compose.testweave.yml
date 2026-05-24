@@ -1,0 +1,39 @@
+services:
+  testweave:
+    build:
+      context: .
+      dockerfile: Dockerfile.testweave
+    working_dir: /workspace
+    environment:
+      SUITE_FILE: ${SUITE_FILE:-testweave/test-suite.xlsx}
+      TESTWEAVE_PARALLEL: ${TESTWEAVE_PARALLEL:-false}
+      TESTWEAVE_THREADS: ${TESTWEAVE_THREADS:-1}
+      TESTWEAVE_HTTP_TIMEOUT_MS: ${TESTWEAVE_HTTP_TIMEOUT_MS:-60000}
+      GITHUB_ACTIONS: ${GITHUB_ACTIONS:-false}
+    volumes:
+      - .:/workspace
+      - maven-cache:/root/.m2
+      - playwright-cache:/root/.cache/ms-playwright
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -euo pipefail
+        rm -rf target
+        mvn -q -DskipTests package
+        jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
+        java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
+        java \
+          -Dtestweave.http.timeout.ms="$${TESTWEAVE_HTTP_TIMEOUT_MS}" \
+          -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \
+          -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \
+          -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \
+          -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
+          --suite "$${SUITE_FILE}" \
+          --parallel "$${TESTWEAVE_PARALLEL}" \
+          --threads "$${TESTWEAVE_THREADS}" \
+          --report target/testweave-report
+
+volumes:
+  maven-cache:
+  playwright-cache:

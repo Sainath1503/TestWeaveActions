@@ -19,6 +19,13 @@ services:
       - -lc
       - |
         set -euo pipefail
+        copy_reference_report() {
+          if [ -f testweave/reference-report.html ]; then
+            mkdir -p target/testweave-report
+            cp testweave/reference-report.html target/testweave-report/reference-local-report.html
+          fi
+        }
+        trap copy_reference_report EXIT
         rm -rf target
         mvn -q -DskipTests package
         jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'

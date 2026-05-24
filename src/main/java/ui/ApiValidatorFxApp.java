@@ -1329,6 +1329,7 @@ public class ApiValidatorFxApp extends Application {
         syncGithubFileIfPresent(projectRoot.resolve("Dockerfile.testweave"), "Dockerfile.testweave");
         syncGithubFileIfPresent(projectRoot.resolve("docker-compose.testweave.yml"), "docker-compose.testweave.yml");
         syncGithubFileIfPresent(projectRoot.resolve(".dockerignore"), ".dockerignore");
+        syncTestWeaveSupportFolders(projectRoot);
         try (Stream<Path> paths = Files.walk(srcPath)) {
             List<Path> files = paths
                     .filter(Files::isRegularFile)
@@ -1344,6 +1345,30 @@ public class ApiValidatorFxApp extends Application {
     private void syncGithubFileIfPresent(Path file, String githubPath) throws Exception {
         if (Files.exists(file) && Files.isRegularFile(file)) {
             githubPutFile(githubPath, Files.readAllBytes(file), "Sync TestWeave container setup");
+        }
+    }
+
+    private void syncTestWeaveSupportFolders(Path projectRoot) throws Exception {
+        List<String> supportFolders = List.of("SavedResponse", "Baseline", "DBConnection", "APIVariables", "WebRecordings");
+        Path documentsProjectRoot = Path.of(System.getProperty("user.home"), "Documents", "api-validator");
+        for (String folder : supportFolders) {
+            syncGithubFolderIfPresent(projectRoot.resolve(folder), folder);
+            if (!documentsProjectRoot.equals(projectRoot)) {
+                syncGithubFolderIfPresent(documentsProjectRoot.resolve(folder), folder);
+            }
+        }
+    }
+
+    private void syncGithubFolderIfPresent(Path folder, String githubFolder) throws Exception {
+        if (!Files.isDirectory(folder)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(folder)) {
+            List<Path> files = paths.filter(Files::isRegularFile).sorted().toList();
+            for (Path file : files) {
+                String relative = folder.relativize(file).toString().replace(File.separatorChar, '/');
+                githubPutFile(githubFolder + "/" + relative, Files.readAllBytes(file), "Sync TestWeave support files");
+            }
         }
     }
 

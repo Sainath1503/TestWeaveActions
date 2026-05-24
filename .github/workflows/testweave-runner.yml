@@ -1,0 +1,41 @@
+name: TestWeave Test Suite Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite_file:
+        description: Test suite workbook path
+        required: true
+        default: testweave/test-suite.xlsx
+      parallel:
+        description: Enable TestWeave parallel execution
+        required: true
+        default: 'false'
+      threads:
+        description: TestWeave thread count
+        required: true
+        default: '1'
+
+jobs:
+  testweave:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build TestWeave runner
+        run: mvn -q -DskipTests package
+      - name: Run TestWeave suite
+        run: |
+          java -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
+            --suite "${{ inputs.suite_file }}" \
+            --parallel "${{ inputs.parallel }}" \
+            --threads "${{ inputs.threads }}" \
+            --report target/testweave-report
+      - name: Upload TestWeave report
+        uses: actions/upload-artifact@v4
+        with:
+          name: testweave-report
+          path: target/testweave-report

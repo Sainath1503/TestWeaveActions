@@ -89,10 +89,12 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Collections;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -101,6 +103,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -222,6 +226,7 @@ public class ApiValidatorFxApp extends Application {
     private TextField githubBranchField;
     private Label githubStatusLabel;
     private String githubAccessToken;
+    private Path lastTestSuiteReportPath;
     private ExecutorService testSuiteRunnerExecutor;
     private final AtomicBoolean testSuiteStopRequested = new AtomicBoolean(false);
     private TextField fieldValidationTestSuiteField;
@@ -799,7 +804,7 @@ public class ApiValidatorFxApp extends Application {
         Button uncheckAll = secondary("Un-Check All");
         uncheckAll.setOnAction(e -> setAllRowsSelected(testSuiteRows, testSuiteStepsTable, false));
         Button openReport = secondary("Open Report");
-        openReport.setOnAction(e -> showInfo("Test Suite Report", "A test suite report is not available yet."));
+        openReport.setOnAction(e -> openTestSuiteReport());
         Button updateWorkbook = secondary("Update");
         updateWorkbook.setOnAction(e -> updateTestSuiteWorkbook());
         Button openWorkbook = secondary("Open");
@@ -1144,14 +1149,13 @@ public class ApiValidatorFxApp extends Application {
                 if (workbookPath == null) {
                     throw new IllegalStateException("Import or create a Test Suite Runner workbook before deploying.");
                 }
+                ensureGithubRepositoryReady();
                 writeTestSuiteRowsToWorkbook(workbookPath);
-                Path runnerJar = packagedRunnerJar();
+                syncTestWeaveRunnerSourceToGithub();
                 githubPutFile(".github/workflows/testweave-runner.yml", githubActionsWorkflowYaml(),
                         "Deploy TestWeave GitHub Actions workflow");
                 githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
                         "Update TestWeave test suite workbook");
-                githubPutFile("testweave/testweave-runner.jar", Files.readAllBytes(runnerJar),
-                        "Update TestWeave runner");
                 return null;
             }
         };
@@ -1168,6 +1172,17 @@ public class ApiValidatorFxApp extends Application {
             @Override
             protected Void call() throws Exception {
                 requireGithubConnection();
+                Path workbookPath = selectedWorkbookPath();
+                if (workbookPath == null) {
+                    throw new IllegalStateException("Import or create a Test Suite Runner workbook before running in GitHub Actions.");
+                }
+                ensureGithubRepositoryReady();
+                writeTestSuiteRowsToWorkbook(workbookPath);
+                syncTestWeaveRunnerSourceToGithub();
+                githubPutFile(".github/workflows/testweave-runner.yml", githubActionsWorkflowYaml(),
+                        "Update TestWeave GitHub Actions workflow before run");
+                githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
+                        "Update TestWeave test suite workbook before run");
                 JSONObject inputs = new JSONObject()
                         .put("suite_file", "testweave/test-suite.xlsx")
                         .put("parallel", String.valueOf(testSuiteParallelExecutionCheck.isSelected()))
@@ -1201,6 +1216,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void requireGithubConnection() {
+        normalizeGithubRepositoryFields();
         if (githubAccessToken == null || githubAccessToken.isBlank()) {
             throw new IllegalStateException("Connect GitHub before deploying or running the workflow.");
         }
@@ -1209,12 +1225,48 @@ public class ApiValidatorFxApp extends Application {
         }
     }
 
-    private Path packagedRunnerJar() {
-        List<Path> candidates = List.of(
-                Path.of("target", "api-validator-1.0-SNAPSHOT.jar"),
-                Path.of("target", "api-validator-1.0-SNAPSHOT-shaded.jar"));
-        return candidates.stream().filter(Files::exists).findFirst()
-                .orElseThrow(() -> new IllegalStateException("Package the app first so target/api-validator-1.0-SNAPSHOT.jar exists."));
+    private void normalizeGithubRepositoryFields() {
+        String repoText = githubRepoField.getText().trim();
+        if (repoText.startsWith("https://github.com/")) {
+            repoText = repoText.substring("https://github.com/".length());
+        }
+        repoText = repoText.replaceAll("\\.git$", "").replaceAll("^/+", "").replaceAll("/+$", "");
+        if (repoText.contains("/")) {
+            String[] parts = repoText.split("/", 3);
+            if (githubOwnerField.getText().isBlank()) {
+                githubOwnerField.setText(parts[0]);
+            }
+            githubRepoField.setText(parts[1]);
+        }
+    }
+
+    private void ensureGithubRepositoryReady() throws Exception {
+        HttpResponse<String> repoResponse = githubRequest("GET", githubApiBase(), null, false);
+        if (repoResponse.statusCode() == 404) {
+            throw new IllegalStateException("GitHub repository was not found or this token cannot access it. "
+                    + "Check Owner/Repository, private repo permissions, and that the token has repo access.");
+        }
+        if (repoResponse.statusCode() >= 300) {
+            throw new IllegalStateException("GitHub repository check failed (" + repoResponse.statusCode() + "): " + repoResponse.body());
+        }
+        JSONObject repo = new JSONObject(repoResponse.body());
+        if (githubBranchField.getText().isBlank()) {
+            githubBranchField.setText(repo.optString("default_branch", "main"));
+        }
+        HttpResponse<String> branchResponse = githubRequest("GET", githubApiBase() + "/branches/" + encode(githubBranch()), null, false);
+        if (branchResponse.statusCode() == 404) {
+            String defaultBranch = repo.optString("default_branch", "main");
+            githubBranchField.setText(defaultBranch);
+            branchResponse = githubRequest("GET", githubApiBase() + "/branches/" + encode(defaultBranch), null, false);
+        }
+        if (branchResponse.statusCode() >= 300) {
+            throw new IllegalStateException("GitHub branch check failed (" + branchResponse.statusCode() + "): " + branchResponse.body());
+        }
+        HttpResponse<String> pomResponse = githubRequest("GET", githubApiBase() + "/contents/pom.xml?ref=" + encode(githubBranch()), null, false);
+        if (pomResponse.statusCode() == 404) {
+            throw new IllegalStateException("This deployment mode expects the selected repository to contain the TestWeave Maven source code with pom.xml. "
+                    + "Select the TestWeave repository, or add the source before deploying the workflow.");
+        }
     }
 
     private String githubActionsWorkflowYaml() {
@@ -1246,19 +1298,66 @@ public class ApiValidatorFxApp extends Application {
                         with:
                           distribution: temurin
                           java-version: '17'
+                      - name: Build TestWeave runner
+                        run: |
+                          rm -rf target
+                          mvn -q -DskipTests package
+                      - name: Verify TestWeave runner jar
+                        run: |
+                          jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
+                          if unzip -p target/api-validator-1.0-SNAPSHOT.jar META-INF/MANIFEST.MF | grep -q 'Multi-Release: true'; then
+                            echo 'Multi-Release manifest entry found.'
+                          else
+                            echo 'Multi-Release manifest entry not found; continuing because Log4j2 plugin cache is present.'
+                          fi
+                      - name: Check TestWeave suite file
+                        run: |
+                          test -f "${{ inputs.suite_file }}"
+                          ls -l "${{ inputs.suite_file }}"
+                      - name: Install Playwright browser
+                        run: |
+                          java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
                       - name: Run TestWeave suite
                         run: |
-                          java -cp testweave/testweave-runner.jar ui.TestWeaveCliRunner \\
+                          java \\
+                            -Dtestweave.http.timeout.ms=60000 \\
+                            -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \\
+                            -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \\
+                            -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \\
+                            -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \\
                             --suite "${{ inputs.suite_file }}" \\
                             --parallel "${{ inputs.parallel }}" \\
                             --threads "${{ inputs.threads }}" \\
                             --report target/testweave-report
                       - name: Upload TestWeave report
+                        if: always()
                         uses: actions/upload-artifact@v4
                         with:
                           name: testweave-report
-                          path: target/testweave-report
+                          path: target/testweave-report/**
                 """.formatted(testSuiteParallelExecutionCheck.isSelected(), parseThreadCount());
+    }
+
+    private void syncTestWeaveRunnerSourceToGithub() throws Exception {
+        Path projectRoot = Path.of("").toAbsolutePath().normalize();
+        Path pomPath = projectRoot.resolve("pom.xml");
+        Path srcPath = projectRoot.resolve("src");
+        if (!Files.exists(pomPath) || !Files.isDirectory(srcPath)) {
+            throw new IllegalStateException("Cannot sync TestWeave runner source to GitHub because pom.xml or src folder was not found at "
+                    + projectRoot + ". Run the app from the TestWeave project folder or push the latest source manually.");
+        }
+
+        githubPutFile("pom.xml", Files.readAllBytes(pomPath), "Sync TestWeave runner pom");
+        try (Stream<Path> paths = Files.walk(srcPath)) {
+            List<Path> files = paths
+                    .filter(Files::isRegularFile)
+                    .sorted()
+                    .toList();
+            for (Path file : files) {
+                String githubPath = projectRoot.relativize(file).toString().replace(File.separatorChar, '/');
+                githubPutFile(githubPath, Files.readAllBytes(file), "Sync TestWeave runner source");
+            }
+        }
     }
 
     private void githubPutFile(String path, String content, String message) throws Exception {
@@ -1274,7 +1373,19 @@ public class ApiValidatorFxApp extends Application {
         if (sha != null) {
             payload.put("sha", sha);
         }
-        githubRequest("PUT", githubApiBase() + "/contents/" + encodePath(path), payload.toString(), true);
+        HttpResponse<String> response = githubRequest("PUT", githubApiBase() + "/contents/" + encodePath(path),
+                payload.toString(), false);
+        if (response.statusCode() >= 300 && !isUnchangedGithubContent(response)) {
+            throw new IllegalStateException(githubErrorMessage(response, githubApiBase() + "/contents/" + encodePath(path)));
+        }
+    }
+
+    private boolean isUnchangedGithubContent(HttpResponse<String> response) {
+        if (response.statusCode() != 422) {
+            return false;
+        }
+        String body = response.body() == null ? "" : response.body().toLowerCase();
+        return body.contains("content is unchanged") || body.contains("same as current");
     }
 
     private String githubContentSha(String path) throws Exception {
@@ -1303,9 +1414,22 @@ public class ApiValidatorFxApp extends Application {
         }
         HttpResponse<String> response = HttpClient.newHttpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (failOnError && response.statusCode() >= 300) {
-            throw new IllegalStateException("GitHub API failed (" + response.statusCode() + "): " + response.body());
+            throw new IllegalStateException(githubErrorMessage(response, url));
         }
         return response;
+    }
+
+    private String githubErrorMessage(HttpResponse<String> response, String url) {
+        if (response.statusCode() == 404) {
+            return "GitHub API returned 404 Not Found. Check that the repository exists, the branch is correct, "
+                    + "and the connected token has access to the repository. If deploying the workflow file, "
+                    + "the token also needs workflow permission/scope. URL: " + url + " Response: " + response.body();
+        }
+        if (response.statusCode() == 401 || response.statusCode() == 403) {
+            return "GitHub authorization failed (" + response.statusCode() + "). Reconnect GitHub with repo and workflow permissions. "
+                    + "Response: " + response.body();
+        }
+        return "GitHub API failed (" + response.statusCode() + "): " + response.body();
     }
 
     private String githubApiBase() {
@@ -1373,6 +1497,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void runSelectedTestSuiteSteps() {
+        Path workbookPath = selectedWorkbookPath();
         List<Map<String, String>> selectedRows = testSuiteRows.stream()
                 .filter(this::isSelected)
                 .<Map<String, String>>map(LinkedHashMap::new)
@@ -1398,7 +1523,7 @@ public class ApiValidatorFxApp extends Application {
         Task<Void> runner = new Task<>() {
             @Override
             protected Void call() throws Exception {
-                runTestSuiteRows(selectedRows, threads);
+                runTestSuiteRows(workbookPath, selectedRows, threads);
                 return null;
             }
         };
@@ -1406,7 +1531,8 @@ public class ApiValidatorFxApp extends Application {
             shutdownTestSuiteExecutor();
             testSuiteRunnerStatusLabel.setText(testSuiteStopRequested.get()
                     ? "Test suite execution stopped."
-                    : "Test suite execution completed for " + selectedRows.size() + " step(s).");
+                    : "Test suite execution completed for " + selectedRows.size() + " step(s). Report: "
+                            + (lastTestSuiteReportPath == null ? "not generated" : lastTestSuiteReportPath.getFileName()));
         });
         runner.setOnFailed(e -> {
             shutdownTestSuiteExecutor();
@@ -1425,31 +1551,31 @@ public class ApiValidatorFxApp extends Application {
         }
     }
 
-    private void runTestSuiteRows(List<Map<String, String>> selectedRows, int threads) throws Exception {
+    private void runTestSuiteRows(Path workbookPath, List<Map<String, String>> selectedRows, int threads) throws Exception {
         Object sequentialLock = new Object();
-        List<Future<?>> futures = new ArrayList<>();
+        List<Future<TestSuiteStepResult>> futures = new ArrayList<>();
         for (Map<String, String> row : selectedRows) {
             futures.add(testSuiteRunnerExecutor.submit(() -> {
                 if (testSuiteStopRequested.get()) {
                     updateTestSuiteRowStatus(row, "Stopped");
-                    return;
+                    return TestSuiteStepResult.stopped(row);
                 }
                 boolean sequential = !"Parallel".equalsIgnoreCase(row.getOrDefault("executionMode", "Sequential"));
                 if (threads <= 1 || sequential) {
                     synchronized (sequentialLock) {
-                        executeTestSuiteRow(row);
+                        return executeTestSuiteRow(row);
                     }
-                } else {
-                    executeTestSuiteRow(row);
                 }
+                return executeTestSuiteRow(row);
             }));
         }
-        for (Future<?> future : futures) {
+        List<TestSuiteStepResult> results = Collections.synchronizedList(new ArrayList<>());
+        for (Future<TestSuiteStepResult> future : futures) {
             if (testSuiteStopRequested.get()) {
                 break;
             }
             try {
-                future.get();
+                results.add(future.get());
             } catch (Exception e) {
                 if (testSuiteStopRequested.get()) {
                     break;
@@ -1457,41 +1583,273 @@ public class ApiValidatorFxApp extends Application {
                 throw e;
             }
         }
+        lastTestSuiteReportPath = writeTestSuiteReport(workbookPath, results);
     }
 
-    private void executeTestSuiteRow(Map<String, String> row) {
+    private TestSuiteStepResult executeTestSuiteRow(Map<String, String> row) {
         if (testSuiteStopRequested.get()) {
             updateTestSuiteRowStatus(row, "Stopped");
-            return;
+            return TestSuiteStepResult.stopped(row);
         }
         updateTestSuiteRowStatus(row, "Running");
         try {
-            String status = executeRunnerStep(row);
-            updateTestSuiteRowStatus(row, testSuiteStopRequested.get() ? "Stopped" : status);
+            TestSuiteStepResult result = executeRunnerStep(row);
+            updateTestSuiteRowStatus(row, testSuiteStopRequested.get() ? "Stopped" : result.status);
+            return testSuiteStopRequested.get() ? TestSuiteStepResult.stopped(row) : result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             updateTestSuiteRowStatus(row, "Stopped");
+            return TestSuiteStepResult.stopped(row);
         } catch (Exception e) {
-            updateTestSuiteRowStatus(row, "Failed: " + e.getMessage());
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            updateTestSuiteRowStatus(row, "Failed: " + message);
+            return TestSuiteStepResult.failed(row, message);
         }
     }
 
-    private String executeRunnerStep(Map<String, String> row) throws Exception {
+    private TestSuiteStepResult executeRunnerStep(Map<String, String> row) throws Exception {
         String type = row.getOrDefault("type", "");
+        if ("Web Test".equals(type) && !row.getOrDefault("workbook:WEB_TEST", "").isBlank()) {
+            WebTestRunReport webReport = executeRunnerWebTest(row);
+            String status = webReport.failed == 0 && webReport.total > 0 ? "Passed" : "Failed (" + webReport.failed + " failed)";
+            TestSuiteStepResult result = new TestSuiteStepResult(row, status, webReport.failed == 0 && webReport.total > 0);
+            result.details.add("Web steps executed: " + webReport.total + ", passed: " + webReport.passed + ", failed: " + webReport.failed);
+            for (WebTestExecutionResult stepResult : webReport.results) {
+                result.addValidation(stepResult.action, nullToBlank(stepResult.selector),
+                        nullToBlank(stepResult.expectedValue), stepResult.passed ? "PASS" : "FAIL",
+                        stepResult.passed, nullToBlank(stepResult.message));
+                if (stepResult.capturedVariableName != null && !stepResult.capturedVariableName.isBlank()) {
+                    savedVariables.put(stepResult.capturedVariableName, nullToBlank(stepResult.capturedVariableValue));
+                }
+            }
+            Platform.runLater(this::refreshVariablesView);
+            return result;
+        }
         if ("Performance Test".equals(type) && !row.getOrDefault("workbook:PERFORMANCE_TEST", "").isBlank()) {
             JSONObject performance = new JSONObject(row.get("workbook:PERFORMANCE_TEST"));
             ApiRequest request = buildRunnerApiRequest(row, performance.optString("body", row.getOrDefault("workbook:Request Payload", "")));
             PerformanceTestResult result = performanceTestService.runLoadTest(request,
                     Math.max(1, performance.optInt("threads", 1)),
                     Math.max(1, performance.optInt("iterationsPerThread", 1)));
-            return result.errors == 0 ? "Passed (" + result.samples + " samples)" : "Failed (" + result.errors + " errors)";
+            String status = result.errors == 0 ? "Passed (" + result.samples + " samples)" : "Failed (" + result.errors + " errors)";
+            TestSuiteStepResult stepResult = new TestSuiteStepResult(row, status, result.errors == 0);
+            stepResult.addValidation("Performance Test",
+                    Math.max(1, performance.optInt("threads", 1)) + " threads x "
+                            + Math.max(1, performance.optInt("iterationsPerThread", 1)) + " iterations",
+                    "0 errors", result.errors + " errors / " + result.samples + " samples",
+                    result.errors == 0,
+                    "HTML report generated: " + (result.reportIndexPath == null ? "" : result.reportIndexPath.toAbsolutePath()));
+            if (result.reportIndexPath != null) {
+                stepResult.details.add("Performance report: " + result.reportIndexPath);
+            }
+            return stepResult;
         }
         if (!row.getOrDefault("workbook:Hit Request", "").isBlank()) {
             ApiResponse response = apiService.sendRequest(buildRunnerApiRequest(row, row.getOrDefault("workbook:Request Payload", "")));
-            return response.statusCode < 400 ? "Passed (" + response.statusCode + ")" : "Failed HTTP " + response.statusCode;
+            TestSuiteStepResult result = new TestSuiteStepResult(row, "Running validations", response.statusCode < 400);
+            boolean hasRunnerValidations = hasRunnerValidationColumns(row);
+            if (!hasRunnerValidations) {
+                result.details.add("HTTP " + response.statusCode + ", duration: " + response.timeMs + " ms");
+            }
+            Map<String, String> variables = new HashMap<>(savedVariables);
+            runRunnerApiFieldValidation(row, response.rawBody, variables, result);
+            runRunnerJsonCompare(row, response.rawBody, result);
+            runRunnerDbValidation(row, response.rawBody, variables, result);
+            if (!hasRunnerValidations) {
+                result.status = response.statusCode < 400 ? "Passed (" + response.statusCode + ")" : "Failed HTTP " + response.statusCode;
+            } else {
+                result.status = result.passed ? "Passed" : "Failed";
+            }
+            return result;
         }
         Thread.sleep(100);
-        return "Passed";
+        TestSuiteStepResult result = new TestSuiteStepResult(row, "Passed", true);
+        result.addValidation("Manual Step", row.getOrDefault("type", "Manual"), "", "Completed", true, "Manual step marked as passed.");
+        return result;
+    }
+
+    private boolean hasRunnerValidationColumns(Map<String, String> row) {
+        return !row.getOrDefault("workbook:API_FIELD_VALIDATION", "").isBlank()
+                || !row.getOrDefault("workbook:JSON_COMPARE", "").isBlank()
+                || !row.getOrDefault("workbook:DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("workbook:DB_CONNECTION", "").isBlank()
+                || !row.getOrDefault("workbook:DB_QUERY", "").isBlank()
+                || !row.getOrDefault("workbook:API_DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("workbook:DB_COLUMN_VALIDATION", "").isBlank();
+    }
+
+    private WebTestRunReport executeRunnerWebTest(Map<String, String> row) throws Exception {
+        JSONObject config = new JSONObject(row.get("workbook:WEB_TEST"));
+        WebTestCase testCase = new WebTestCase();
+        testCase.testName = resolveVariables(config.optString("testName", row.getOrDefault("step", "Web Test")));
+        testCase.startUrl = resolveVariables(config.optString("startUrl"));
+        JSONArray steps = config.optJSONArray("steps");
+        if (steps == null || steps.isEmpty()) {
+            throw new IllegalArgumentException("WEB_TEST step does not contain recorded web steps.");
+        }
+        for (int i = 0; i < steps.length(); i++) {
+            JSONObject item = steps.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            WebTestStep step = new WebTestStep();
+            step.action = item.optString("action");
+            step.selector = resolveVariables(item.optString("selector"));
+            step.value = "Get Text".equalsIgnoreCase(step.action)
+                    ? item.optString("value")
+                    : resolveVariables(item.optString("value"));
+            step.note = item.optString("note");
+            step.suggested = item.optBoolean("suggested");
+            testCase.steps.add(step);
+        }
+        boolean headless = config.optBoolean("headless", false);
+        int slowMoMillis = Math.max(0, config.optInt("slowMoMillis", 0));
+        return playwrightRecorderController.runTest(testCase, headless, slowMoMillis);
+    }
+
+    private void runRunnerApiFieldValidation(Map<String, String> row, String responseBody,
+                                             Map<String, String> variables, TestSuiteStepResult result) {
+        String validationJson = row.getOrDefault("workbook:API_FIELD_VALIDATION", "");
+        if (validationJson.isBlank()) {
+            return;
+        }
+        JSONArray validations = parseOptionalJsonObject(validationJson).optJSONArray("validations");
+        if (validations == null) {
+            validations = parseOptionalJsonArray(validationJson);
+        }
+        Object responseJson = responseBody == null || responseBody.isBlank()
+                ? new JSONObject()
+                : new JSONTokener(responseBody).nextValue();
+        for (int i = 0; i < validations.length(); i++) {
+            JSONObject validation = validations.optJSONObject(i);
+            if (validation == null) {
+                continue;
+            }
+            String path = validation.optString("jsonPath");
+            Object actual = extractJsonPathValue(responseJson, path);
+            String actualValue = actual == null || actual == JSONObject.NULL ? "" : String.valueOf(actual);
+            String actualType = jsonValueType(actual);
+            String nullRule = validation.optString("nullValidation");
+            String typeRule = validation.optString("typeValidation");
+            String expected = resolveRunnerVariables(validation.optString("expectedValueOrVariable"), variables);
+            List<String> errors = fieldValidationErrors(actualType, actualValue, nullRule, typeRule, expected);
+            boolean passed = errors.isEmpty();
+            result.addValidation(path, "Null: " + nullRule + ", Type: " + typeRule,
+                    expected, actualValue, passed, String.join(", ", errors));
+            result.passed = result.passed && passed;
+        }
+    }
+
+    private void runRunnerJsonCompare(Map<String, String> row, String responseBody, TestSuiteStepResult result) throws Exception {
+        String compareJson = row.getOrDefault("workbook:JSON_COMPARE", "");
+        if (compareJson.isBlank()) {
+            return;
+        }
+        JSONObject config = new JSONObject(compareJson);
+        JSONObject expectedResponse = config.optJSONObject("expectedResponse");
+        if (expectedResponse == null) {
+            result.passed = false;
+            result.addValidation("JSON_COMPARE", "JSON Compare", "", "",
+                    false, "JSON_COMPARE step does not contain expectedResponse details.");
+            return;
+        }
+        Path expectedPath = resolveWorkbookRelativePath(selectedWorkbookPath(),
+                expectedResponse.optString("path"), expectedResponse.optString("relativePath"));
+        String expected = Files.readString(expectedPath, StandardCharsets.UTF_8);
+        boolean strict = "STRICT".equalsIgnoreCase(config.optString("compareMode"))
+                || "Strict".equalsIgnoreCase(config.optString("compareMode"));
+        List<Object[]> compareResults = comparator.compare(expected, responseBody, strict, true);
+        boolean mismatch = false;
+        for (Object[] compareResult : compareResults) {
+            String type = valueAt(compareResult, 0);
+            boolean passed = "Match".equals(type) || "Message".equals(type);
+            if (!passed) {
+                mismatch = true;
+            }
+            result.addValidation(valueAt(compareResult, 1), "JSON " + type,
+                    valueAt(compareResult, 2), valueAt(compareResult, 3),
+                    passed, passed ? "" : "JSON comparison mismatch");
+        }
+        if (mismatch) {
+            result.passed = false;
+            result.status = "Failed";
+        }
+    }
+
+    private void runRunnerDbValidation(Map<String, String> row, String responseBody,
+                                       Map<String, String> variables, TestSuiteStepResult result) throws Exception {
+        boolean hasDbValidation = !row.getOrDefault("workbook:DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("workbook:DB_CONNECTION", "").isBlank()
+                || !row.getOrDefault("workbook:DB_QUERY", "").isBlank()
+                || !row.getOrDefault("workbook:API_DB_VALIDATION", "").isBlank()
+                || !row.getOrDefault("workbook:DB_COLUMN_VALIDATION", "").isBlank();
+        if (!hasDbValidation) {
+            return;
+        }
+
+        JSONObject dbValidation = parseOptionalJsonObject(row.get("workbook:DB_VALIDATION"));
+        String sqlTemplate = row.getOrDefault("workbook:DB_QUERY", "");
+        if (sqlTemplate.isBlank()) {
+            sqlTemplate = dbValidation.optString("sqlQuery");
+        }
+        String sqlQuery = resolveRunnerVariables(sqlTemplate, variables);
+        DbConnectionConfig config = runnerDbConnectionConfig(selectedWorkbookPath(), row.get("workbook:DB_CONNECTION"));
+
+        JSONArray apiDbValidations = parseOptionalJsonArray(row.get("workbook:API_DB_VALIDATION"));
+        if (!apiDbValidations.isEmpty()) {
+            List<DbValidationRule> rules = new ArrayList<>();
+            for (int i = 0; i < apiDbValidations.length(); i++) {
+                JSONObject json = apiDbValidations.optJSONObject(i);
+                if (json == null) {
+                    continue;
+                }
+                DbValidationRule rule = new DbValidationRule();
+                rule.apiField = json.optString("apiField");
+                rule.dbColumn = json.optString("dbColumn");
+                rule.operator = json.optString("operator", "=");
+                rule.description = json.optString("description");
+                rules.add(rule);
+            }
+            if (!rules.isEmpty()) {
+                DbValidationReport dbReport = dbValidationService.validate(config, sqlQuery, rules, responseBody, variables);
+                for (DbValidationResult dbResult : dbReport.results) {
+                    result.addValidation(dbResult.field, "API-DB " + dbResult.operator,
+                            dbResult.expectedValue, dbResult.actualValue,
+                            dbResult.passed, dbResult.message);
+                    result.passed = result.passed && dbResult.passed;
+                }
+            }
+        }
+
+        JSONArray dbColumnValidations = parseOptionalJsonArray(row.get("workbook:DB_COLUMN_VALIDATION"));
+        JSONArray legacyColumnValidations = dbValidation.optJSONArray("dbColumnValidations");
+        if (dbColumnValidations.isEmpty() && legacyColumnValidations != null) {
+            dbColumnValidations = legacyColumnValidations;
+        }
+        if (!dbColumnValidations.isEmpty()) {
+            List<Map<String, Object>> rows = dbValidationService.executeQuery(config, sqlQuery, responseBody, variables);
+            for (int i = 0; i < dbColumnValidations.length(); i++) {
+                JSONObject validation = dbColumnValidations.optJSONObject(i);
+                if (validation == null) {
+                    continue;
+                }
+                Object actual = dbColumnActualValue(rows, validation.optString("dbColumnName"));
+                String actualType = dbValueType(actual);
+                String actualValue = actual == null ? "" : String.valueOf(actual);
+                String expected = resolveRunnerVariables(validation.optString("expectedValueOrVariable"), variables);
+                List<String> errors = dbColumnValidationErrors(actualType, actualValue,
+                        validation.optString("nullValidation"), validation.optString("typeValidation"), expected);
+                boolean passed = errors.isEmpty();
+                result.addValidation(validation.optString("dbColumnName"),
+                        "DB Column Null: " + validation.optString("nullValidation")
+                                + ", Type: " + validation.optString("typeValidation"),
+                        expected, actualValue, passed, String.join(", ", errors));
+                result.passed = result.passed && passed;
+            }
+        }
+        if (!result.passed) {
+            result.status = "Failed";
+        }
     }
 
     private ApiRequest buildRunnerApiRequest(Map<String, String> row, String body) {
@@ -1714,7 +2072,7 @@ public class ApiValidatorFxApp extends Application {
     private String replaceSheetData(String sheetXml, List<List<String>> rows) {
         String sheetData = buildSheetData(rows);
         if (sheetXml.matches("(?s).*<sheetData>.*?</sheetData>.*")) {
-            return sheetXml.replaceFirst("(?s)<sheetData>.*?</sheetData>", sheetData);
+            return sheetXml.replaceFirst("(?s)<sheetData>.*?</sheetData>", Matcher.quoteReplacement(sheetData));
         }
         if (sheetXml.contains("<sheetData/>")) {
             return sheetXml.replace("<sheetData/>", sheetData);
@@ -1783,10 +2141,40 @@ public class ApiValidatorFxApp extends Application {
         java.util.regex.Matcher cellMatcher = java.util.regex.Pattern
                 .compile("<c\\b([^>]*)>(.*?)</c>", java.util.regex.Pattern.DOTALL)
                 .matcher(rowXml);
+        int nextColumnIndex = 0;
         while (cellMatcher.find()) {
-            values.add(cellText(cellMatcher.group(1), cellMatcher.group(2), sharedStrings));
+            String attributes = cellMatcher.group(1);
+            int columnIndex = cellColumnIndex(attributes);
+            if (columnIndex < 0) {
+                columnIndex = nextColumnIndex;
+            }
+            while (values.size() < columnIndex) {
+                values.add("");
+            }
+            String value = cellText(attributes, cellMatcher.group(2), sharedStrings);
+            if (values.size() == columnIndex) {
+                values.add(value);
+            } else {
+                values.set(columnIndex, value);
+            }
+            nextColumnIndex = columnIndex + 1;
         }
         return values;
+    }
+
+    private int cellColumnIndex(String cellAttributes) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\br=\"([A-Z]+)\\d+\"")
+                .matcher(cellAttributes);
+        if (!matcher.find()) {
+            return -1;
+        }
+        int column = 0;
+        String letters = matcher.group(1);
+        for (int i = 0; i < letters.length(); i++) {
+            column = column * 26 + (letters.charAt(i) - 'A' + 1);
+        }
+        return column - 1;
     }
 
     private String cellText(String attributes, String cellXml, List<String> sharedStrings) {
@@ -1990,6 +2378,73 @@ public class ApiValidatorFxApp extends Application {
         return Files.exists(path) ? path : null;
     }
 
+    private JSONObject parseOptionalJsonObject(String value) {
+        if (value == null || value.isBlank()) {
+            return new JSONObject();
+        }
+        try {
+            return new JSONObject(value);
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private JSONArray parseOptionalJsonArray(String value) {
+        if (value == null || value.isBlank()) {
+            return new JSONArray();
+        }
+        try {
+            return new JSONArray(value);
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private String resolveRunnerVariables(String text, Map<String, String> variables) {
+        if (text == null) {
+            return "";
+        }
+        String resolved = text;
+        for (Map.Entry<String, String> entry : variables.entrySet()) {
+            resolved = resolved.replace("${" + entry.getKey() + "}", entry.getValue());
+        }
+        return resolveVariables(resolved);
+    }
+
+    private Path resolveWorkbookRelativePath(Path workbookPath, String absolutePath, String relativePath) {
+        if (absolutePath != null && !absolutePath.isBlank() && Files.exists(Path.of(absolutePath))) {
+            return Path.of(absolutePath);
+        }
+        Path workbookDirectory = workbookPath == null ? null : workbookPath.toAbsolutePath().getParent();
+        if (workbookDirectory != null && relativePath != null && !relativePath.isBlank()) {
+            Path resolved = workbookDirectory.resolve(relativePath).normalize();
+            if (Files.exists(resolved)) {
+                return resolved;
+            }
+        }
+        return Path.of(absolutePath == null || absolutePath.isBlank() ? relativePath : absolutePath);
+    }
+
+    private DbConnectionConfig runnerDbConnectionConfig(Path workbookPath, String connectionJson) throws Exception {
+        JSONObject connection = parseOptionalJsonObject(connectionJson);
+        JSONObject json = connection;
+        String path = connection.optString("path");
+        String relativePath = connection.optString("relativePath");
+        if (!path.isBlank() || !relativePath.isBlank()) {
+            Path connectionPath = resolveWorkbookRelativePath(workbookPath, path, relativePath);
+            if (Files.exists(connectionPath)) {
+                json = new JSONObject(Files.readString(connectionPath, StandardCharsets.UTF_8));
+            }
+        }
+        DbConnectionConfig config = new DbConnectionConfig();
+        config.databaseType = json.optString("databaseType", connection.optString("databaseType", "MySQL"));
+        config.jdbcUrl = json.optString("jdbcUrl", connection.optString("jdbcUrl"));
+        config.username = json.optString("username", connection.optString("username"));
+        config.password = json.optString("password", connection.optString("password"));
+        config.driverClass = json.optString("driverClass", connection.optString("driverClass"));
+        return config;
+    }
+
     private List<String> buildWorkbookRow(String suite, String testCase, String step, String type, String details) {
         String hitRequest = "";
         String requestPayload = bodyArea == null ? "" : bodyArea.getText();
@@ -2013,6 +2468,9 @@ public class ApiValidatorFxApp extends Application {
         } else if ("Web Test".equals(type)) {
             webTest = new JSONObject().put("testName", webTestNameField.getText())
                     .put("startUrl", webStartUrlField.getText())
+                    .put("headless", webHeadlessCheck != null && webHeadlessCheck.isSelected())
+                    .put("slowMoMillis", webSlowMoCheck != null && webSlowMoCheck.isSelected() ? 250 : 0)
+                    .put("stepType", "WEB_TEST")
                     .put("steps", new JSONArray(webStepRows)).toString();
         } else if ("Performance Test".equals(type)) {
             hitRequest = new JSONObject().put("method", methodBox == null ? "GET" : methodBox.getValue())
@@ -2330,6 +2788,226 @@ public class ApiValidatorFxApp extends Application {
 
     private void openPerformanceReport() {
         openPath(lastPerformanceReportPath, "No HTML performance report is available yet.");
+    }
+
+    private void openTestSuiteReport() {
+        if (lastTestSuiteReportPath == null || !Files.exists(lastTestSuiteReportPath)) {
+            lastTestSuiteReportPath = latestTestSuiteReportPath();
+        }
+        openPath(lastTestSuiteReportPath, "No HTML test suite report is available yet.");
+    }
+
+    private Path latestTestSuiteReportPath() {
+        Path workbookPath = selectedWorkbookPath();
+        Path reportDirectory = workbookPath == null || workbookPath.getParent() == null
+                ? Path.of("target", "test-suite-reports")
+                : workbookPath.getParent().resolve("Reports");
+        if (!Files.isDirectory(reportDirectory)) {
+            return null;
+        }
+        try (var reports = Files.list(reportDirectory)) {
+            return reports
+                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".html"))
+                    .max((left, right) -> {
+                        try {
+                            return Files.getLastModifiedTime(left).compareTo(Files.getLastModifiedTime(right));
+                        } catch (Exception ignored) {
+                            return 0;
+                        }
+                    })
+                    .orElse(null);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Path writeTestSuiteReport(Path workbookPath, List<TestSuiteStepResult> results) throws Exception {
+        Path reportDirectory = workbookPath == null || workbookPath.getParent() == null
+                ? Path.of("target", "test-suite-reports")
+                : workbookPath.getParent().resolve("Reports");
+        Files.createDirectories(reportDirectory);
+        String suiteName = workbookPath == null
+                ? "test-suite"
+                : workbookNameWithoutExtension(workbookPath.getFileName().toString()).replaceAll("[^A-Za-z0-9_.-]", "_");
+        Path reportPath = reportDirectory.resolve(suiteName + "-report-" + System.currentTimeMillis() + ".html").toAbsolutePath();
+        Files.writeString(reportPath, buildTestSuiteReportHtml(workbookPath, results), StandardCharsets.UTF_8);
+        return reportPath;
+    }
+
+    private String buildTestSuiteReportHtml(Path workbookPath, List<TestSuiteStepResult> results) {
+        long passed = results.stream().filter(result -> result.passed).count();
+        long failed = results.size() - passed;
+        long total = results.size();
+        int passPercent = total == 0 ? 0 : Math.round((passed * 100f) / total);
+        int failPercent = total == 0 ? 0 : 100 - passPercent;
+        Map<String, Map<String, List<Integer>>> tree = new LinkedHashMap<>();
+        for (int i = 0; i < results.size(); i++) {
+            TestSuiteStepResult result = results.get(i);
+            String suite = result.suite == null || result.suite.isBlank() ? "Untitled Suite" : result.suite;
+            String testCase = result.testCase == null || result.testCase.isBlank() ? "Untitled Test Case" : result.testCase;
+            tree.computeIfAbsent(suite, key -> new LinkedHashMap<>())
+                    .computeIfAbsent(testCase, key -> new ArrayList<>())
+                    .add(i);
+        }
+
+        StringBuilder html = new StringBuilder("""
+                <!doctype html>
+                <html>
+                <head>
+                  <meta charset="utf-8">
+                  <title>TestWeave Test Suite Report</title>
+                  <style>
+                    :root{--blue:#1e5ed6;--ink:#172033;--muted:#5f6778;--line:#d2dceb;--bg:#f5f7fb;--panel:#fff;--pass:#12864a;--fail:#c44636}
+                    *{box-sizing:border-box}
+                    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:var(--bg);color:var(--ink)}
+                    header{background:#164da8;color:white;padding:22px 30px}
+                    header h1{margin:0 0 6px;font-size:26px}
+                    header div{opacity:.9;font-size:13px;word-break:break-all}
+                    main{display:grid;grid-template-columns:310px minmax(0,1fr);gap:18px;padding:18px 24px 28px}
+                    aside{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:calc(100vh - 130px);padding:14px;position:sticky;top:14px;align-self:start}
+                    aside h2{margin:0 0 12px;color:var(--blue);font-size:18px}
+                    details{border-top:1px solid #eef2f8;padding:8px 0}
+                    summary{cursor:pointer;font-weight:700;color:#22314d}
+                    .case summary{font-weight:600;color:#44506a;margin-left:10px}
+                    .step-link{display:flex;align-items:center;gap:8px;width:calc(100% - 22px);margin:6px 0 4px 22px;padding:8px 9px;border:1px solid transparent;border-radius:6px;background:white;color:#26344f;text-align:left;cursor:pointer;font:13px Segoe UI,Arial,sans-serif}
+                    .step-link:hover,.step-link.active{border-color:#9db8e9;background:#eef5ff}
+                    .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:0 0 auto}.dot.pass{background:var(--pass)}.dot.fail{background:var(--fail)}
+                    .summary-cards{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:14px}
+                    .metric{background:var(--panel);border:1px solid var(--line);padding:14px;border-radius:8px}
+                    .metric b{display:block;font-size:28px;line-height:1.1}
+                    .viz{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-bottom:14px}
+                    .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
+                    .pie{width:164px;height:164px;border-radius:50%;margin:8px auto;background:conic-gradient(var(--pass) 0 var(--pass-pct),var(--fail) var(--pass-pct) 100%)}
+                    .bar{height:28px;display:flex;border-radius:5px;overflow:hidden;background:#e9eef7;margin:20px 0 10px}.passbar{background:var(--pass)}.failbar{background:var(--fail)}
+                    .legend{color:var(--muted);font-size:14px}
+                    .detail{display:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}
+                    .detail.active{display:block}
+                    .detail-head{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #e6edf7;padding-bottom:12px;margin-bottom:14px}
+                    h2{margin:0;color:var(--blue);font-size:22px}.meta{color:var(--muted);font-size:14px;margin-top:6px}
+                    .pill{border-radius:999px;padding:6px 10px;font-weight:700;align-self:start}.pill.pass{background:#e8f6ef;color:var(--pass)}.pill.fail{background:#fdecea;color:var(--fail)}
+                    .facts{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin-bottom:14px}
+                    .fact{background:#f8fbff;border:1px solid #e4ebf6;border-radius:6px;padding:10px}.fact span{display:block;color:var(--muted);font-size:12px}.fact b{font-size:15px}
+                    .error{background:#fff5f3;border:1px solid #f0bbb2;color:#8f2f22;border-radius:6px;padding:12px;margin:12px 0}
+                    table{width:100%;border-collapse:collapse;font-size:14px}
+                    th,td{border:1px solid #d9e2f1;padding:8px;vertical-align:top;text-align:left}
+                    th{background:#eef3fb}.ok{color:var(--pass);font-weight:700}.bad{color:var(--fail);font-weight:700}
+                    pre{white-space:pre-wrap;margin:0;font-family:Consolas,monospace;font-size:13px}
+                    @media(max-width:960px){main{grid-template-columns:1fr}aside{position:static;min-height:auto}.summary-cards,.viz,.facts{grid-template-columns:1fr}}
+                  </style>
+                </head>
+                <body>
+                """);
+        html.append("<header><h1>Test Suite Run Report</h1><div>")
+                .append(escapeXml(workbookPath == null ? "" : workbookPath.toAbsolutePath().toString()))
+                .append("</div></header><main>");
+
+        html.append("<aside><h2>Execution Tree</h2>");
+        for (Map.Entry<String, Map<String, List<Integer>>> suiteEntry : tree.entrySet()) {
+            html.append("<details open><summary>").append(escapeXml(suiteEntry.getKey())).append("</summary>");
+            for (Map.Entry<String, List<Integer>> caseEntry : suiteEntry.getValue().entrySet()) {
+                html.append("<details class=\"case\" open><summary>").append(escapeXml(caseEntry.getKey())).append("</summary>");
+                for (Integer reportIndex : caseEntry.getValue()) {
+                    TestSuiteStepResult result = results.get(reportIndex);
+                    html.append("<button class=\"step-link")
+                            .append(reportIndex == 0 ? " active" : "")
+                            .append("\" data-step=\"step-").append(reportIndex).append("\"><span class=\"dot ")
+                            .append(result.passed ? "pass" : "fail")
+                            .append("\"></span><span>")
+                            .append(escapeXml(result.stepName))
+                            .append("</span></button>");
+                }
+                html.append("</details>");
+            }
+            html.append("</details>");
+        }
+        html.append("</aside><section>");
+
+        html.append("<div class=\"summary-cards\">")
+                .append(metricHtml("Total Steps", String.valueOf(total)))
+                .append(metricHtml("Passed", String.valueOf(passed)))
+                .append(metricHtml("Failed", String.valueOf(failed)))
+                .append(metricHtml("Pass Rate", passPercent + "%"))
+                .append("</div>");
+        html.append("<div class=\"viz\"><div class=\"card\"><h2>Status Split</h2><div class=\"pie\" style=\"--pass-pct:")
+                .append(passPercent)
+                .append("%\"></div><div class=\"legend\">Passed: ")
+                .append(passed)
+                .append(" | Failed: ")
+                .append(failed)
+                .append("</div></div><div class=\"card\"><h2>Run Health</h2><div class=\"bar\">")
+                .append("<div class=\"passbar\" style=\"width:").append(passPercent).append("%\"></div>")
+                .append("<div class=\"failbar\" style=\"width:").append(failPercent).append("%\"></div>")
+                .append("</div><div class=\"legend\">Use the execution tree to inspect every test step, validations, expected values, actual values, and error messages.</div></div></div>");
+
+        for (int i = 0; i < results.size(); i++) {
+            TestSuiteStepResult result = results.get(i);
+            String firstFailure = result.passed ? "" : result.validations.stream()
+                    .filter(validation -> !validation.passed)
+                    .map(validation -> validation.message)
+                    .filter(message -> message != null && !message.isBlank())
+                    .findFirst()
+                    .orElse(result.status);
+            html.append("<article id=\"step-").append(i).append("\" class=\"detail")
+                    .append(i == 0 ? " active" : "")
+                    .append("\"><div class=\"detail-head\"><div><h2>")
+                    .append(escapeXml(result.stepName))
+                    .append("</h2><div class=\"meta\">")
+                    .append(escapeXml(result.suite)).append(" / ")
+                    .append(escapeXml(result.testCase))
+                    .append("</div></div><span class=\"pill ")
+                    .append(result.passed ? "pass\">PASS" : "fail\">FAIL")
+                    .append("</span></div>");
+            html.append("<div class=\"facts\"><div class=\"fact\"><span>Step Type</span><b>")
+                    .append(escapeXml(result.type))
+                    .append("</b></div><div class=\"fact\"><span>Status</span><b>")
+                    .append(escapeXml(result.status))
+                    .append("</b></div><div class=\"fact\"><span>Validations</span><b>")
+                    .append(result.validations.size())
+                    .append("</b></div><div class=\"fact\"><span>Result</span><b>")
+                    .append(result.passed ? "Passed" : "Failed")
+                    .append("</b></div></div>");
+            if (!firstFailure.isBlank()) {
+                html.append("<div class=\"error\"><b>Failure Error Message</b><br>")
+                        .append(escapeXml(firstFailure))
+                        .append("</div>");
+            }
+            html.append("<table><thead><tr><th>Status</th><th>Field</th><th>Validation</th><th>Expected</th><th>Actual</th><th>Message</th></tr></thead><tbody>");
+            if (result.validations.isEmpty()) {
+                html.append("<tr><td>")
+                        .append(result.passed ? "<span class=\"ok\">PASS</span>" : "<span class=\"bad\">FAIL</span>")
+                        .append("</td><td>").append(escapeXml(result.stepName))
+                        .append("</td><td>").append(escapeXml(result.type))
+                        .append("</td><td><pre></pre></td><td><pre></pre></td><td>")
+                        .append(escapeXml(result.status))
+                        .append("</td></tr>");
+            } else {
+                for (TestSuiteValidationRow validation : result.validations) {
+                    html.append("<tr><td>")
+                            .append(validation.passed ? "<span class=\"ok\">PASS</span>" : "<span class=\"bad\">FAIL</span>")
+                            .append("</td><td>").append(escapeXml(validation.field))
+                            .append("</td><td>").append(escapeXml(validation.validation))
+                            .append("</td><td><pre>").append(escapeXml(validation.expected))
+                            .append("</pre></td><td><pre>").append(escapeXml(validation.actual))
+                            .append("</pre></td><td>")
+                            .append(escapeXml(validation.message))
+                            .append("</td></tr>");
+                }
+            }
+            html.append("</tbody></table></article>");
+        }
+        html.append("</section></main><script>")
+                .append("document.querySelectorAll('.step-link').forEach(function(btn){btn.addEventListener('click',function(){")
+                .append("document.querySelectorAll('.step-link').forEach(function(item){item.classList.remove('active')});")
+                .append("document.querySelectorAll('.detail').forEach(function(item){item.classList.remove('active')});")
+                .append("btn.classList.add('active');var target=document.getElementById(btn.dataset.step);")
+                .append("if(target){target.classList.add('active');target.scrollIntoView({behavior:'smooth',block:'start'});}")
+                .append("});});")
+                .append("</script></body></html>");
+        return html.toString();
+    }
+
+    private String metricHtml(String label, String value) {
+        return "<div class=\"metric\"><b>" + escapeXml(value) + "</b>" + escapeXml(label) + "</div>";
     }
 
     private void testDbConnection() {
@@ -3174,6 +3852,217 @@ public class ApiValidatorFxApp extends Application {
         }
     }
 
+    private Object extractJsonPathValue(Object root, String path) {
+        String normalized = path == null ? "" : path.trim();
+        if (normalized.isEmpty() || "$".equals(normalized)) {
+            return root;
+        }
+        if (normalized.startsWith("$.")) {
+            normalized = normalized.substring(2);
+        } else if (normalized.startsWith("$")) {
+            normalized = normalized.substring(1);
+        }
+        Object current = root;
+        for (String part : normalized.split("\\.")) {
+            if (part.isBlank()) {
+                continue;
+            }
+            current = stepIntoJsonPath(current, part);
+        }
+        return current;
+    }
+
+    private Object stepIntoJsonPath(Object current, String part) {
+        String remaining = part;
+        int bracketIndex = remaining.indexOf('[');
+        Object value = bracketIndex <= 0 ? current : objectJsonField(current, remaining.substring(0, bracketIndex));
+        if (bracketIndex < 0) {
+            return objectJsonField(current, remaining);
+        }
+        while (bracketIndex >= 0) {
+            int closeIndex = remaining.indexOf(']', bracketIndex);
+            int index = Integer.parseInt(remaining.substring(bracketIndex + 1, closeIndex).trim());
+            if (!(value instanceof JSONArray array)) {
+                throw new IllegalArgumentException("Path segment is not an array: " + part);
+            }
+            value = array.get(index);
+            bracketIndex = remaining.indexOf('[', closeIndex);
+        }
+        return value;
+    }
+
+    private Object objectJsonField(Object current, String fieldName) {
+        if (fieldName == null || fieldName.isBlank()) {
+            return current;
+        }
+        if (current instanceof JSONObject object) {
+            if (!object.has(fieldName)) {
+                throw new IllegalArgumentException("Response field not found: " + fieldName);
+            }
+            return object.get(fieldName);
+        }
+        if (current instanceof JSONArray array) {
+            if (array.isEmpty()) {
+                throw new IllegalArgumentException("Response array is empty for field: " + fieldName);
+            }
+            return objectJsonField(array.get(0), fieldName);
+        }
+        throw new IllegalArgumentException("Path segment is not an object: " + fieldName);
+    }
+
+    private String jsonValueType(Object value) {
+        if (value == null || value == JSONObject.NULL) {
+            return "null";
+        }
+        if (value instanceof JSONObject) {
+            return "object";
+        }
+        if (value instanceof JSONArray) {
+            return "array";
+        }
+        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
+            return "integer";
+        }
+        if (value instanceof Number) {
+            return "number";
+        }
+        if (value instanceof Boolean) {
+            return "boolean";
+        }
+        return "string";
+    }
+
+    private List<String> fieldValidationErrors(String actualType, String actualValue,
+                                               String nullRule, String typeRule, String expectedValue) {
+        List<String> errors = new ArrayList<>();
+        if ("Not Null".equals(nullRule) && "null".equals(actualType)) {
+            errors.add("expected not null");
+        } else if ("Null".equals(nullRule) && !"null".equals(actualType)) {
+            errors.add("expected null");
+        }
+        if (!typeRule.isBlank() && !"Skip".equals(typeRule) && !typeRule.equals(actualType)) {
+            if (!("number".equals(typeRule) && "integer".equals(actualType))) {
+                errors.add("expected " + typeRule);
+            }
+        }
+        if (!expectedValue.isBlank() && !expectedValue.equals(actualValue)) {
+            errors.add("expected value mismatch");
+        }
+        return errors;
+    }
+
+    private Object dbColumnActualValue(List<Map<String, Object>> rows, String columnReference) {
+        if (rows == null || rows.isEmpty()) {
+            throw new IllegalArgumentException("DB query returned no rows.");
+        }
+        String columnName = columnReference == null ? "" : columnReference.trim();
+        int rowIndex = 0;
+        Matcher matcher = java.util.regex.Pattern.compile("^(.+)\\[(\\d+)]$").matcher(columnName);
+        if (matcher.matches()) {
+            columnName = matcher.group(1).trim();
+            rowIndex = Integer.parseInt(matcher.group(2));
+        }
+        if (rowIndex >= rows.size()) {
+            throw new IllegalArgumentException("DB row index " + rowIndex + " is not available for " + columnName);
+        }
+        Map<String, Object> row = rows.get(rowIndex);
+        if (!row.containsKey(columnName)) {
+            throw new IllegalArgumentException("DB column not found: " + columnName);
+        }
+        return row.get(columnName);
+    }
+
+    private List<String> dbColumnValidationErrors(String actualType, String actualValue,
+                                                  String nullRule, String typeRule, String expectedValue) {
+        List<String> errors = new ArrayList<>();
+        boolean isNull = "null".equals(actualType);
+        boolean isEmpty = actualValue == null || actualValue.isEmpty();
+        boolean isBlank = actualValue == null || actualValue.isBlank();
+        if ("Not Null".equals(nullRule) && isNull) {
+            errors.add("expected not null");
+        } else if ("Null".equals(nullRule) && !isNull) {
+            errors.add("expected null");
+        } else if ("Not Empty".equals(nullRule) && (isNull || isEmpty)) {
+            errors.add("expected not empty");
+        } else if ("Empty".equals(nullRule) && !isEmpty) {
+            errors.add("expected empty");
+        } else if ("Not Blank".equals(nullRule) && (isNull || isBlank)) {
+            errors.add("expected not blank");
+        } else if ("Blank".equals(nullRule) && !isBlank) {
+            errors.add("expected blank");
+        }
+        if (!typeRule.isBlank() && !"Skip".equals(typeRule) && !dbTypeMatches(typeRule, actualType, actualValue)) {
+            errors.add("expected " + typeRule);
+        }
+        if (!expectedValue.isBlank() && !expectedValue.equals(actualValue)) {
+            errors.add("expected value mismatch");
+        }
+        return errors;
+    }
+
+    private boolean dbTypeMatches(String expectedType, String actualType, String actualValue) {
+        if (expectedType.equals(actualType)) {
+            return true;
+        }
+        if ("number".equals(expectedType) && ("integer".equals(actualType) || "decimal".equals(actualType))) {
+            return true;
+        }
+        if ("datetime".equals(expectedType) && "timestamp".equals(actualType)) {
+            return true;
+        }
+        if ("timestamp".equals(expectedType) && "datetime".equals(actualType)) {
+            return true;
+        }
+        if ("uuid".equals(expectedType)) {
+            return actualValue.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
+        }
+        if ("json".equals(expectedType)) {
+            String trimmed = actualValue.trim();
+            try {
+                if (trimmed.startsWith("{")) {
+                    new JSONObject(trimmed);
+                    return true;
+                }
+                if (trimmed.startsWith("[")) {
+                    new JSONArray(trimmed);
+                    return true;
+                }
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private String dbValueType(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) {
+            return "integer";
+        }
+        if (value instanceof java.math.BigDecimal || value instanceof Float || value instanceof Double) {
+            return "decimal";
+        }
+        if (value instanceof Number) {
+            return "number";
+        }
+        if (value instanceof Boolean) {
+            return "boolean";
+        }
+        if (value instanceof java.sql.Date || value instanceof java.time.LocalDate) {
+            return "date";
+        }
+        if (value instanceof java.sql.Time || value instanceof java.time.LocalTime) {
+            return "time";
+        }
+        if (value instanceof java.sql.Timestamp || value instanceof java.time.Instant
+                || value instanceof java.time.LocalDateTime || value instanceof java.time.OffsetDateTime) {
+            return "timestamp";
+        }
+        return "string";
+    }
+
     private boolean compareValues(String expected, String actual, String operator) {
         String op = operator == null ? "equals" : operator.toLowerCase();
         return switch (op) {
@@ -3243,11 +4132,67 @@ public class ApiValidatorFxApp extends Application {
         return row;
     }
 
+    private static class TestSuiteStepResult {
+        final String suite;
+        final String testCase;
+        final String stepName;
+        final String type;
+        String status;
+        boolean passed;
+        final List<String> details = new ArrayList<>();
+        final List<TestSuiteValidationRow> validations = new ArrayList<>();
+
+        TestSuiteStepResult(Map<String, String> row, String status, boolean passed) {
+            this.suite = row.getOrDefault("suite", "");
+            this.testCase = row.getOrDefault("case", "");
+            this.stepName = row.getOrDefault("step", "");
+            this.type = row.getOrDefault("type", "");
+            this.status = status;
+            this.passed = passed;
+        }
+
+        static TestSuiteStepResult failed(Map<String, String> row, String message) {
+            TestSuiteStepResult result = new TestSuiteStepResult(row, "Failed: " + message, false);
+            result.addValidation("Step Error", "Execution failed", "", "", false, message);
+            return result;
+        }
+
+        static TestSuiteStepResult stopped(Map<String, String> row) {
+            TestSuiteStepResult result = new TestSuiteStepResult(row, "Stopped", false);
+            result.addValidation("Step", "Execution stopped", "", "", false, "Execution stopped before this step completed.");
+            return result;
+        }
+
+        void addValidation(String field, String validation, String expected, String actual, boolean passed, String message) {
+            TestSuiteValidationRow row = new TestSuiteValidationRow();
+            row.field = field == null ? "" : field;
+            row.validation = validation == null ? "" : validation;
+            row.expected = expected == null ? "" : expected;
+            row.actual = actual == null ? "" : actual;
+            row.passed = passed;
+            row.message = message == null ? "" : message;
+            validations.add(row);
+        }
+    }
+
+    private static class TestSuiteValidationRow {
+        String field;
+        String validation;
+        String expected;
+        String actual;
+        boolean passed;
+        String message;
+    }
+
     private String normalizeVariableName(String value) {
         if (value == null || value.isBlank()) {
             return "variable";
         }
         return value.replace("${", "").replace("}", "").replaceAll("[^A-Za-z0-9_]", "_");
+    }
+
+    private String nullToBlank(String value) {
+        return value == null ? "" : value;
     }
 
     private String valueAt(Object[] values, int index) {

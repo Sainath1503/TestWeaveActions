@@ -385,20 +385,104 @@ public class TestWeaveCliRunner {
     private void writeReports(Path reportDir, List<Map<String, String>> results) throws Exception {
         JSONArray json = new JSONArray(results);
         Files.writeString(reportDir.resolve("testweave-results.json"), json.toString(2), StandardCharsets.UTF_8);
-        StringBuilder html = new StringBuilder("<html><body><h1>TestWeave Results</h1><table border='1'><tr>");
-        for (String header : List.of("Test Suite", "Test Case", "Test Step", "Execution Mode", "Status", "Message")) {
+        String html = buildGithubActionsReportHtml(results);
+        Files.writeString(reportDir.resolve("index.html"), html, StandardCharsets.UTF_8);
+        Files.writeString(reportDir.resolve(reportFileName(results)), html, StandardCharsets.UTF_8);
+    }
+
+    private String buildGithubActionsReportHtml(List<Map<String, String>> results) {
+        long passed = results.stream().filter(this::isPassed).count();
+        long failedCount = results.stream().filter(this::isFailed).count();
+        long total = results.size();
+        int passPercent = total == 0 ? 0 : Math.round((passed * 100f) / total);
+        int failPercent = total == 0 ? 0 : 100 - passPercent;
+
+        StringBuilder html = new StringBuilder();
+        html.append("""
+                <!doctype html>
+                <html>
+                <head>
+                <meta charset="utf-8">
+                <title>TestWeave GitHub Actions Report</title>
+                <style>
+                body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#0f172a}
+                header{background:#10233f;color:#fff;padding:24px 32px}
+                h1{margin:0;font-size:28px} .sub{margin-top:6px;color:#cbd5e1}
+                main{padding:24px 32px}.summary{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:14px;margin-bottom:22px}
+                .card{background:#fff;border:1px solid #d9e2ef;border-radius:8px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+                .label{color:#64748b;font-size:13px}.value{font-size:26px;font-weight:700;margin-top:6px}
+                .pass{color:#15803d}.fail{color:#b91c1c}.ready{color:#1d4ed8}
+                table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #d9e2ef}
+                th{background:#eaf1fb;text-align:left;padding:11px;border:1px solid #d9e2ef}
+                td{padding:10px;border:1px solid #d9e2ef;vertical-align:top}
+                tr.failed-row{background:#fff5f5}tr.passed-row{background:#f7fff8}
+                .status{font-weight:700}.mono{font-family:Consolas,Menlo,monospace;white-space:pre-wrap}
+                .bar{height:12px;background:#fee2e2;border-radius:999px;overflow:hidden;margin-top:10px}
+                .bar span{display:block;height:100%;background:#22c55e}
+                .section-title{font-size:20px;margin:24px 0 10px}
+                </style>
+                </head>
+                <body>
+                """);
+        html.append("<header><h1>TestWeave GitHub Actions Report</h1><div class='sub'>Generated ")
+                .append(escapeHtml(LocalDateTime.now().toString()))
+                .append("</div></header><main>");
+        html.append("<section class='summary'>")
+                .append(summaryCard("Total Steps", String.valueOf(total), ""))
+                .append(summaryCard("Passed", String.valueOf(passed), "pass"))
+                .append(summaryCard("Failed", String.valueOf(failedCount), "fail"))
+                .append(summaryCard("Pass Rate", passPercent + "%", passPercent == 100 ? "pass" : "ready"))
+                .append("</section>");
+        html.append("<div class='card'><div class='label'>Execution result</div><div class='bar'><span style='width:")
+                .append(passPercent)
+                .append("%'></span></div><div class='sub'>")
+                .append(passPercent).append("% passed, ").append(failPercent).append("% failed</div></div>");
+
+        html.append("<h2 class='section-title'>Step Execution Details</h2>");
+        html.append("<table><tr>");
+        for (String header : List.of("Status", "Suite", "Case", "Step", "Execution Mode", "Started", "Finished", "Message")) {
             html.append("<th>").append(header).append("</th>");
         }
         html.append("</tr>");
         for (Map<String, String> result : results) {
-            html.append("<tr>");
-            for (String header : List.of("Test Suite", "Test Case", "Test Step", "Execution Mode", "Status", "Message")) {
-                html.append("<td>").append(escapeHtml(result.getOrDefault(header, ""))).append("</td>");
-            }
-            html.append("</tr>");
+            String rowClass = isFailed(result) ? "failed-row" : isPassed(result) ? "passed-row" : "";
+            html.append("<tr class='").append(rowClass).append("'>")
+                    .append("<td class='status ").append(isFailed(result) ? "fail" : "pass").append("'>")
+                    .append(escapeHtml(result.getOrDefault("Status", ""))).append("</td>")
+                    .append("<td>").append(escapeHtml(result.getOrDefault("Test Suite", ""))).append("</td>")
+                    .append("<td>").append(escapeHtml(result.getOrDefault("Test Case", ""))).append("</td>")
+                    .append("<td>").append(escapeHtml(result.getOrDefault("Test Step", ""))).append("</td>")
+                    .append("<td>").append(escapeHtml(result.getOrDefault("Execution Mode", ""))).append("</td>")
+                    .append("<td>").append(escapeHtml(result.getOrDefault("Started", ""))).append("</td>")
+                    .append("<td>").append(escapeHtml(result.getOrDefault("Finished", ""))).append("</td>")
+                    .append("<td class='mono'>").append(escapeHtml(result.getOrDefault("Message", ""))).append("</td>")
+                    .append("</tr>");
         }
-        html.append("</table></body></html>");
-        Files.writeString(reportDir.resolve("index.html"), html.toString(), StandardCharsets.UTF_8);
+        html.append("</table></main></body></html>");
+        return html.toString();
+    }
+
+    private String summaryCard(String label, String value, String cssClass) {
+        return "<div class='card'><div class='label'>" + escapeHtml(label) + "</div><div class='value "
+                + cssClass + "'>" + escapeHtml(value) + "</div></div>";
+    }
+
+    private String reportFileName(List<Map<String, String>> results) {
+        String suite = results.stream()
+                .map(result -> result.getOrDefault("Test Suite", "test-suite"))
+                .filter(value -> value != null && !value.isBlank())
+                .findFirst()
+                .orElse("test-suite")
+                .replaceAll("[^A-Za-z0-9_.-]", "_");
+        return suite + "-github-actions-report-" + System.currentTimeMillis() + ".html";
+    }
+
+    private boolean isPassed(Map<String, String> result) {
+        return result.getOrDefault("Status", "").toLowerCase().startsWith("passed");
+    }
+
+    private boolean isFailed(Map<String, String> result) {
+        return result.getOrDefault("Status", "").toLowerCase().startsWith("failed");
     }
 
     private void printSummary(List<Map<String, String>> results) {

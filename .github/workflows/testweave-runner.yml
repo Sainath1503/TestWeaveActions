@@ -41,9 +41,13 @@ jobs:
         run: |
           test -f "${{ inputs.suite_file }}"
           ls -l "${{ inputs.suite_file }}"
+      - name: Install Playwright browser
+        run: |
+          java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
       - name: Run TestWeave suite
         run: |
           java \
+            -Dtestweave.http.timeout.ms=60000 \
             -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \
             -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \
             -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \

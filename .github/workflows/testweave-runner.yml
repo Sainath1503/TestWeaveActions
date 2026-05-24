@@ -43,7 +43,11 @@ jobs:
           ls -l "${{ inputs.suite_file }}"
       - name: Run TestWeave suite
         run: |
-          java -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
+          java \
+            -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \
+            -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \
+            -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \
+            -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
             --suite "${{ inputs.suite_file }}" \
             --parallel "${{ inputs.parallel }}" \
             --threads "${{ inputs.threads }}" \

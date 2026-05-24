@@ -2,22 +2,32 @@ package ui;
 
 import model.ApiRequest;
 import model.ApiResponse;
+import model.PerformanceTestResult;
+import model.WebTestCase;
+import model.WebTestExecutionResult;
+import model.WebTestRunReport;
+import model.WebTestStep;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import service.ApiService;
+import service.PerformanceTestService;
+import service.PlaywrightRecorderController;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -30,10 +40,20 @@ public class TestWeaveCliRunner {
             "DB_COLUMN_VALIDATION", "WEB_TEST", "PERFORMANCE_TEST", "Run", "Execution Mode", "Status");
 
     private final ApiService apiService = new ApiService();
+    private final PerformanceTestService performanceTestService = new PerformanceTestService();
+    private final PlaywrightRecorderController playwrightRecorderController = new PlaywrightRecorderController();
     private final AtomicBoolean failed = new AtomicBoolean(false);
 
     public static void main(String[] args) throws Exception {
+        configureCiLogging();
         new TestWeaveCliRunner().run(args);
+    }
+
+    private static void configureCiLogging() {
+        System.setProperty("log4j2.loggerContextFactory",
+                "org.apache.logging.log4j.simple.SimpleLoggerContextFactory");
+        System.setProperty("org.apache.logging.log4j.simplelog.StatusLogger.level", "OFF");
+        System.setProperty("org.apache.logging.log4j.simplelog.defaultLevel", "error");
     }
 
     private void run(String[] args) throws Exception {
@@ -44,13 +64,21 @@ public class TestWeaveCliRunner {
         Path reportDir = Path.of(options.getOrDefault("report", "target/testweave-report"));
         Files.createDirectories(reportDir);
 
-        List<Map<String, String>> rows = readRows(suite).stream()
-                .filter(row -> Boolean.parseBoolean(row.getOrDefault("Run", "true")))
-                .toList();
-        List<Map<String, String>> results = runRows(rows, parallel ? threads : 1);
-        writeReports(reportDir, results);
-        if (failed.get()) {
-            throw new IllegalStateException("One or more TestWeave steps failed.");
+        try {
+            List<Map<String, String>> rows = readRows(suite).stream()
+                    .filter(row -> Boolean.parseBoolean(row.getOrDefault("Run", "true")))
+                    .toList();
+            List<Map<String, String>> results = runRows(rows, parallel ? threads : 1);
+            writeReports(reportDir, results);
+            printSummary(results);
+            if (failed.get()) {
+                throw new IllegalStateException("One or more TestWeave steps failed.");
+            }
+        } catch (Exception e) {
+            if (!Files.exists(reportDir.resolve("testweave-results.json"))) {
+                writeReports(reportDir, List.of(startupFailureResult(suite, e)));
+            }
+            throw e;
         }
     }
 
@@ -81,15 +109,19 @@ public class TestWeaveCliRunner {
         Map<String, String> result = new LinkedHashMap<>(row);
         result.put("Started", LocalDateTime.now().toString());
         try {
-            if (!row.getOrDefault("Hit Request", "").isBlank()) {
+            if (!row.getOrDefault("WEB_TEST", "").isBlank()) {
+                executeWebTest(row, result);
+            } else if (!row.getOrDefault("PERFORMANCE_TEST", "").isBlank()) {
+                executePerformanceTest(row, result);
+            } else if (!row.getOrDefault("Hit Request", "").isBlank()) {
                 ApiResponse response = apiService.sendRequest(buildRequest(row));
                 boolean passed = response.statusCode < 400;
                 result.put("Status", passed ? "Passed" : "Failed");
-                result.put("Message", "HTTP " + response.statusCode);
+                result.put("Message", "HTTP " + response.statusCode + ", duration: " + response.timeMs + " ms");
                 failed.compareAndSet(false, !passed);
             } else {
                 result.put("Status", "Passed");
-                result.put("Message", "No executable API payload found; marked as passed.");
+                result.put("Message", "Manual step completed.");
             }
         } catch (Exception e) {
             failed.set(true);
@@ -100,13 +132,96 @@ public class TestWeaveCliRunner {
         return result;
     }
 
+    private void executeWebTest(Map<String, String> row, Map<String, String> result) throws Exception {
+        WebTestRunReport webReport = playwrightRecorderController.runTest(buildWebTestCase(row), webHeadless(row), webSlowMo(row));
+        boolean passed = webReport.failed == 0 && webReport.total > 0;
+        result.put("Status", passed ? "Passed" : "Failed");
+        result.put("Message", "Web steps executed: " + webReport.total
+                + ", passed: " + webReport.passed + ", failed: " + webReport.failed
+                + firstFailedWebMessage(webReport));
+        failed.compareAndSet(false, !passed);
+    }
+
+    private WebTestCase buildWebTestCase(Map<String, String> row) {
+        JSONObject config = new JSONObject(row.get("WEB_TEST"));
+        WebTestCase testCase = new WebTestCase();
+        testCase.testName = resolveVariables(config.optString("testName", row.getOrDefault("Test Step", "Web Test")));
+        testCase.startUrl = resolveVariables(config.optString("startUrl"));
+        JSONArray steps = config.optJSONArray("steps");
+        if (steps == null || steps.isEmpty()) {
+            throw new IllegalArgumentException("WEB_TEST step does not contain recorded web steps.");
+        }
+        for (int i = 0; i < steps.length(); i++) {
+            JSONObject item = steps.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            WebTestStep step = new WebTestStep();
+            step.action = item.optString("action");
+            step.selector = resolveVariables(item.optString("selector"));
+            step.value = "Get Text".equalsIgnoreCase(step.action)
+                    ? item.optString("value")
+                    : resolveVariables(item.optString("value"));
+            step.note = item.optString("note");
+            step.suggested = item.optBoolean("suggested");
+            testCase.steps.add(step);
+        }
+        return testCase;
+    }
+
+    private boolean webHeadless(Map<String, String> row) {
+        JSONObject config = new JSONObject(row.get("WEB_TEST"));
+        if ("true".equalsIgnoreCase(System.getenv("GITHUB_ACTIONS"))) {
+            return true;
+        }
+        return config.optBoolean("headless", false);
+    }
+
+    private int webSlowMo(Map<String, String> row) {
+        if ("true".equalsIgnoreCase(System.getenv("GITHUB_ACTIONS"))) {
+            return 0;
+        }
+        JSONObject config = new JSONObject(row.get("WEB_TEST"));
+        return Math.max(0, config.optInt("slowMoMillis", 0));
+    }
+
+    private String firstFailedWebMessage(WebTestRunReport webReport) {
+        for (WebTestExecutionResult stepResult : webReport.results) {
+            if (!stepResult.passed) {
+                return "; first failure: " + nullToBlank(stepResult.action)
+                        + " " + nullToBlank(stepResult.selector)
+                        + " - " + nullToBlank(stepResult.message);
+            }
+        }
+        return "";
+    }
+
+    private void executePerformanceTest(Map<String, String> row, Map<String, String> result) throws Exception {
+        JSONObject performance = new JSONObject(row.get("PERFORMANCE_TEST"));
+        String body = performance.optString("body", row.getOrDefault("Request Payload", ""));
+        PerformanceTestResult performanceResult = performanceTestService.runLoadTest(buildRequest(row, body),
+                Math.max(1, performance.optInt("threads", 1)),
+                Math.max(1, performance.optInt("iterationsPerThread", 1)));
+        boolean passed = performanceResult.errors == 0;
+        result.put("Status", passed ? "Passed" : "Failed");
+        result.put("Message", "Performance samples: " + performanceResult.samples
+                + ", errors: " + performanceResult.errors
+                + ", report: " + nullToBlank(performanceResult.reportIndexPath == null
+                ? "" : performanceResult.reportIndexPath.toString()));
+        failed.compareAndSet(false, !passed);
+    }
+
     private ApiRequest buildRequest(Map<String, String> row) {
+        return buildRequest(row, row.getOrDefault("Request Payload", ""));
+    }
+
+    private ApiRequest buildRequest(Map<String, String> row, String body) {
         JSONObject hit = new JSONObject(row.getOrDefault("Hit Request", "{}"));
         ApiRequest request = new ApiRequest();
         request.method = hit.optString("method", "GET");
-        request.url = hit.optString("endpoint", "");
-        request.headers = parseHeaders(hit.optString("headersText", ""));
-        request.body = row.getOrDefault("Request Payload", "");
+        request.url = resolveVariables(hit.optString("endpoint", ""));
+        request.headers = parseHeaders(resolveVariables(hit.optString("headersText", "")));
+        request.body = resolveVariables(body == null ? "" : body);
         request.token = "";
         return request;
     }
@@ -187,10 +302,40 @@ public class TestWeaveCliRunner {
         java.util.regex.Matcher cellMatcher = java.util.regex.Pattern
                 .compile("<c\\b([^>]*)>(.*?)</c>", java.util.regex.Pattern.DOTALL)
                 .matcher(rowXml);
+        int nextColumnIndex = 0;
         while (cellMatcher.find()) {
-            values.add(cellText(cellMatcher.group(1), cellMatcher.group(2), sharedStrings));
+            String attributes = cellMatcher.group(1);
+            int columnIndex = cellColumnIndex(attributes);
+            if (columnIndex < 0) {
+                columnIndex = nextColumnIndex;
+            }
+            while (values.size() < columnIndex) {
+                values.add("");
+            }
+            String value = cellText(attributes, cellMatcher.group(2), sharedStrings);
+            if (values.size() == columnIndex) {
+                values.add(value);
+            } else {
+                values.set(columnIndex, value);
+            }
+            nextColumnIndex = columnIndex + 1;
         }
         return values;
+    }
+
+    private int cellColumnIndex(String cellAttributes) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\br=\"([A-Z]+)\\d+\"")
+                .matcher(cellAttributes);
+        if (!matcher.find()) {
+            return -1;
+        }
+        int column = 0;
+        String letters = matcher.group(1);
+        for (int i = 0; i < letters.length(); i++) {
+            column = column * 26 + (letters.charAt(i) - 'A' + 1);
+        }
+        return column - 1;
     }
 
     private String cellText(String attributes, String cellXml, List<String> sharedStrings) {
@@ -256,6 +401,30 @@ public class TestWeaveCliRunner {
         Files.writeString(reportDir.resolve("index.html"), html.toString(), StandardCharsets.UTF_8);
     }
 
+    private void printSummary(List<Map<String, String>> results) {
+        long passed = results.stream().filter(result -> "Passed".equalsIgnoreCase(result.getOrDefault("Status", ""))).count();
+        long failedCount = results.stream().filter(result -> "Failed".equalsIgnoreCase(result.getOrDefault("Status", ""))).count();
+        System.out.println("TestWeave summary: " + passed + " passed, " + failedCount + " failed, " + results.size() + " total.");
+        results.stream()
+                .filter(result -> "Failed".equalsIgnoreCase(result.getOrDefault("Status", "")))
+                .forEach(result -> System.out.println("FAILED: " + result.getOrDefault("Test Case", "")
+                        + " / " + result.getOrDefault("Test Step", "")
+                        + " - " + result.getOrDefault("Message", "")));
+    }
+
+    private Map<String, String> startupFailureResult(Path suite, Exception e) {
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("Test Suite", suite.toString());
+        result.put("Test Case", "Runner startup");
+        result.put("Test Step", "Load test suite workbook");
+        result.put("Execution Mode", "Sequential");
+        result.put("Status", "Failed");
+        result.put("Message", e.getClass().getSimpleName() + ": " + e.getMessage());
+        result.put("Started", LocalDateTime.now().toString());
+        result.put("Finished", LocalDateTime.now().toString());
+        return result;
+    }
+
     private Map<String, String> parseArgs(String[] args) {
         Map<String, String> options = new LinkedHashMap<>();
         for (int i = 0; i < args.length; i++) {
@@ -269,6 +438,23 @@ public class TestWeaveCliRunner {
     private String unescapeXml(String value) {
         return value.replace("&apos;", "'").replace("&quot;", "\"").replace("&gt;", ">")
                 .replace("&lt;", "<").replace("&amp;", "&");
+    }
+
+    private String resolveVariables(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replace("${randomString}", randomString())
+                .replace("${randomInt}", String.valueOf(ThreadLocalRandom.current().nextInt(10000, 999999)))
+                .replace("${randomDate}", LocalDate.now().toString());
+    }
+
+    private String randomString() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+    }
+
+    private String nullToBlank(String value) {
+        return value == null ? "" : value;
     }
 
     private String escapeHtml(String value) {

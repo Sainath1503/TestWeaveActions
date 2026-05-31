@@ -26,6 +26,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -38,18 +39,27 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TablePosition;
+import javafx.scene.control.TreeCell;
+import javafx.scene.control.TreeItem;
+import javafx.scene.control.TreeView;
 import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.scene.control.cell.ComboBoxTableCell;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.Dragboard;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.shape.Line;
+import javafx.scene.shape.Circle;
+import javafx.scene.shape.Polygon;
 import javafx.stage.FileChooser;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
@@ -74,6 +84,7 @@ import service.PerformanceTestService;
 import service.PlaywrightRecorderController;
 import service.ResponseVariableService;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.net.URI;
 import java.net.URL;
@@ -110,6 +121,7 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 public class ApiValidatorFxApp extends Application {
@@ -215,12 +227,24 @@ public class ApiValidatorFxApp extends Application {
     private ObservableList<Map<String, String>> variableRows;
     private TableView<Map<String, String>> testSuiteStepsTable;
     private ObservableList<Map<String, String>> testSuiteRows = FXCollections.observableArrayList();
+    private ObservableList<Map<String, String>> suiteBuilderTreeRows = FXCollections.observableArrayList();
+    private ObservableList<Map<String, String>> suiteBuilderCanvasRows = FXCollections.observableArrayList();
+    private ObservableList<Map<String, String>> suiteBuilderCanvasConnections = FXCollections.observableArrayList();
+    private Map<String, BuilderTreeNode> suiteBuilderDragItems = new HashMap<>();
+    private TreeView<BuilderTreeNode> suiteBuilderTreeView;
+    private Pane suiteBuilderCanvas;
+    private Stage suiteBuilderStage;
+    private boolean suiteBuilderReverseFlow;
+    private int suiteBuilderSelectedCanvasIndex = -1;
+    private int suiteBuilderConnectionSourceIndex = -1;
+    private int suiteBuilderSelectedConnectionIndex = -1;
     private Label testSuiteRunnerStatusLabel;
     private TextField testSuiteNameField;
-    private TextField testCaseNameField;
+    private ComboBox<String> testCaseNameField;
     private TextField testSuiteWorkbookPathField;
     private CheckBox testSuiteParallelExecutionCheck;
     private TextField testSuiteThreadCountField;
+    private ComboBox<String> testSuiteBuilderAddTypeBox;
     private TextField githubOwnerField;
     private TextField githubRepoField;
     private TextField githubBranchField;
@@ -771,7 +795,9 @@ public class ApiValidatorFxApp extends Application {
 
     private javafx.scene.Node createTestSuitePanel() {
         testSuiteNameField = new TextField();
-        testCaseNameField = new TextField();
+        testCaseNameField = new ComboBox<>();
+        testCaseNameField.setEditable(true);
+        testCaseNameField.setMaxWidth(Double.MAX_VALUE);
         testSuiteWorkbookPathField = new TextField();
         testSuiteWorkbookPathField.setEditable(false);
         testSuiteParallelExecutionCheck = new CheckBox("Parallel Execution");
@@ -791,14 +817,18 @@ public class ApiValidatorFxApp extends Application {
         Button importWorkbook = secondary("Import Workbook");
         importWorkbook.setOnAction(e -> importTestSuiteWorkbook());
         Button addManual = secondary("Add Manual Step");
-        addManual.setOnAction(e -> testSuiteRows.add(row("selected", "true", "suite", testSuiteNameField.getText(), "case", testCaseNameField.getText(),
-                "step", String.valueOf(testSuiteRows.size() + 1), "executionMode", "Sequential",
-                "type", "Manual", "details", "Describe this step", "status", "Ready")));
+        addManual.setOnAction(e -> addManualTestSuiteStep());
         Button run = primary("Run Selected");
         run.setOnAction(e -> runSelectedTestSuiteSteps());
         Button stop = secondary("Stop Execution");
         stop.getStyleClass().add("danger-button");
         stop.setOnAction(e -> stopTestSuiteRunnerExecution());
+        Button suiteBuilder = secondary("Suite Builder");
+        suiteBuilder.setOnAction(e -> openTestSuiteBuilderCanvas());
+        testSuiteBuilderAddTypeBox = combo("Test Suite", "Test Case", "Test Step");
+        testSuiteBuilderAddTypeBox.setPrefWidth(160);
+        Button addBuilderItem = secondary("Add");
+        addBuilderItem.setOnAction(e -> addSelectedTestSuiteBuilderItem());
         Button checkAll = secondary("Check All");
         checkAll.setOnAction(e -> setAllRowsSelected(testSuiteRows, testSuiteStepsTable, true));
         Button uncheckAll = secondary("Un-Check All");
@@ -819,12 +849,14 @@ public class ApiValidatorFxApp extends Application {
         openWorkflow.setOnAction(e -> openGithubWorkflow());
 
         testSuiteNameField.textProperty().addListener((observable, oldValue, newValue) -> propagateTestSuiteContext());
-        testCaseNameField.textProperty().addListener((observable, oldValue, newValue) -> propagateTestSuiteContext());
+        testCaseNameField.valueProperty().addListener((observable, oldValue, newValue) -> onTestSuiteCaseSelected(newValue));
+        testCaseNameField.getEditor().textProperty().addListener((observable, oldValue, newValue) -> propagateTestSuiteContext());
 
         FlowPane controls = spacedActionRow(labeled("Test Suite", testSuiteNameField), labeled("Test Case", testCaseNameField),
                 create, importWorkbook, updateWorkbook, openWorkbook, addManual);
         FlowPane runnerActions = spacedActionRow(testSuiteRunnerStatusLabel, checkAll, uncheckAll, openReport,
-                testSuiteParallelExecutionCheck, labeled("Threads", testSuiteThreadCountField), run, stop);
+                testSuiteParallelExecutionCheck, labeled("Threads", testSuiteThreadCountField), run, stop, suiteBuilder,
+                testSuiteBuilderAddTypeBox, addBuilderItem);
         FlowPane githubActions = spacedActionRow(githubStatusLabel, labeled("Owner", githubOwnerField),
                 labeled("Repository", githubRepoField), labeled("Branch", githubBranchField),
                 connectGithub, deployGithub, runGithub, openWorkflow);
@@ -891,6 +923,1052 @@ public class ApiValidatorFxApp extends Application {
         return table;
     }
 
+    private void addSelectedTestSuiteBuilderItem() {
+        String selection = testSuiteBuilderAddTypeBox == null ? "Test Suite" : testSuiteBuilderAddTypeBox.getValue();
+        if ("Test Suite".equals(selection)) {
+            addCurrentSuiteToBuilderTree();
+        } else if ("Test Case".equals(selection)) {
+            addCurrentCaseToBuilderTree();
+        } else {
+            addSelectedStepsToBuilderTree();
+        }
+    }
+
+    private void addCurrentSuiteToBuilderTree() {
+        String suite = testSuiteNameField == null ? "" : testSuiteNameField.getText().trim();
+        if (suite.isBlank()) {
+            promptForRunnerField("Add Test Suite", "Test Suite name", testSuiteNameField);
+            suite = testSuiteNameField == null ? "" : testSuiteNameField.getText().trim();
+        }
+        if (suite.isBlank()) {
+            return;
+        }
+        List<Map<String, String>> rows = readBuilderRowsForSuite(suite);
+        if (rows.isEmpty()) {
+            rows = List.of(row("suite", suite, "case", "", "step", "", "type", "Suite", "details", "", "status", "Ready"));
+        }
+        addRowsToBuilderTree(rows);
+        testSuiteRunnerStatusLabel.setText("Added test suite to Suite Builder tree.");
+    }
+
+    private void addCurrentCaseToBuilderTree() {
+        String suite = testSuiteNameField == null ? "" : testSuiteNameField.getText().trim();
+        String testCase = currentTestCaseName();
+        if (testCase.isBlank()) {
+            promptForTestCaseName();
+            testCase = currentTestCaseName();
+        }
+        if (testCase.isBlank()) {
+            return;
+        }
+        List<Map<String, String>> rows = readBuilderRowsForCase(suite, testCase);
+        if (rows.isEmpty()) {
+            rows = List.of(row("suite", suite, "case", testCase, "step", "", "type", "Test Case", "details", "", "status", "Ready"));
+        }
+        addRowsToBuilderTree(rows);
+        testSuiteRunnerStatusLabel.setText("Added test case to Suite Builder tree.");
+    }
+
+    private void addSelectedStepsToBuilderTree() {
+        List<Map<String, String>> selectedSteps = new ArrayList<>();
+        for (Map<String, String> row : testSuiteRows) {
+            if (isSelected(row)) {
+                selectedSteps.add(new LinkedHashMap<>(row));
+            }
+        }
+        if (selectedSteps.isEmpty()) {
+            showWarning("Suite Builder", "Select at least one test step before adding Test Step to the tree.");
+            return;
+        }
+        addRowsToBuilderTree(selectedSteps);
+        testSuiteRunnerStatusLabel.setText("Added " + selectedSteps.size() + " test step(s) to Suite Builder tree.");
+    }
+
+    private List<Map<String, String>> readBuilderRowsForSuite(String suite) {
+        Path workbookPath = selectedWorkbookPath();
+        if (workbookPath == null) {
+            return copyRowsForSuite(testSuiteRows, suite);
+        }
+        try {
+            return readAllWorkbookRowsForBuilder(workbookPath, suite, "");
+        } catch (Exception e) {
+            testSuiteRunnerStatusLabel.setText("Could not read suite tree rows: " + e.getMessage());
+            return copyRowsForSuite(testSuiteRows, suite);
+        }
+    }
+
+    private List<Map<String, String>> readBuilderRowsForCase(String suite, String testCase) {
+        return copyRowsForCase(testSuiteRows, suite, testCase);
+    }
+
+    private List<Map<String, String>> readAllWorkbookRowsForBuilder(Path workbookPath, String suiteFilter,
+                                                                     String caseFilter) throws Exception {
+        Map<String, byte[]> entries = readWorkbookEntries(workbookPath);
+        List<String> sharedStrings = readSharedStrings(entries);
+        List<Map<String, String>> rows = new ArrayList<>();
+        String workbookSuite = workbookNameWithoutExtension(workbookPath.getFileName().toString());
+        for (WorkbookSheet sheet : readWorkbookSheets(entries)) {
+            if (!caseFilter.isBlank() && !Objects.equals(sheet.name, caseFilter)) {
+                continue;
+            }
+            byte[] sheetBytes = entries.get(sheet.path);
+            if (sheetBytes == null) {
+                continue;
+            }
+            for (Map<String, String> step : readTestSuiteRunnerSteps(sheetBytes, sharedStrings)) {
+                Map<String, String> tableRow = workbookStepToTableRow(step);
+                String rowSuite = tableRow.getOrDefault("suite", "").isBlank() ? workbookSuite : tableRow.getOrDefault("suite", "");
+                tableRow.put("suite", suiteFilter.isBlank() ? rowSuite : suiteFilter);
+                tableRow.put("case", sheet.name);
+                boolean suiteMatches = suiteFilter.isBlank() || Objects.equals(tableRow.getOrDefault("suite", ""), suiteFilter)
+                        || Objects.equals(workbookSuite, suiteFilter);
+                if (suiteMatches) {
+                    rows.add(tableRow);
+                }
+            }
+            if (rows.stream().noneMatch(row -> Objects.equals(row.getOrDefault("case", ""), sheet.name))
+                    && !suiteFilter.isBlank()) {
+                rows.add(row("suite", suiteFilter, "case", sheet.name, "step", "", "type", "Test Case",
+                        "details", "", "status", "Ready"));
+            }
+        }
+        return rows;
+    }
+
+    private List<Map<String, String>> copyRowsForSuite(List<Map<String, String>> sourceRows, String suite) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (Map<String, String> row : sourceRows) {
+            if (suite.isBlank() || Objects.equals(row.getOrDefault("suite", ""), suite)) {
+                rows.add(new LinkedHashMap<>(row));
+            }
+        }
+        return rows;
+    }
+
+    private List<Map<String, String>> copyRowsForCase(List<Map<String, String>> sourceRows, String suite, String testCase) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (Map<String, String> row : sourceRows) {
+            boolean suiteMatches = suite.isBlank() || Objects.equals(row.getOrDefault("suite", ""), suite);
+            boolean caseMatches = Objects.equals(row.getOrDefault("case", ""), testCase);
+            if (suiteMatches && caseMatches) {
+                rows.add(new LinkedHashMap<>(row));
+            }
+        }
+        return rows;
+    }
+
+    private void addRowsToBuilderTree(List<Map<String, String>> rows) {
+        for (Map<String, String> row : rows) {
+            addBuilderTreeRow(row);
+        }
+        refreshSuiteBuilderTreeView();
+    }
+
+    private void addBuilderTreeRow(Map<String, String> row) {
+        String suite = row.getOrDefault("suite", "");
+        String testCase = row.getOrDefault("case", "");
+        String step = row.getOrDefault("step", "");
+        for (Map<String, String> existing : suiteBuilderTreeRows) {
+            if (Objects.equals(existing.getOrDefault("suite", ""), suite)
+                    && Objects.equals(existing.getOrDefault("case", ""), testCase)
+                    && Objects.equals(existing.getOrDefault("step", ""), step)) {
+                return;
+            }
+        }
+        suiteBuilderTreeRows.add(new LinkedHashMap<>(row));
+    }
+
+    private void promptForRunnerField(String title, String prompt, TextField target) {
+        TextInputDialog dialog = new TextInputDialog(target == null ? "" : target.getText());
+        dialog.setTitle(title);
+        dialog.setHeaderText(null);
+        dialog.setContentText(prompt + ":");
+        dialog.showAndWait().ifPresent(value -> {
+            String trimmed = value == null ? "" : value.trim();
+            if (trimmed.isBlank()) {
+                showWarning(title, "Enter a value before adding.");
+                return;
+            }
+            target.setText(trimmed);
+            propagateTestSuiteContext();
+        });
+    }
+
+    private void promptForTestCaseName() {
+        TextInputDialog dialog = new TextInputDialog(currentTestCaseName());
+        dialog.setTitle("Add Test Case");
+        dialog.setHeaderText(null);
+        dialog.setContentText("Test Case name:");
+        dialog.showAndWait().ifPresent(value -> {
+            String trimmed = value == null ? "" : value.trim();
+            if (trimmed.isBlank()) {
+                showWarning("Add Test Case", "Enter a value before adding.");
+                return;
+            }
+            setCurrentTestCaseName(trimmed);
+            if (!testCaseNameField.getItems().contains(trimmed)) {
+                testCaseNameField.getItems().add(trimmed);
+            }
+            propagateTestSuiteContext();
+        });
+    }
+
+    private void addManualTestSuiteStep() {
+        String suite = testSuiteNameField == null ? "" : testSuiteNameField.getText().trim();
+        String testCase = currentTestCaseName();
+        testSuiteRows.add(row("selected", "true", "suite", suite, "case", testCase,
+                "step", String.valueOf(testSuiteRows.size() + 1), "executionMode", "Sequential",
+                "type", "Manual", "details", "Describe this step", "status", "Ready"));
+        testSuiteStepsTable.refresh();
+        testSuiteRunnerStatusLabel.setText("Manual test step added.");
+    }
+
+    private String currentTestCaseName() {
+        if (testCaseNameField == null) {
+            return "";
+        }
+        String editorText = testCaseNameField.isEditable() && testCaseNameField.getEditor() != null
+                ? testCaseNameField.getEditor().getText()
+                : "";
+        String value = editorText == null || editorText.isBlank() ? testCaseNameField.getValue() : editorText;
+        return value == null ? "" : value.trim();
+    }
+
+    private void setCurrentTestCaseName(String testCase) {
+        if (testCaseNameField == null) {
+            return;
+        }
+        String value = testCase == null ? "" : testCase.trim();
+        testCaseNameField.setValue(value);
+        if (testCaseNameField.getEditor() != null) {
+            testCaseNameField.getEditor().setText(value);
+        }
+    }
+
+    private void setTestCaseOptions(List<String> testCases, String selectedTestCase) {
+        if (testCaseNameField == null) {
+            return;
+        }
+        List<String> cleanCases = testCases.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .toList();
+        testCaseNameField.getItems().setAll(cleanCases);
+        String selected = selectedTestCase == null || selectedTestCase.isBlank()
+                ? (cleanCases.isEmpty() ? "" : cleanCases.get(0))
+                : selectedTestCase.trim();
+        setCurrentTestCaseName(selected);
+    }
+
+    private void onTestSuiteCaseSelected(String selectedTestCase) {
+        if (testCaseNameField != null && testCaseNameField.getEditor() != null
+                && selectedTestCase != null
+                && !Objects.equals(testCaseNameField.getEditor().getText(), selectedTestCase)) {
+            testCaseNameField.getEditor().setText(selectedTestCase);
+        }
+        propagateTestSuiteContext();
+        Path workbookPath = selectedWorkbookPath();
+        if (workbookPath != null && selectedTestCase != null && !selectedTestCase.isBlank()) {
+            refreshTestSuiteRunnerSteps(workbookPath);
+        }
+    }
+
+    private void openTestSuiteBuilderCanvas() {
+        try {
+            if (suiteBuilderStage != null && suiteBuilderStage.isShowing()) {
+                refreshSuiteBuilderTreeView();
+                renderSuiteBuilderCanvas();
+                suiteBuilderStage.toFront();
+                suiteBuilderStage.requestFocus();
+                return;
+            }
+            openTestSuiteBuilderCanvasWindow();
+        } catch (Throwable e) {
+            showError("Suite Builder Failed", e);
+        }
+    }
+
+    private void openTestSuiteBuilderCanvasWindow() {
+        Pane canvas = new Pane();
+        suiteBuilderCanvas = canvas;
+        canvas.getStyleClass().add("builder-canvas");
+        int columns = 4;
+        int rows = Math.max(1, (int) Math.ceil(suiteBuilderCanvasRows.size() / (double) columns));
+        canvas.setPrefSize(Math.max(1040, columns * 270 + 60), Math.max(620, rows * 180 + 80));
+        enableSuiteBuilderCanvasDrop(canvas);
+
+        Label title = sectionTitle("Test Suite Builder Canvas");
+        Label context = new Label(builderCanvasContext());
+        context.getStyleClass().add("muted");
+        Button refresh = secondary("Refresh Canvas");
+        Button deleteNode = secondary("Delete");
+        Button connect = secondary("Connect");
+        Button reverse = secondary("Reverse Arrows");
+        Button save = secondary("Save");
+        Button importFlow = secondary("Import");
+        Button deployFlow = secondary("Deploy GitHub");
+        Button runFlow = primary("Run");
+        Button stopFlow = secondary("Stop");
+        stopFlow.getStyleClass().add("danger-button");
+        Button openReport = secondary("Open Report");
+        Button clear = secondary("Clear");
+        Button close = secondary("Close");
+        FlowPane toolbar = spacedActionRow(title, context, refresh, deleteNode, connect, reverse, save, importFlow, deployFlow,
+                runFlow, stopFlow, openReport, clear, close);
+
+        ScrollPane canvasScroll = new ScrollPane(canvas);
+        canvasScroll.setFitToWidth(false);
+        canvasScroll.setFitToHeight(false);
+        canvasScroll.setPannable(true);
+        canvasScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.ALWAYS);
+        canvasScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        canvasScroll.getStyleClass().add("workspace-scroll");
+
+        suiteBuilderTreeView = createSuiteBuilderTreeView();
+        VBox treePane = new VBox(10, sectionTitle("Builder Tree"), suiteBuilderTreeView);
+        treePane.getStyleClass().add("builder-tree-pane");
+        treePane.setPrefWidth(330);
+        treePane.setMinWidth(260);
+        VBox.setVgrow(suiteBuilderTreeView, Priority.ALWAYS);
+
+        SplitPane builderContent = new SplitPane(treePane, canvasScroll);
+        builderContent.setDividerPositions(0.28);
+
+        BorderPane root = new BorderPane(builderContent);
+        root.setTop(toolbar);
+        BorderPane.setMargin(toolbar, new Insets(12));
+        root.setStyle("-fx-background-color: #f5f7fb;");
+
+        suiteBuilderStage = new Stage();
+        suiteBuilderStage.setTitle(APP_NAME + " - Test Suite Builder");
+        suiteBuilderStage.initOwner(stage);
+        Scene scene = new Scene(root, 1180, 720);
+        scene.getStylesheets().add(createInlineStylesheet());
+        suiteBuilderStage.setScene(scene);
+        loadApplicationIcon(suiteBuilderStage);
+        deleteNode.setOnAction(e -> deleteSelectedSuiteBuilderCanvasNode());
+        connect.setOnAction(e -> connectSelectedSuiteBuilderCanvasNodes());
+        reverse.setOnAction(e -> reverseSelectedSuiteBuilderConnection());
+        save.setOnAction(e -> saveSuiteBuilderFlowTemplate());
+        importFlow.setOnAction(e -> importSuiteBuilderFlowTemplate());
+        deployFlow.setOnAction(e -> deploySuiteBuilderFlowToGithubActions());
+        runFlow.setOnAction(e -> runSuiteBuilderFlow());
+        stopFlow.setOnAction(e -> stopTestSuiteRunnerExecution());
+        openReport.setOnAction(e -> openTestSuiteReport());
+        clear.setOnAction(e -> clearSuiteBuilderTree());
+        close.setOnAction(e -> suiteBuilderStage.close());
+        refresh.setOnAction(e -> {
+            renderSuiteBuilderCanvas();
+            refreshSuiteBuilderTreeView();
+        });
+        suiteBuilderStage.setOnHidden(e -> {
+            suiteBuilderStage = null;
+            suiteBuilderTreeView = null;
+            suiteBuilderCanvas = null;
+        });
+
+        renderSuiteBuilderCanvas();
+        suiteBuilderStage.show();
+    }
+
+    private TreeView<BuilderTreeNode> createSuiteBuilderTreeView() {
+        TreeView<BuilderTreeNode> treeView = new TreeView<>();
+        treeView.setShowRoot(true);
+        treeView.setRoot(buildSuiteBuilderTreeRoot());
+        treeView.setCellFactory(view -> createSuiteBuilderTreeCell());
+        return treeView;
+    }
+
+    private void refreshSuiteBuilderTreeView() {
+        if (suiteBuilderTreeView != null) {
+            suiteBuilderTreeView.setRoot(buildSuiteBuilderTreeRoot());
+        }
+    }
+
+    private void clearSuiteBuilderTree() {
+        suiteBuilderTreeRows.clear();
+        suiteBuilderCanvasRows.clear();
+        suiteBuilderCanvasConnections.clear();
+        suiteBuilderDragItems.clear();
+        suiteBuilderReverseFlow = false;
+        suiteBuilderSelectedCanvasIndex = -1;
+        suiteBuilderConnectionSourceIndex = -1;
+        suiteBuilderSelectedConnectionIndex = -1;
+        refreshSuiteBuilderTreeView();
+        renderSuiteBuilderCanvas();
+        if (testSuiteRunnerStatusLabel != null) {
+            testSuiteRunnerStatusLabel.setText("Suite Builder tree cleared.");
+        }
+    }
+
+    private TreeItem<BuilderTreeNode> buildSuiteBuilderTreeRoot() {
+        TreeItem<BuilderTreeNode> root = new TreeItem<>(BuilderTreeNode.root());
+        root.setExpanded(true);
+        Map<String, Map<String, List<Map<String, String>>>> suites = new LinkedHashMap<>();
+        for (Map<String, String> row : suiteBuilderTreeRows) {
+            String suite = row.getOrDefault("suite", "").isBlank() ? "Untitled Suite" : row.getOrDefault("suite", "");
+            String testCase = row.getOrDefault("case", "").isBlank() ? "Unassigned Test Case" : row.getOrDefault("case", "");
+            suites.computeIfAbsent(suite, key -> new LinkedHashMap<>())
+                    .computeIfAbsent(testCase, key -> new ArrayList<>())
+                    .add(row);
+        }
+
+        for (Map.Entry<String, Map<String, List<Map<String, String>>>> suiteEntry : suites.entrySet()) {
+            List<Map<String, String>> suiteRows = new ArrayList<>();
+            for (List<Map<String, String>> caseRowsForSuite : suiteEntry.getValue().values()) {
+                for (Map<String, String> row : caseRowsForSuite) {
+                    suiteRows.add(new LinkedHashMap<>(row));
+                }
+            }
+            TreeItem<BuilderTreeNode> suiteItem = new TreeItem<>(BuilderTreeNode.suite(suiteEntry.getKey(), suiteRows));
+            suiteItem.setExpanded(true);
+            for (Map.Entry<String, List<Map<String, String>>> caseEntry : suiteEntry.getValue().entrySet()) {
+                List<Map<String, String>> caseRows = new ArrayList<>();
+                for (Map<String, String> row : caseEntry.getValue()) {
+                    caseRows.add(new LinkedHashMap<>(row));
+                }
+                TreeItem<BuilderTreeNode> caseItem = new TreeItem<>(BuilderTreeNode.testCase(caseEntry.getKey(), caseRows));
+                caseItem.setExpanded(true);
+                for (Map<String, String> row : caseEntry.getValue()) {
+                    String step = row.getOrDefault("step", "");
+                    if (step.isBlank()) {
+                        continue;
+                    }
+                    caseItem.getChildren().add(new TreeItem<>(BuilderTreeNode.step(new LinkedHashMap<>(row))));
+                }
+                suiteItem.getChildren().add(caseItem);
+            }
+            root.getChildren().add(suiteItem);
+        }
+        if (root.getChildren().isEmpty()) {
+            root.getChildren().add(new TreeItem<>(BuilderTreeNode.placeholder("Use Add to place suites, cases, or steps here")));
+        }
+        return root;
+    }
+
+    private TreeCell<BuilderTreeNode> createSuiteBuilderTreeCell() {
+        TreeCell<BuilderTreeNode> cell = new TreeCell<>() {
+            @Override
+            protected void updateItem(BuilderTreeNode item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.displayName);
+            }
+        };
+        cell.setOnDragDetected(event -> {
+            BuilderTreeNode node = cell.getItem();
+            if (node == null || !node.draggable()) {
+                return;
+            }
+            Dragboard dragboard = cell.startDragAndDrop(TransferMode.COPY);
+            ClipboardContent content = new ClipboardContent();
+            content.putString(node.id);
+            dragboard.setContent(content);
+            suiteBuilderDragItems.put(node.id, node);
+            event.consume();
+        });
+        return cell;
+    }
+
+    private void enableSuiteBuilderCanvasDrop(Pane canvas) {
+        canvas.setOnDragOver(event -> {
+            Dragboard dragboard = event.getDragboard();
+            if (dragboard.hasString() && suiteBuilderDragItems.containsKey(dragboard.getString())) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        canvas.setOnDragDropped(event -> {
+            Dragboard dragboard = event.getDragboard();
+            boolean success = false;
+            if (dragboard.hasString()) {
+                BuilderTreeNode node = suiteBuilderDragItems.get(dragboard.getString());
+                if (node != null && node.draggable()) {
+                    addBuilderCanvasFlowNode(node, event.getX(), event.getY());
+                    success = true;
+                }
+            }
+            event.setDropCompleted(success);
+            event.consume();
+        });
+    }
+
+    private void addBuilderCanvasFlowNode(BuilderTreeNode node, double x, double y) {
+        Map<String, String> flowRow = new LinkedHashMap<>();
+        if ("STEP".equals(node.kind) && !node.rows.isEmpty()) {
+            flowRow.putAll(node.rows.get(0));
+            flowRow.put("flowLabel", flowRow.getOrDefault("step", node.displayName));
+            flowRow.put("flowKind", "STEP");
+            flowRow.put("flowRows", new JSONArray(List.of(new JSONObject(flowRow))).toString());
+        } else {
+            flowRow.put("suite", node.suite);
+            flowRow.put("case", node.testCase);
+            flowRow.put("step", node.displayName);
+            flowRow.put("flowLabel", node.displayName);
+            flowRow.put("flowKind", node.kind);
+            flowRow.put("type", "SUITE".equals(node.kind) ? "Test Suite" : "Test Case");
+            flowRow.put("executionMode", "Sequential");
+            long stepCount = node.rows.stream().filter(row -> !row.getOrDefault("step", "").isBlank()).count();
+            flowRow.put("details", stepCount + " test step(s)");
+            flowRow.put("status", "Ready");
+            flowRow.put("flowRows", new JSONArray(node.rows).toString());
+        }
+        flowRow.put("flowStatus", "Ready");
+        flowRow.put("flowProgress", "0");
+        flowRow.put("canvasX", String.valueOf(Math.max(20, x)));
+        flowRow.put("canvasY", String.valueOf(Math.max(20, y)));
+        suiteBuilderCanvasRows.add(flowRow);
+        int newIndex = suiteBuilderCanvasRows.size() - 1;
+        if (newIndex > 0) {
+            addSuiteBuilderConnection(newIndex - 1, newIndex);
+        }
+        renderSuiteBuilderCanvas();
+    }
+
+    private void renderSuiteBuilderCanvas() {
+        if (suiteBuilderCanvas == null) {
+            return;
+        }
+        suiteBuilderCanvas.getChildren().clear();
+        ensureSuiteBuilderCanvasConnections();
+        double maxX = 0;
+        for (Map<String, String> row : suiteBuilderCanvasRows) {
+            maxX = Math.max(maxX, canvasCoordinate(row.get("canvasX"), 0));
+        }
+        double width = Math.max(2400, Math.max(suiteBuilderCanvasRows.size() * 320 + 240, maxX + 520));
+        suiteBuilderCanvas.setMinSize(width, 900);
+        suiteBuilderCanvas.setPrefSize(width, 900);
+        populateBuilderCanvas(suiteBuilderCanvas, suiteBuilderCanvasRows, 4);
+    }
+
+    private void ensureSuiteBuilderCanvasConnections() {
+        if (!suiteBuilderCanvasConnections.isEmpty() || suiteBuilderCanvasRows.size() < 2) {
+            return;
+        }
+        suiteBuilderCanvasConnections.setAll(defaultSuiteBuilderConnections(suiteBuilderCanvasRows.size()));
+    }
+
+    private void saveSuiteBuilderFlowTemplate() {
+        FileChooser chooser = new FileChooser();
+        chooser.setInitialFileName("testweave-suite-builder-flow.json");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("TestWeave Flow Template", "*.json"));
+        File file = chooser.showSaveDialog(suiteBuilderStage == null ? stage : suiteBuilderStage);
+        if (file == null) {
+            return;
+        }
+        JSONObject template = new JSONObject()
+                .put("format", "TestWeave Suite Builder Flow")
+                .put("version", 1)
+                .put("testSuite", testSuiteNameField == null ? "" : testSuiteNameField.getText())
+                .put("testCase", currentTestCaseName())
+                .put("reverseFlow", suiteBuilderReverseFlow)
+                .put("treeRows", new JSONArray(suiteBuilderTreeRows))
+                .put("canvasRows", new JSONArray(suiteBuilderCanvasRows))
+                .put("connections", new JSONArray(suiteBuilderCanvasConnections));
+        try {
+            Files.writeString(file.toPath(), template.toString(2), StandardCharsets.UTF_8);
+            testSuiteRunnerStatusLabel.setText("Suite Builder flow saved: " + file.getName());
+        } catch (Exception e) {
+            showError("Save Suite Builder Flow Failed", e);
+        }
+    }
+
+    private void importSuiteBuilderFlowTemplate() {
+        File file = chooseOpenFile("TestWeave Flow Template", "*.json");
+        if (file == null) {
+            return;
+        }
+        try {
+            JSONObject template = new JSONObject(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+            suiteBuilderReverseFlow = false;
+            suiteBuilderTreeRows.setAll(jsonArrayToRows(template.optJSONArray("treeRows")));
+            suiteBuilderCanvasRows.setAll(jsonArrayToRows(template.optJSONArray("canvasRows")));
+            suiteBuilderCanvasConnections.setAll(jsonArrayToRows(template.optJSONArray("connections")));
+            refreshSuiteBuilderTreeView();
+            renderSuiteBuilderCanvas();
+            testSuiteRunnerStatusLabel.setText("Suite Builder flow imported: " + file.getName());
+        } catch (Exception e) {
+            showError("Import Suite Builder Flow Failed", e);
+        }
+    }
+
+    private List<Map<String, String>> jsonArrayToRows(JSONArray rowsJson) {
+        List<Map<String, String>> rows = new ArrayList<>();
+        if (rowsJson == null) {
+            return rows;
+        }
+        for (int i = 0; i < rowsJson.length(); i++) {
+            JSONObject object = rowsJson.optJSONObject(i);
+            if (object == null) {
+                continue;
+            }
+            Map<String, String> row = new LinkedHashMap<>();
+            for (String key : object.keySet()) {
+                row.put(key, String.valueOf(object.opt(key)));
+            }
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private void runSuiteBuilderFlow() {
+        if (suiteBuilderCanvasRows.isEmpty()) {
+            showWarning("Suite Builder", "Drag items from the Builder Tree onto the canvas before running.");
+            return;
+        }
+        if (testSuiteRunnerExecutor != null) {
+            showWarning("Suite Builder", "A suite execution is already in progress.");
+            return;
+        }
+        List<Map<String, String>> executionRows = expandedSuiteBuilderExecutionRows();
+        if (executionRows.isEmpty()) {
+            showWarning("Suite Builder", "The canvas flow does not contain executable test steps.");
+            return;
+        }
+        testSuiteStopRequested.set(false);
+        testSuiteRunnerExecutor = Executors.newSingleThreadExecutor();
+        Task<Void> runner = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                runSuiteBuilderRows(selectedWorkbookPath(), executionRows);
+                return null;
+            }
+        };
+        runner.setOnSucceeded(e -> {
+            shutdownTestSuiteExecutor();
+            testSuiteRunnerStatusLabel.setText(testSuiteStopRequested.get()
+                    ? "Suite Builder execution stopped."
+                    : "Suite Builder execution completed. Report: "
+                    + (lastTestSuiteReportPath == null ? "not generated" : lastTestSuiteReportPath.getFileName()));
+            renderSuiteBuilderCanvas();
+        });
+        runner.setOnFailed(e -> {
+            shutdownTestSuiteExecutor();
+            showError("Suite Builder Run Failed", runner.getException());
+            renderSuiteBuilderCanvas();
+        });
+        start(runner);
+        testSuiteRunnerStatusLabel.setText("Running Suite Builder flow with " + executionRows.size() + " step(s).");
+    }
+
+    private void deploySuiteBuilderFlowToGithubActions() {
+        List<Map<String, String>> executionRows = expandedSuiteBuilderExecutionRows();
+        if (executionRows.isEmpty()) {
+            showWarning("Suite Builder", "Build a canvas flow with executable test steps before deploying.");
+            return;
+        }
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                requireGithubConnection();
+                Path workbookPath = selectedWorkbookPath();
+                if (workbookPath == null) {
+                    throw new IllegalStateException("Import or create a Test Suite Runner workbook before deploying the canvas flow.");
+                }
+                ensureGithubRepositoryReady();
+                writeRowsToWorkbook(workbookPath, executionRows);
+                syncTestWeaveRunnerSourceToGithub();
+                githubPutFile(".github/workflows/testweave-runner.yml", githubActionsWorkflowYaml(),
+                        "Deploy TestWeave canvas flow workflow");
+                githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
+                        "Update TestWeave canvas flow workbook");
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> {
+            githubStatusLabel.setText("GitHub: canvas flow deployed");
+            showInfo("GitHub Actions", "Suite Builder canvas flow deployed to GitHub Actions.");
+        });
+        task.setOnFailed(e -> showError("Deploy Canvas Flow Failed", task.getException()));
+        start(task);
+    }
+
+    private List<Map<String, String>> expandedSuiteBuilderExecutionRows() {
+        List<Map<String, String>> rows = new ArrayList<>();
+        List<Map<String, String>> canvasRows = new ArrayList<>(suiteBuilderCanvasRows);
+        if (!suiteBuilderCanvasConnections.isEmpty()) {
+            canvasRows = orderedCanvasRowsByConnections();
+        }
+        for (Map<String, String> canvasRow : canvasRows) {
+            JSONArray flowRows = parseOptionalJsonArray(canvasRow.get("flowRows"));
+            for (int i = 0; i < flowRows.length(); i++) {
+                JSONObject object = flowRows.optJSONObject(i);
+                if (object == null || object.optString("step").isBlank()) {
+                    continue;
+                }
+                Map<String, String> row = new LinkedHashMap<>();
+                for (String key : object.keySet()) {
+                    row.put(key, String.valueOf(object.opt(key)));
+                }
+                row.put("builderCanvasIndex", String.valueOf(suiteBuilderCanvasRows.indexOf(canvasRow)));
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
+    private List<Map<String, String>> orderedCanvasRowsByConnections() {
+        List<Map<String, String>> ordered = new ArrayList<>();
+        Set<Integer> used = new java.util.HashSet<>();
+        for (Map<String, String> connection : suiteBuilderCanvasConnections) {
+            boolean reversed = "true".equalsIgnoreCase(connection.getOrDefault("reversed", "false"));
+            int from = parseIndex(connection.get(reversed ? "to" : "from"));
+            int to = parseIndex(connection.get(reversed ? "from" : "to"));
+            if (from >= 0 && from < suiteBuilderCanvasRows.size() && used.add(from)) {
+                ordered.add(suiteBuilderCanvasRows.get(from));
+            }
+            if (to >= 0 && to < suiteBuilderCanvasRows.size() && used.add(to)) {
+                ordered.add(suiteBuilderCanvasRows.get(to));
+            }
+        }
+        for (int i = 0; i < suiteBuilderCanvasRows.size(); i++) {
+            if (used.add(i)) {
+                ordered.add(suiteBuilderCanvasRows.get(i));
+            }
+        }
+        return ordered;
+    }
+
+    private void deleteSelectedSuiteBuilderCanvasNode() {
+        if (suiteBuilderSelectedConnectionIndex >= 0
+                && suiteBuilderSelectedConnectionIndex < suiteBuilderCanvasConnections.size()) {
+            suiteBuilderCanvasConnections.remove(suiteBuilderSelectedConnectionIndex);
+            suiteBuilderSelectedConnectionIndex = -1;
+            renderSuiteBuilderCanvas();
+            return;
+        }
+        int index = suiteBuilderSelectedCanvasIndex;
+        if (index < 0 || index >= suiteBuilderCanvasRows.size()) {
+            showWarning("Suite Builder", "Select a canvas activity or arrow before deleting.");
+            return;
+        }
+        suiteBuilderCanvasRows.remove(index);
+        List<Map<String, String>> adjusted = new ArrayList<>();
+        for (Map<String, String> connection : suiteBuilderCanvasConnections) {
+            int from = parseIndex(connection.get("from"));
+            int to = parseIndex(connection.get("to"));
+            if (from == index || to == index) {
+                continue;
+            }
+            Map<String, String> copy = new LinkedHashMap<>(connection);
+            if (from > index) {
+                copy.put("from", String.valueOf(from - 1));
+            }
+            if (to > index) {
+                copy.put("to", String.valueOf(to - 1));
+            }
+            adjusted.add(copy);
+        }
+        suiteBuilderCanvasConnections.setAll(adjusted);
+        suiteBuilderSelectedCanvasIndex = -1;
+        suiteBuilderConnectionSourceIndex = -1;
+        suiteBuilderSelectedConnectionIndex = -1;
+        renderSuiteBuilderCanvas();
+    }
+
+    private void connectSelectedSuiteBuilderCanvasNodes() {
+        if (suiteBuilderConnectionSourceIndex < 0 || suiteBuilderSelectedCanvasIndex < 0
+                || suiteBuilderConnectionSourceIndex == suiteBuilderSelectedCanvasIndex) {
+            showWarning("Suite Builder", "Click two different canvas activities, then click Connect.");
+            return;
+        }
+        addSuiteBuilderConnection(suiteBuilderConnectionSourceIndex, suiteBuilderSelectedCanvasIndex);
+        renderSuiteBuilderCanvas();
+    }
+
+    private void reverseSelectedSuiteBuilderConnection() {
+        if (suiteBuilderSelectedConnectionIndex < 0
+                || suiteBuilderSelectedConnectionIndex >= suiteBuilderCanvasConnections.size()) {
+            showWarning("Suite Builder", "Select an arrow before reversing it.");
+            return;
+        }
+        Map<String, String> connection = suiteBuilderCanvasConnections.get(suiteBuilderSelectedConnectionIndex);
+        boolean reversed = "true".equalsIgnoreCase(connection.getOrDefault("reversed", "false"));
+        connection.put("reversed", reversed ? "false" : "true");
+        renderSuiteBuilderCanvas();
+    }
+
+    private void addSuiteBuilderConnection(int from, int to) {
+        if (from < 0 || to < 0 || from == to) {
+            return;
+        }
+        for (Map<String, String> connection : suiteBuilderCanvasConnections) {
+            if (parseIndex(connection.get("from")) == from && parseIndex(connection.get("to")) == to) {
+                return;
+            }
+        }
+        suiteBuilderCanvasConnections.add(row("from", String.valueOf(from), "to", String.valueOf(to)));
+    }
+
+    private int parseIndex(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
+    private void runSuiteBuilderRows(Path workbookPath, List<Map<String, String>> executionRows) throws Exception {
+        List<TestSuiteStepResult> results = new ArrayList<>();
+        for (Map<String, String> row : executionRows) {
+            if (testSuiteStopRequested.get()) {
+                break;
+            }
+            updateSuiteBuilderCanvasStatus(row, "Running", 0.5);
+            TestSuiteStepResult result = executeTestSuiteRow(row);
+            results.add(result);
+            updateSuiteBuilderCanvasStatus(row, result.passed ? "Passed" : result.status, 1);
+        }
+        lastTestSuiteReportPath = writeTestSuiteReport(workbookPath, results);
+    }
+
+    private void updateSuiteBuilderCanvasStatus(Map<String, String> executionRow, String status, double progress) {
+        String index = executionRow.get("builderCanvasIndex");
+        if (index == null || index.isBlank()) {
+            return;
+        }
+        Platform.runLater(() -> {
+            try {
+                int canvasIndex = Integer.parseInt(index);
+                if (canvasIndex >= 0 && canvasIndex < suiteBuilderCanvasRows.size()) {
+                    Map<String, String> canvasRow = suiteBuilderCanvasRows.get(canvasIndex);
+                    canvasRow.put("flowStatus", status);
+                    canvasRow.put("status", status);
+                    canvasRow.put("flowProgress", String.valueOf(progress));
+                    renderSuiteBuilderCanvas();
+                }
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
+    private String builderCanvasContext() {
+        String suite = testSuiteNameField == null ? "" : testSuiteNameField.getText().trim();
+        String testCase = currentTestCaseName();
+        if (suite.isBlank() && testCase.isBlank()) {
+            return testSuiteRows.size() + " step(s)";
+        }
+        if (testCase.isBlank()) {
+            return suite + " - " + testSuiteRows.size() + " step(s)";
+        }
+        if (suite.isBlank()) {
+            return testCase + " - " + testSuiteRows.size() + " step(s)";
+        }
+        return suite + " / " + testCase + " - " + testSuiteRows.size() + " step(s)";
+    }
+
+    private void populateBuilderCanvas(Pane canvas, List<Map<String, String>> steps, int columns) {
+        if (steps.isEmpty()) {
+            Label empty = new Label("Import or create a workbook, then add steps to build a suite canvas.");
+            empty.getStyleClass().add("muted");
+            empty.setLayoutX(32);
+            empty.setLayoutY(32);
+            canvas.getChildren().add(empty);
+            return;
+        }
+
+        List<VBox> nodes = new ArrayList<>();
+        for (int i = 0; i < steps.size(); i++) {
+            Map<String, String> step = steps.get(i);
+            VBox node = createBuilderNode(step, i + 1, i);
+            node.setLayoutX(canvasCoordinate(step.get("canvasX"), 32 + (i % columns) * 270));
+            node.setLayoutY(canvasCoordinate(step.get("canvasY"), 40 + (i / columns) * 180));
+            enableBuilderNodeDrag(node, step, i);
+            canvas.getChildren().add(node);
+            nodes.add(node);
+        }
+        List<Map<String, String>> connections = new ArrayList<>(suiteBuilderCanvasConnections);
+        for (int i = 0; i < connections.size(); i++) {
+            Map<String, String> connection = connections.get(i);
+            int from = parseIndex(connection.get("from"));
+            int to = parseIndex(connection.get("to"));
+            if (from >= 0 && to >= 0 && from < nodes.size() && to < nodes.size()) {
+                addBuilderConnector(canvas, nodes.get(from), nodes.get(to), connection, i);
+            }
+        }
+    }
+
+    private List<Map<String, String>> defaultSuiteBuilderConnections(int count) {
+        List<Map<String, String>> connections = new ArrayList<>();
+        for (int i = 1; i < count; i++) {
+            connections.add(row("from", String.valueOf(i - 1), "to", String.valueOf(i)));
+        }
+        return connections;
+    }
+
+    private void addBuilderConnector(Pane canvas, VBox fromNode, VBox toNode, Map<String, String> connection, int connectionIndex) {
+        boolean reversed = "true".equalsIgnoreCase(connection.getOrDefault("reversed", "false"));
+        Line connector = new Line();
+        connector.getStyleClass().add("builder-connector");
+        if (connectionIndex == suiteBuilderSelectedConnectionIndex) {
+            connector.getStyleClass().add("builder-connector-selected");
+        }
+        double forwardStartX = canvasCoordinate(connection.get("startX"), fromNode.getLayoutX() + 240);
+        double forwardStartY = canvasCoordinate(connection.get("startY"), fromNode.getLayoutY() + 70);
+        double forwardEndX = canvasCoordinate(connection.get("endX"), toNode.getLayoutX());
+        double forwardEndY = canvasCoordinate(connection.get("endY"), toNode.getLayoutY() + 70);
+        connector.setStartX(reversed ? forwardEndX : forwardStartX);
+        connector.setStartY(reversed ? forwardEndY : forwardStartY);
+        connector.setEndX(reversed ? forwardStartX : forwardEndX);
+        connector.setEndY(reversed ? forwardStartY : forwardEndY);
+
+        Polygon arrow = new Polygon(0, 0, -12, -6, -12, 6);
+        arrow.getStyleClass().add("builder-arrow");
+        arrow.layoutXProperty().bind(connector.endXProperty());
+        arrow.layoutYProperty().bind(connector.endYProperty());
+        arrow.rotateProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(() -> {
+            double angle = Math.toDegrees(Math.atan2(
+                    connector.getEndY() - connector.getStartY(),
+                    connector.getEndX() - connector.getStartX()));
+            return angle;
+        }, connector.startXProperty(), connector.startYProperty(), connector.endXProperty(), connector.endYProperty()));
+        Circle startHandle = connectorHandle(connector.getStartX(), connector.getStartY());
+        Circle endHandle = connectorHandle(connector.getEndX(), connector.getEndY());
+        startHandle.centerXProperty().bindBidirectional(connector.startXProperty());
+        startHandle.centerYProperty().bindBidirectional(connector.startYProperty());
+        endHandle.centerXProperty().bindBidirectional(connector.endXProperty());
+        endHandle.centerYProperty().bindBidirectional(connector.endYProperty());
+        enableConnectorSelection(connector, arrow, startHandle, endHandle, connectionIndex);
+        enableConnectorHandleDrag(startHandle, connection, !reversed);
+        enableConnectorHandleDrag(endHandle, connection, reversed);
+        canvas.getChildren().addAll(connector, arrow, startHandle, endHandle);
+    }
+
+    private void enableConnectorSelection(Line connector, Polygon arrow, Circle startHandle, Circle endHandle, int connectionIndex) {
+        EventHandler<javafx.scene.input.MouseEvent> selector = event -> {
+            suiteBuilderSelectedConnectionIndex = connectionIndex;
+            suiteBuilderSelectedCanvasIndex = -1;
+            suiteBuilderConnectionSourceIndex = -1;
+            renderSuiteBuilderCanvas();
+            event.consume();
+        };
+        connector.setOnMouseClicked(selector);
+        arrow.setOnMouseClicked(selector);
+        startHandle.setOnMouseClicked(selector);
+        endHandle.setOnMouseClicked(selector);
+    }
+
+    private Circle connectorHandle(double x, double y) {
+        Circle handle = new Circle(x, y, 5);
+        handle.getStyleClass().add("builder-connector-handle");
+        return handle;
+    }
+
+    private void enableConnectorHandleDrag(Circle handle, Map<String, String> connection, boolean start) {
+        handle.setOnMouseDragged(event -> {
+            javafx.geometry.Point2D point = suiteBuilderCanvas.sceneToLocal(event.getSceneX(), event.getSceneY());
+            handle.setCenterX(Math.max(0, point.getX()));
+            handle.setCenterY(Math.max(0, point.getY()));
+            connection.put(start ? "startX" : "endX", String.valueOf(handle.getCenterX()));
+            connection.put(start ? "startY" : "endY", String.valueOf(handle.getCenterY()));
+            event.consume();
+        });
+    }
+
+    private VBox createBuilderNode(Map<String, String> step, int index, int canvasIndex) {
+        Label title = new Label(index + ". " + step.getOrDefault("flowLabel", step.getOrDefault("step", "Step")));
+        title.getStyleClass().add("builder-node-title");
+        title.setWrapText(true);
+
+        Label meta = new Label(step.getOrDefault("type", "Step") + " | " + step.getOrDefault("executionMode", "Sequential"));
+        meta.getStyleClass().add("muted");
+        meta.setWrapText(true);
+
+        Label details = new Label(shorten(step.getOrDefault("details", ""), 88));
+        details.setWrapText(true);
+
+        Label status = new Label("Status: " + step.getOrDefault("status", "Ready"));
+        status.getStyleClass().add("metric");
+        ProgressBar progress = new ProgressBar(canvasProgress(step));
+        progress.setMaxWidth(Double.MAX_VALUE);
+        progress.getStyleClass().add("builder-progress");
+
+        VBox node = new VBox(7, title, meta, details, progress, status);
+        node.getStyleClass().add("builder-node");
+        if (canvasIndex == suiteBuilderSelectedCanvasIndex) {
+            node.getStyleClass().add("builder-node-selected");
+        }
+        node.setStyle("-fx-border-color: " + builderNodeColor(step.getOrDefault("type", ""))
+                + "; -fx-background-color: " + builderStatusColor(step) + ";");
+        node.setPrefSize(240, 142);
+        node.setMinSize(240, 142);
+        node.setMaxSize(240, 142);
+        return node;
+    }
+
+    private double canvasProgress(Map<String, String> row) {
+        try {
+            return clamp(Double.parseDouble(row.getOrDefault("flowProgress", "0")), 0, 1);
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private String builderStatusColor(Map<String, String> row) {
+        String status = row.getOrDefault("flowStatus", row.getOrDefault("status", "Ready"));
+        if (status.startsWith("Running")) {
+            return "#fff4bf";
+        }
+        if (status.startsWith("Passed")) {
+            return "#e6f6e6";
+        }
+        if (status.startsWith("Failed")) {
+            return "#fde2e2";
+        }
+        if (status.startsWith("Stopped")) {
+            return "#f3f4f6";
+        }
+        return "white";
+    }
+
+    private double canvasCoordinate(String value, double fallback) {
+        try {
+            return value == null || value.isBlank() ? fallback : Double.parseDouble(value);
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private void enableBuilderNodeDrag(VBox node, Map<String, String> row, int index) {
+        double[] pointerOffset = new double[2];
+        node.setOnMousePressed(event -> {
+            suiteBuilderConnectionSourceIndex = suiteBuilderSelectedCanvasIndex;
+            suiteBuilderSelectedCanvasIndex = index;
+            suiteBuilderSelectedConnectionIndex = -1;
+            pointerOffset[0] = event.getSceneX() - node.getLayoutX();
+            pointerOffset[1] = event.getSceneY() - node.getLayoutY();
+            node.toFront();
+        });
+        node.setOnMouseDragged(event -> {
+            double x = Math.max(12, event.getSceneX() - pointerOffset[0]);
+            double y = Math.max(12, event.getSceneY() - pointerOffset[1]);
+            node.setLayoutX(x);
+            node.setLayoutY(y);
+            row.put("canvasX", String.valueOf(x));
+            row.put("canvasY", String.valueOf(y));
+        });
+        node.setOnMouseReleased(event -> renderSuiteBuilderCanvas());
+    }
+
+    private String builderNodeColor(String type) {
+        return switch (type) {
+            case "Web Test" -> "#2f855a";
+            case "Performance Test" -> "#b7791f";
+            case "JSON Compare" -> "#805ad5";
+            case "DB Validation" -> "#2b6cb0";
+            case "Field Validation" -> "#d53f8c";
+            default -> PRIMARY;
+        };
+    }
+
+    private String shorten(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value == null ? "" : value;
+        }
+        return value.substring(0, Math.max(0, maxLength - 3)) + "...";
+    }
+
     private javafx.scene.Node createTestRunnerContextPanel(TextField suiteField, TextField caseField,
                                                            TextField stepField, Runnable addAction) {
         Button addToRunner = secondary("Add to Test Runner");
@@ -914,14 +1992,14 @@ public class ApiValidatorFxApp extends Application {
             suiteField.setText(testSuiteNameField.getText());
         }
         if (testCaseNameField != null && caseField.getText().isBlank()) {
-            caseField.setText(testCaseNameField.getText());
+            caseField.setText(currentTestCaseName());
         }
     }
 
     private void propagateTestSuiteContext() {
         populateImportedTestSuiteDetails(
                 testSuiteNameField == null ? "" : testSuiteNameField.getText(),
-                testCaseNameField == null ? "" : testCaseNameField.getText());
+                currentTestCaseName());
     }
 
     private void copyIfBlank(TextField target, TextField source) {
@@ -1007,7 +2085,8 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void createTestSuiteWorkbook() {
-        if (testSuiteNameField.getText().isBlank() || testCaseNameField.getText().isBlank()) {
+        String testCase = currentTestCaseName();
+        if (testSuiteNameField.getText().isBlank() || testCase.isBlank()) {
             showWarning("Test Suite Runner", "Enter both Test Suite and Test Case before creating the workbook.");
             return;
         }
@@ -1019,8 +2098,9 @@ public class ApiValidatorFxApp extends Application {
             return;
         }
         try {
-            writeSingleSheetWorkbook(file.toPath(), createSafeExcelSheetName(testCaseNameField.getText()), testCaseNameField.getText());
+            writeSingleSheetWorkbook(file.toPath(), createSafeExcelSheetName(testCase), testCase);
             testSuiteWorkbookPathField.setText(file.getAbsolutePath());
+            setTestCaseOptions(List.of(createSafeExcelSheetName(testCase)), createSafeExcelSheetName(testCase));
             refreshTestSuiteRunnerSteps(file.toPath());
             testSuiteRunnerStatusLabel.setText("Workbook created: " + file.getName());
             propagateTestSuiteContext();
@@ -1036,8 +2116,10 @@ public class ApiValidatorFxApp extends Application {
         }
         try {
             String workbookName = workbookNameWithoutExtension(file.getName());
-            String sheetName = readFirstWorkbookSheetName(file.toPath());
+            List<String> sheetNames = readWorkbookSheets(file.toPath()).stream().map(sheet -> sheet.name).toList();
+            String sheetName = sheetNames.isEmpty() ? "" : sheetNames.get(0);
             testSuiteWorkbookPathField.setText(file.getAbsolutePath());
+            setTestCaseOptions(sheetNames, sheetName);
             populateImportedTestSuiteDetails(workbookName, sheetName);
             refreshTestSuiteRunnerSteps(file.toPath());
             showInfo("Test Suite Imported", "Test suite runner imported successfully.");
@@ -1066,7 +2148,7 @@ public class ApiValidatorFxApp extends Application {
         openPath(workbookPath, "Import or create a Test Suite Runner workbook before opening.");
         if (workbookPath != null) {
             testSuiteRunnerStatusLabel.setText("Opening workbook: " + workbookPath.getFileName()
-                    + ", sheet: " + testCaseNameField.getText());
+                    + ", sheet: " + currentTestCaseName());
         }
     }
 
@@ -1476,8 +2558,8 @@ public class ApiValidatorFxApp extends Application {
         if (testSuiteNameField != null && !Objects.equals(testSuiteNameField.getText(), testSuite)) {
             testSuiteNameField.setText(testSuite);
         }
-        if (testCaseNameField != null && !Objects.equals(testCaseNameField.getText(), testCase)) {
-            testCaseNameField.setText(testCase);
+        if (testCaseNameField != null && !Objects.equals(currentTestCaseName(), testCase)) {
+            setCurrentTestCaseName(testCase);
         }
         setText(fieldValidationTestSuiteField, testSuite);
         setText(fieldValidationTestCaseField, testCase);
@@ -1510,10 +2592,12 @@ public class ApiValidatorFxApp extends Application {
 
     private void runSelectedTestSuiteSteps() {
         Path workbookPath = selectedWorkbookPath();
-        List<Map<String, String>> selectedRows = testSuiteRows.stream()
-                .filter(this::isSelected)
-                .<Map<String, String>>map(LinkedHashMap::new)
-                .toList();
+        List<Map<String, String>> selectedRows = new ArrayList<>();
+        for (Map<String, String> row : testSuiteRows) {
+            if (isSelected(row)) {
+                selectedRows.add(new LinkedHashMap<>(row));
+            }
+        }
         if (selectedRows.isEmpty()) {
             showWarning("Test Suite Runner", "Select at least one test step to run.");
             return;
@@ -1916,34 +3000,108 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private String readFirstWorkbookSheetName(Path workbookPath) throws Exception {
-        try (ZipFile workbookZip = new ZipFile(workbookPath.toFile())) {
-            ZipEntry workbookEntry = workbookZip.getEntry("xl/workbook.xml");
-            if (workbookEntry == null) {
-                throw new IllegalArgumentException("Selected file does not contain an Excel workbook definition.");
+        List<WorkbookSheet> sheets = readWorkbookSheets(workbookPath);
+        if (sheets.isEmpty()) {
+            throw new IllegalArgumentException("No sheets were found in the selected workbook.");
+        }
+        return sheets.get(0).name;
+    }
+
+    private List<WorkbookSheet> readWorkbookSheets(Path workbookPath) throws Exception {
+        return readWorkbookSheets(readWorkbookEntries(workbookPath));
+    }
+
+    private List<WorkbookSheet> readWorkbookSheets(Map<String, byte[]> entries) throws Exception {
+        byte[] workbookBytes = entries.get("xl/workbook.xml");
+        if (workbookBytes == null) {
+            throw new IllegalArgumentException("Selected file does not contain an Excel workbook definition.");
+        }
+
+        Map<String, String> relationships = readWorkbookRelationships(entries);
+        Document workbook = parseXml(workbookBytes);
+        NodeList sheetNodes = workbook.getElementsByTagNameNS("http://schemas.openxmlformats.org/spreadsheetml/2006/main", "sheet");
+        if (sheetNodes.getLength() == 0) {
+            sheetNodes = workbook.getElementsByTagName("sheet");
+        }
+
+        List<WorkbookSheet> sheets = new ArrayList<>();
+        for (int i = 0; i < sheetNodes.getLength(); i++) {
+            Element sheet = (Element) sheetNodes.item(i);
+            String name = sheet.getAttribute("name");
+            String relationshipId = sheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+            if (relationshipId == null || relationshipId.isBlank()) {
+                relationshipId = sheet.getAttribute("r:id");
             }
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setNamespaceAware(true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-            Document document;
-            try (var workbookXml = workbookZip.getInputStream(workbookEntry)) {
-                document = factory.newDocumentBuilder().parse(workbookXml);
+            String path = relationships.get(relationshipId);
+            if ((path == null || path.isBlank()) && entries.containsKey("xl/worksheets/sheet" + (i + 1) + ".xml")) {
+                path = "xl/worksheets/sheet" + (i + 1) + ".xml";
             }
-            NodeList sheets = document.getElementsByTagNameNS("http://schemas.openxmlformats.org/spreadsheetml/2006/main", "sheet");
-            if (sheets.getLength() == 0) {
-                sheets = document.getElementsByTagName("sheet");
+            if (name != null && !name.isBlank() && path != null && !path.isBlank()) {
+                sheets.add(new WorkbookSheet(name, path));
             }
-            if (sheets.getLength() == 0) {
-                throw new IllegalArgumentException("No sheets were found in the selected workbook.");
+        }
+        return sheets;
+    }
+
+    private Map<String, String> readWorkbookRelationships(Map<String, byte[]> entries) throws Exception {
+        byte[] relationshipBytes = entries.get("xl/_rels/workbook.xml.rels");
+        if (relationshipBytes == null) {
+            return Map.of();
+        }
+        Document relationshipsDocument = parseXml(relationshipBytes);
+        NodeList relationships = relationshipsDocument.getElementsByTagName("Relationship");
+        Map<String, String> targets = new LinkedHashMap<>();
+        for (int i = 0; i < relationships.getLength(); i++) {
+            Element relationship = (Element) relationships.item(i);
+            String id = relationship.getAttribute("Id");
+            String target = normalizeWorkbookRelationshipTarget(relationship.getAttribute("Target"));
+            if (!id.isBlank() && !target.isBlank()) {
+                targets.put(id, target);
             }
-            String sheetName = sheets.item(0).getAttributes().getNamedItem("name").getNodeValue();
-            if (sheetName == null || sheetName.isBlank()) {
-                throw new IllegalArgumentException("The first sheet does not have a usable name.");
+        }
+        return targets;
+    }
+
+    private String normalizeWorkbookRelationshipTarget(String target) {
+        if (target == null || target.isBlank()) {
+            return "";
+        }
+        String normalized = target.replace('\\', '/');
+        if (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        } else if (!normalized.startsWith("xl/")) {
+            normalized = "xl/" + normalized;
+        }
+        return normalized;
+    }
+
+    private String selectedWorksheetPath(Map<String, byte[]> entries) throws Exception {
+        List<WorkbookSheet> sheets = readWorkbookSheets(entries);
+        if (sheets.isEmpty()) {
+            if (entries.containsKey("xl/worksheets/sheet1.xml")) {
+                return "xl/worksheets/sheet1.xml";
             }
-            return sheetName;
+            throw new IllegalArgumentException("No worksheets were found in the selected workbook.");
+        }
+        String selected = currentTestCaseName();
+        for (WorkbookSheet sheet : sheets) {
+            if (sheet.name.equals(selected)) {
+                return sheet.path;
+            }
+        }
+        return sheets.get(0).path;
+    }
+
+    private Document parseXml(byte[] bytes) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        try (ByteArrayInputStream input = new ByteArrayInputStream(bytes)) {
+            return factory.newDocumentBuilder().parse(input);
         }
     }
 
@@ -1952,9 +3110,10 @@ public class ApiValidatorFxApp extends Application {
             return;
         }
         Map<String, byte[]> entries = readWorkbookEntries(workbookPath);
-        byte[] sheetBytes = entries.get("xl/worksheets/sheet1.xml");
+        String worksheetPath = selectedWorksheetPath(entries);
+        byte[] sheetBytes = entries.get(worksheetPath);
         if (sheetBytes == null) {
-            throw new IllegalArgumentException("The selected workbook does not contain xl/worksheets/sheet1.xml.");
+            throw new IllegalArgumentException("The selected workbook does not contain " + worksheetPath + ".");
         }
         String sheetXml = new String(sheetBytes, StandardCharsets.UTF_8);
         List<String> sharedStrings = readSharedStrings(entries);
@@ -1964,7 +3123,7 @@ public class ApiValidatorFxApp extends Application {
             rowsToAppend.add(runnerWorkbookHeaderColumns());
         }
         rowsToAppend.addAll(rows);
-        entries.put("xl/worksheets/sheet1.xml",
+        entries.put(worksheetPath,
                 appendInlineStringRows(sheetXml, rowsToAppend, needsRunnerHeader).getBytes(StandardCharsets.UTF_8));
         ensureRunnerWorkbookStyles(entries);
 
@@ -2030,18 +3189,23 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void writeTestSuiteRowsToWorkbook(Path workbookPath) throws Exception {
+        writeRowsToWorkbook(workbookPath, testSuiteRows);
+    }
+
+    private void writeRowsToWorkbook(Path workbookPath, List<Map<String, String>> rowsToWrite) throws Exception {
         Map<String, byte[]> entries = readWorkbookEntries(workbookPath);
-        byte[] sheetBytes = entries.get("xl/worksheets/sheet1.xml");
+        String worksheetPath = selectedWorksheetPath(entries);
+        byte[] sheetBytes = entries.get(worksheetPath);
         if (sheetBytes == null) {
-            throw new IllegalArgumentException("The selected workbook does not contain xl/worksheets/sheet1.xml.");
+            throw new IllegalArgumentException("The selected workbook does not contain " + worksheetPath + ".");
         }
         String sheetXml = new String(sheetBytes, StandardCharsets.UTF_8);
         List<List<String>> rows = new ArrayList<>();
         rows.add(runnerWorkbookHeaderColumns());
-        for (Map<String, String> tableRow : testSuiteRows) {
+        for (Map<String, String> tableRow : rowsToWrite) {
             rows.add(buildWorkbookRowFromTableRow(tableRow));
         }
-        entries.put("xl/worksheets/sheet1.xml", replaceSheetData(sheetXml, rows).getBytes(StandardCharsets.UTF_8));
+        entries.put(worksheetPath, replaceSheetData(sheetXml, rows).getBytes(StandardCharsets.UTF_8));
         ensureRunnerWorkbookStyles(entries);
 
         Path tempWorkbook = Files.createTempFile(workbookPath.getParent(), "testweave-runner-update-", ".xlsx");
@@ -2507,18 +3671,7 @@ public class ApiValidatorFxApp extends Application {
         try {
             List<Map<String, String>> steps = readTestSuiteRunnerSteps(workbookPath);
             for (Map<String, String> step : steps) {
-                Map<String, String> tableRow = row("selected", step.getOrDefault("Run", "true"),
-                        "suite", step.getOrDefault("Test Suite", ""),
-                        "case", step.getOrDefault("Test Case", ""),
-                        "step", step.getOrDefault("Test Step", ""),
-                        "executionMode", step.getOrDefault("Execution Mode", "Sequential"),
-                        "type", runnerStepType(step),
-                        "details", runnerStepDetails(step),
-                        "status", step.getOrDefault("Status", "Ready"));
-                for (Map.Entry<String, String> entry : step.entrySet()) {
-                    tableRow.put("workbook:" + entry.getKey(), entry.getValue());
-                }
-                testSuiteRows.add(tableRow);
+                testSuiteRows.add(workbookStepToTableRow(step));
             }
             testSuiteRunnerStatusLabel.setText(steps.isEmpty()
                     ? "No test steps found in the imported workbook."
@@ -2530,12 +3683,18 @@ public class ApiValidatorFxApp extends Application {
 
     private List<Map<String, String>> readTestSuiteRunnerSteps(Path workbookPath) throws Exception {
         Map<String, byte[]> entries = readWorkbookEntries(workbookPath);
-        byte[] sheetBytes = entries.get("xl/worksheets/sheet1.xml");
+        String worksheetPath = selectedWorksheetPath(entries);
+        byte[] sheetBytes = entries.get(worksheetPath);
         if (sheetBytes == null) {
             return List.of();
         }
         String sheetXml = new String(sheetBytes, StandardCharsets.UTF_8);
         List<String> sharedStrings = readSharedStrings(entries);
+        return readTestSuiteRunnerSteps(sheetBytes, sharedStrings);
+    }
+
+    private List<Map<String, String>> readTestSuiteRunnerSteps(byte[] sheetBytes, List<String> sharedStrings) {
+        String sheetXml = new String(sheetBytes, StandardCharsets.UTF_8);
         List<List<String>> rows = readSheetRows(sheetXml, sharedStrings);
         List<String> header = null;
         List<Map<String, String>> steps = new ArrayList<>();
@@ -2558,6 +3717,21 @@ public class ApiValidatorFxApp extends Application {
             }
         }
         return steps;
+    }
+
+    private Map<String, String> workbookStepToTableRow(Map<String, String> step) {
+        Map<String, String> tableRow = row("selected", step.getOrDefault("Run", "true"),
+                "suite", step.getOrDefault("Test Suite", ""),
+                "case", step.getOrDefault("Test Case", ""),
+                "step", step.getOrDefault("Test Step", ""),
+                "executionMode", step.getOrDefault("Execution Mode", "Sequential"),
+                "type", runnerStepType(step),
+                "details", runnerStepDetails(step),
+                "status", step.getOrDefault("Status", "Ready"));
+        for (Map.Entry<String, String> entry : step.entrySet()) {
+            tableRow.put("workbook:" + entry.getKey(), entry.getValue());
+        }
+        return tableRow;
     }
 
     private String selectedFieldValidationSummary() {
@@ -4196,6 +5370,66 @@ public class ApiValidatorFxApp extends Application {
         String message;
     }
 
+    private static class WorkbookSheet {
+        final String name;
+        final String path;
+
+        WorkbookSheet(String name, String path) {
+            this.name = name;
+            this.path = path;
+        }
+    }
+
+    private static class BuilderTreeNode {
+        final String id = UUID.randomUUID().toString();
+        final String kind;
+        final String displayName;
+        final String suite;
+        final String testCase;
+        final List<Map<String, String>> rows;
+
+        BuilderTreeNode(String kind, String displayName, String suite, String testCase, List<Map<String, String>> rows) {
+            this.kind = kind;
+            this.displayName = displayName;
+            this.suite = suite == null ? "" : suite;
+            this.testCase = testCase == null ? "" : testCase;
+            this.rows = rows == null ? List.of() : rows;
+        }
+
+        static BuilderTreeNode root() {
+            return new BuilderTreeNode("ROOT", "Suite Builder", "", "", List.of());
+        }
+
+        static BuilderTreeNode placeholder(String text) {
+            return new BuilderTreeNode("PLACEHOLDER", text, "", "", List.of());
+        }
+
+        static BuilderTreeNode suite(String suite, List<Map<String, String>> rows) {
+            return new BuilderTreeNode("SUITE", suite, suite, "", rows);
+        }
+
+        static BuilderTreeNode testCase(String testCase, List<Map<String, String>> rows) {
+            String suite = rows.isEmpty() ? "" : rows.get(0).getOrDefault("suite", "");
+            return new BuilderTreeNode("CASE", testCase, suite, testCase, rows);
+        }
+
+        static BuilderTreeNode step(Map<String, String> row) {
+            String step = row.getOrDefault("step", "Test Step");
+            String type = row.getOrDefault("type", "Step");
+            return new BuilderTreeNode("STEP", step + " [" + type + "]",
+                    row.getOrDefault("suite", ""), row.getOrDefault("case", ""), List.of(row));
+        }
+
+        boolean draggable() {
+            return "SUITE".equals(kind) || "CASE".equals(kind) || "STEP".equals(kind);
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
     private String normalizeVariableName(String value) {
         if (value == null || value.isBlank()) {
             return "variable";
@@ -4506,6 +5740,17 @@ public class ApiValidatorFxApp extends Application {
                 .context-panel { -fx-hgap: 20px; -fx-vgap: 10px; }
                 .context-button { -fx-padding: 9px 18px; }
                 .db-workflow { -fx-padding: 0 0 18px 0; }
+                .builder-canvas { -fx-background-color: #eef3f8; }
+                .builder-tree-pane { -fx-background-color: white; -fx-border-color: #d2dceb; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 12px; }
+                .builder-node { -fx-background-color: white; -fx-border-width: 0 0 0 5px; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 10px; -fx-effect: dropshadow(gaussian, rgba(31,41,55,0.15), 10, 0.18, 0, 2); }
+                .builder-node-selected { -fx-border-width: 2px 2px 2px 6px; -fx-border-color: #0ea5e9; }
+                .builder-node-title { -fx-font-size: 14px; -fx-font-weight: 700; -fx-text-fill: #1f2937; }
+                .builder-connector { -fx-stroke: #8ca0bd; -fx-stroke-width: 2px; -fx-opacity: 0.75; }
+                .builder-connector-selected { -fx-stroke: #ef4444; -fx-stroke-width: 4px; -fx-opacity: 1; }
+                .builder-connector-handle { -fx-fill: white; -fx-stroke: #2563eb; -fx-stroke-width: 2px; }
+                .builder-arrow { -fx-fill: #8ca0bd; -fx-opacity: 0.85; }
+                .builder-progress { -fx-pref-height: 7px; }
+                .builder-progress .bar { -fx-background-color: #eab308; }
                 .primary-button { -fx-background-color: %s; -fx-text-fill: white; -fx-font-weight: 700; -fx-background-radius: 5px; -fx-padding: 8px 16px; }
                 .secondary-button { -fx-background-color: white; -fx-text-fill: #233044; -fx-border-color: #d2dceb; -fx-border-radius: 5px; -fx-background-radius: 5px; -fx-padding: 8px 14px; }
                 .danger-button { -fx-background-color: #c93535; -fx-text-fill: white; -fx-border-color: #a92727; -fx-font-weight: 700; }

@@ -120,6 +120,11 @@ public class TestWeaveCliRunner {
 
     private Map<String, String> execute(Map<String, String> row) {
         Map<String, String> result = new LinkedHashMap<>(row);
+        long startedAt = System.nanoTime();
+        String stepLabel = row.getOrDefault("Test Suite", "") + " / "
+                + row.getOrDefault("Test Case", "") + " / "
+                + row.getOrDefault("Test Step", "");
+        System.out.println("[VeyraAI] START  " + stepLabel);
         result.put("Started", LocalDateTime.now().toString());
         try {
             if (!row.getOrDefault("WEB_TEST", "").isBlank()) {
@@ -167,6 +172,10 @@ public class TestWeaveCliRunner {
                     e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
         result.put("Finished", LocalDateTime.now().toString());
+        long durationMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        result.put("Duration Ms", String.valueOf(durationMs));
+        System.out.println("[VeyraAI] FINISH " + stepLabel + " -> "
+                + result.getOrDefault("Status", "Unknown") + " (" + durationMs + " ms)");
         return result;
     }
 

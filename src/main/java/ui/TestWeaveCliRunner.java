@@ -19,6 +19,7 @@ import service.ApiService;
 import service.DbValidationService;
 import service.PerformanceTestService;
 import service.PlaywrightRecorderController;
+import service.TestSuiteHtmlReportRenderer;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -1043,6 +1044,30 @@ public class TestWeaveCliRunner {
     }
 
     private String buildGithubActionsReportHtml(List<Map<String, String>> results) {
+        List<TestSuiteHtmlReportRenderer.Step> reportSteps = results.stream().map(result -> {
+            JSONArray validationsJson = validationsFor(result);
+            List<TestSuiteHtmlReportRenderer.Validation> validations = new ArrayList<>();
+            for (int index = 0; index < validationsJson.length(); index++) {
+                JSONObject validation = validationsJson.optJSONObject(index);
+                if (validation == null) {
+                    continue;
+                }
+                validations.add(new TestSuiteHtmlReportRenderer.Validation(
+                        validation.optString("field"), validation.optString("validation"),
+                        validation.optString("expected"), validation.optString("actual"),
+                        "PASS".equalsIgnoreCase(validation.optString("status")),
+                        validation.optString("message")));
+            }
+            return new TestSuiteHtmlReportRenderer.Step(
+                    result.getOrDefault("Test Suite", ""), result.getOrDefault("Test Case", ""),
+                    result.getOrDefault("Test Step", ""), stepType(result),
+                    result.getOrDefault("Status", ""), isPassed(result), validations);
+        }).toList();
+        String source = suitePath == null ? "GitHub Actions" : suitePath.toAbsolutePath().toString();
+        return TestSuiteHtmlReportRenderer.render(source, reportSteps);
+    }
+
+    private String buildLegacyGithubActionsReportHtml(List<Map<String, String>> results) {
         long passed = results.stream().filter(this::isPassed).count();
         long failedCount = results.stream().filter(this::isFailed).count();
         long total = results.size();

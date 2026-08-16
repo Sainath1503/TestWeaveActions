@@ -6,12 +6,19 @@ import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
+import com.microsoft.playwright.options.AriaRole;
+import com.microsoft.playwright.options.LoadState;
+import com.microsoft.playwright.options.WaitForSelectorState;
 import model.WebTestCase;
 import model.WebTestExecutionResult;
 import model.WebTestRunReport;
 import model.WebTestStep;
 import org.json.JSONObject;
+import org.json.JSONArray;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -21,6 +28,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class PlaywrightRecorderController {
 
@@ -365,6 +374,9 @@ public class PlaywrightRecorderController {
             Browser runBrowser = runPlaywright.chromium().launch(options);
             BrowserContext runContext = runBrowser.newContext(new Browser.NewContextOptions().setViewportSize(1280, 800));
             Page runPage = runContext.newPage();
+            List<String> consoleMessages = new CopyOnWriteArrayList<>();
+            List<String> networkFailures = new CopyOnWriteArrayList<>();
+            captureBrowserDiagnostics(runPage, consoleMessages, networkFailures);
             synchronized (lock) {
                 activeRunPlaywright = runPlaywright;
                 activeRunBrowser = runBrowser;
@@ -381,7 +393,8 @@ public class PlaywrightRecorderController {
                     report.stopped = true;
                     break;
                 }
-                WebTestExecutionResult result = executeStep(runPage, step, screenshotDir, report);
+                WebTestExecutionResult result = executeStep(runPage, step, screenshotDir, report,
+                        consoleMessages, networkFailures);
                 report.results.add(result);
                 if (webTestStopRequested) {
                     report.stopped = true;
@@ -443,6 +456,9 @@ public class PlaywrightRecorderController {
             runContext = runBrowser.contexts().isEmpty() ? runBrowser.newContext() : runBrowser.contexts().get(0);
             List<Page> pages = runContext.pages();
             runPage = pages.isEmpty() ? runContext.newPage() : pages.get(pages.size() - 1);
+            List<String> consoleMessages = new CopyOnWriteArrayList<>();
+            List<String> networkFailures = new CopyOnWriteArrayList<>();
+            captureBrowserDiagnostics(runPage, consoleMessages, networkFailures);
             synchronized (lock) {
                 activeRunPlaywright = runPlaywright;
                 activeRunBrowser = runBrowser;
@@ -459,7 +475,8 @@ public class PlaywrightRecorderController {
                     report.stopped = true;
                     break;
                 }
-                WebTestExecutionResult result = executeStep(runPage, step, screenshotDir, report);
+                WebTestExecutionResult result = executeStep(runPage, step, screenshotDir, report,
+                        consoleMessages, networkFailures);
                 report.results.add(result);
                 if (slowMoMillis > 0) {
                     Thread.sleep(slowMoMillis);
@@ -489,6 +506,74 @@ public class PlaywrightRecorderController {
 
     public List<WebTestStep> snapshotCapturedSteps() {
         return new ArrayList<>(capturedSteps);
+    }
+
+    public JSONObject inspectActiveBrowserForMcp(String cdpEndpoint, JSONArray failedResults, JSONArray capturedSteps) {
+        JSONObject evidence = new JSONObject()
+                .put("provider", "playwright-mcp")
+                .put("mode", "cdp-live-inspection")
+                .put("available", false)
+                .put("locatorValidations", new JSONArray());
+        if (cdpEndpoint == null || cdpEndpoint.isBlank()) {
+            return evidence.put("error", "CDP endpoint is not configured.");
+        }
+        Playwright inspectionPlaywright = null;
+        try {
+            inspectionPlaywright = Playwright.create();
+            Browser inspectionBrowser = connectOverCdpWithFallback(inspectionPlaywright, cdpEndpoint.trim());
+            BrowserContext inspectionContext = inspectionBrowser.contexts().isEmpty()
+                    ? inspectionBrowser.newContext() : inspectionBrowser.contexts().get(0);
+            List<Page> pages = inspectionContext.pages();
+            Page inspectionPage = pages.isEmpty() ? inspectionContext.newPage() : pages.get(pages.size() - 1);
+            evidence.put("available", true)
+                    .put("url", safePageValue(inspectionPage, Page::url))
+                    .put("title", safePageValue(inspectionPage, Page::title));
+            try {
+                evidence.put("ariaSnapshot", inspectionPage.locator("body").ariaSnapshot(
+                        new com.microsoft.playwright.Locator.AriaSnapshotOptions().setTimeout(3000)));
+            } catch (Exception exception) {
+                evidence.put("ariaSnapshot", "").put("snapshotError", safe(exception.getMessage()));
+            }
+            evidence.put("domSnapshot", interactiveDomSnapshot(inspectionPage));
+            JSONArray validations = evidence.getJSONArray("locatorValidations");
+            if (failedResults != null) {
+                for (int i = 0; i < failedResults.length(); i++) {
+                    JSONObject failure = failedResults.optJSONObject(i);
+                    if (failure == null) continue;
+                    int index = failure.optInt("stepIndex", -1);
+                    JSONObject step = index >= 0 && capturedSteps != null && index < capturedSteps.length()
+                            ? capturedSteps.optJSONObject(index) : null;
+                    if (step == null) continue;
+                    String selector = step.optString("selector");
+                    JSONObject validation = new JSONObject()
+                            .put("stepIndex", index)
+                            .put("stepName", step.optString("stepName"))
+                            .put("selector", selector);
+                    try {
+                        com.microsoft.playwright.Locator locator = resolveLocator(inspectionPage, selector);
+                        int count = selector.isBlank() ? 0 : locator.count();
+                        validation.put("matchCount", count)
+                                .put("visible", count > 0 && locator.first().isVisible())
+                                .put("enabled", count > 0 && locator.first().isEnabled())
+                                .put("unique", count == 1);
+                    } catch (Exception exception) {
+                        validation.put("matchCount", 0).put("visible", false).put("enabled", false)
+                                .put("unique", false).put("error", safe(exception.getMessage()));
+                    }
+                    validations.put(validation);
+                }
+            }
+            Path evidenceDir = Path.of("target", "web-test-screenshots");
+            Files.createDirectories(evidenceDir);
+            Path screenshot = evidenceDir.resolve("playwright-mcp-live-" + Instant.now().toEpochMilli() + ".png");
+            inspectionPage.screenshot(new Page.ScreenshotOptions().setPath(screenshot).setFullPage(true));
+            evidence.put("screenshotPath", screenshot.toAbsolutePath().normalize().toString());
+        } catch (Exception exception) {
+            evidence.put("error", safe(exception.getMessage()));
+        } finally {
+            closeQuietly(inspectionPlaywright);
+        }
+        return evidence;
     }
 
     private void registerPage(Page pageToRegister) {
@@ -658,8 +743,11 @@ public class PlaywrightRecorderController {
                 && safe(lastStep.note).equals(safe(step.note));
     }
 
-    private WebTestExecutionResult executeStep(Page runPage, WebTestStep step, Path screenshotDir, WebTestRunReport report) {
+    private WebTestExecutionResult executeStep(Page runPage, WebTestStep step, Path screenshotDir,
+                                               WebTestRunReport report, List<String> consoleMessages,
+                                               List<String> networkFailures) {
         WebTestExecutionResult result = new WebTestExecutionResult();
+        result.stepName = step.stepName;
         result.action = step.action;
         result.selector = step.selector;
         result.expectedValue = step.value;
@@ -688,6 +776,67 @@ public class PlaywrightRecorderController {
                     resolveLocator(runPage, step.selector).selectOption(step.value == null ? "" : step.value);
                     result.message = "Dropdown option selected";
                     break;
+                case "wait for visible":
+                    com.microsoft.playwright.Locator.WaitForOptions visibleOptions =
+                            new com.microsoft.playwright.Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE);
+                    if (step.timeoutMs > 0) visibleOptions.setTimeout(step.timeoutMs);
+                    resolveLocator(runPage, step.selector).waitFor(visibleOptions);
+                    result.message = "Element became visible";
+                    break;
+                case "wait for text":
+                    com.microsoft.playwright.Locator.WaitForOptions textOptions =
+                            new com.microsoft.playwright.Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE);
+                    if (step.timeoutMs > 0) textOptions.setTimeout(step.timeoutMs);
+                    runPage.getByText(step.value == null ? "" : step.value).waitFor(textOptions);
+                    result.message = "Text became visible";
+                    break;
+                case "wait for url":
+                    if (step.timeoutMs > 0) {
+                        runPage.waitForURL(step.value == null ? "" : step.value,
+                                new Page.WaitForURLOptions().setTimeout(step.timeoutMs));
+                    } else {
+                        runPage.waitForURL(step.value == null ? "" : step.value);
+                    }
+                    result.message = "URL matched";
+                    break;
+                case "wait for network idle":
+                    if (step.timeoutMs > 0) {
+                        runPage.waitForLoadState(LoadState.NETWORKIDLE,
+                                new Page.WaitForLoadStateOptions().setTimeout(step.timeoutMs));
+                    } else {
+                        runPage.waitForLoadState(LoadState.NETWORKIDLE);
+                    }
+                    result.message = "Network became idle";
+                    break;
+                case "assert element visible":
+                    if (!resolveLocator(runPage, step.selector).first().isVisible()) {
+                        throw new IllegalStateException("Element is not visible: " + step.selector);
+                    }
+                    result.message = "Element is visible";
+                    break;
+                case "assert url contains":
+                    String currentUrl = runPage.url();
+                    String expectedUrlPart = step.value == null ? "" : step.value;
+                    if (!currentUrl.contains(expectedUrlPart)) {
+                        throw new IllegalStateException("Expected URL to contain '" + expectedUrlPart
+                                + "'. Actual URL: " + currentUrl);
+                    }
+                    result.message = "URL assertion passed";
+                    break;
+                case "fill by label":
+                    runPage.getByLabel(step.selector == null || step.selector.isBlank() ? step.value : step.selector)
+                            .fill(step.value == null ? "" : step.value);
+                    result.message = "Text entered by label";
+                    break;
+                case "click by text":
+                    runPage.getByText(step.value == null ? "" : step.value).click();
+                    result.message = "Element clicked by text";
+                    break;
+                case "click by role":
+                    runPage.getByRole(parseAriaRole(step.selector), new Page.GetByRoleOptions()
+                            .setName(step.value == null ? "" : step.value)).click();
+                    result.message = "Element clicked by role";
+                    break;
                 case "validate text":
                     String actualText = resolveLocator(runPage, step.selector).innerText();
                     if (actualText == null || !actualText.contains(step.value == null ? "" : step.value)) {
@@ -697,15 +846,39 @@ public class PlaywrightRecorderController {
                     result.message = "Text matched";
                     break;
                 case "get text":
-                    String variableName = normalizeVariableName(step.value);
-                    if (variableName.isBlank()) {
-                        throw new IllegalArgumentException("Enter a variable name in Value / Expected for Get Text.");
-                    }
+                    String variableName = normalizeVariableName(step.expectedVariableName);
                     String extractedText = resolveLocator(runPage, step.selector).innerText();
-                    result.capturedVariableName = variableName;
-                    result.capturedVariableValue = extractedText == null ? "" : extractedText.trim();
-                    result.expectedValue = variableName;
-                    result.message = "Saved text to ${" + variableName + "}";
+                    String observedText = extractedText == null ? "" : extractedText.trim();
+                    result.observedVariableName = variableName;
+                    result.observedVariableValue = observedText;
+                    result.actualValue = observedText;
+                    result.expectedValue = safe(step.expectedVariableValue);
+                    if (!variableName.isBlank() && !step.expectedVariablePresent) {
+                        throw new IllegalStateException("Expected variable ${" + variableName
+                                + "} was not found. Actual text: '" + observedText
+                                + "'. No variable was created during the run.");
+                    }
+                    if (!observedText.equals(safe(step.expectedVariableValue))) {
+                        throw new IllegalStateException("Expected variable ${" + variableName + "} to equal '"
+                                + safe(step.expectedVariableValue) + "'. Actual text: '" + observedText + "'.");
+                    }
+                    result.message = variableName.isBlank()
+                            ? "Get Text matched static expected text. Actual text: '" + observedText + "'."
+                            : "Get Text matched ${" + variableName + "}. Actual text: '" + observedText + "'.";
+                    break;
+                case "flow variable":
+                    String flowVariableName = normalizeVariableName(step.note);
+                    if (flowVariableName.isBlank()) {
+                        flowVariableName = normalizeVariableName(step.value);
+                    }
+                    if (flowVariableName.isBlank()) {
+                        throw new IllegalArgumentException("Enter a variable name in Note for Flow Variable.");
+                    }
+                    result.expectedValue = step.value == null ? "" : step.value;
+                    result.observedVariableName = flowVariableName;
+                    result.observedVariableValue = result.expectedValue;
+                    result.message = "Prepared run-local flow variable ${" + flowVariableName
+                            + "}; Variables tab was not changed.";
                     break;
                 case "screenshot":
                     String baseName = safe(step.value).isBlank() ? "screenshot-" + Instant.now().toEpochMilli() + ".png" : step.value;
@@ -717,6 +890,38 @@ public class PlaywrightRecorderController {
                     report.lastScreenshotPath = screenshotPath;
                     result.message = "Screenshot captured";
                     break;
+                case "visual baseline":
+                    Path baselinePath = resolveVisualPath(step.value, "baseline-" + Instant.now().toEpochMilli() + ".png");
+                    Files.createDirectories(baselinePath.toAbsolutePath().getParent());
+                    captureVisualScreenshot(runPage, step.selector, baselinePath);
+                    report.lastScreenshotPath = baselinePath;
+                    result.message = "Visual baseline captured: " + baselinePath.toAbsolutePath();
+                    break;
+                case "visual compare":
+                    Path expectedPath = resolveVisualPath(step.value, "baseline-" + Instant.now().toEpochMilli() + ".png");
+                    Files.createDirectories(expectedPath.toAbsolutePath().getParent());
+                    if (!Files.exists(expectedPath)) {
+                        captureVisualScreenshot(runPage, step.selector, expectedPath);
+                        report.lastScreenshotPath = expectedPath;
+                        result.message = "Visual baseline did not exist; created baseline: " + expectedPath.toAbsolutePath();
+                        break;
+                    }
+                    Path actualPath = screenshotDir.resolve("visual-actual-" + Instant.now().toEpochMilli() + ".png");
+                    captureVisualScreenshot(runPage, step.selector, actualPath);
+                    report.lastScreenshotPath = actualPath;
+                    VisualComparison comparison = compareImages(expectedPath, actualPath, screenshotDir);
+                    double threshold = visualThreshold(step.note);
+                    if (comparison.diffRatio > threshold) {
+                        throw new IllegalStateException("Visual difference "
+                                + String.format("%.4f", comparison.diffRatio)
+                                + " exceeded threshold " + String.format("%.4f", threshold)
+                                + ". Actual: " + actualPath.toAbsolutePath()
+                                + ", Diff: " + comparison.diffPath.toAbsolutePath());
+                    }
+                    result.message = "Visual comparison passed. Difference: "
+                            + String.format("%.4f", comparison.diffRatio)
+                            + ", threshold: " + String.format("%.4f", threshold);
+                    break;
                 default:
                     throw new IllegalArgumentException("Unsupported web action: " + step.action);
             }
@@ -725,9 +930,184 @@ public class PlaywrightRecorderController {
             result.passed = false;
             result.message = enrichStepFailureMessage(runPage, step,
                     e.getMessage() == null ? "Step failed." : e.getMessage());
+            captureFailureEvidence(runPage, step, screenshotDir, result, consoleMessages, networkFailures);
         }
         result.durationMs = System.currentTimeMillis() - start;
         return result;
+    }
+
+
+    private void captureBrowserDiagnostics(Page page, List<String> consoleMessages, List<String> networkFailures) {
+        page.onConsoleMessage(message -> appendBounded(consoleMessages,
+                message.type() + ": " + safe(message.text()), 100));
+        page.onRequestFailed(request -> appendBounded(networkFailures,
+                request.method() + " " + request.url() + " - " + safe(request.failure()), 100));
+        page.onResponse(response -> {
+            if (!response.ok()) {
+                appendBounded(networkFailures, response.status() + " " + response.statusText()
+                        + " " + response.url(), 100);
+            }
+        });
+    }
+
+    private void appendBounded(List<String> values, String value, int maximum) {
+        values.add(value);
+        while (values.size() > maximum) values.remove(0);
+    }
+
+    private void captureFailureEvidence(Page page, WebTestStep step, Path screenshotDir,
+                                        WebTestExecutionResult result, List<String> consoleMessages,
+                                        List<String> networkFailures) {
+        result.pageUrl = safePageValue(page, Page::url);
+        result.pageTitle = safePageValue(page, Page::title);
+        result.consoleMessages = new org.json.JSONArray(consoleMessages).toString();
+        result.networkFailures = new org.json.JSONArray(networkFailures).toString();
+        try {
+            result.ariaSnapshot = page.locator("body").ariaSnapshot(
+                    new com.microsoft.playwright.Locator.AriaSnapshotOptions().setTimeout(3000));
+        } catch (Exception ignored) {
+            result.ariaSnapshot = "";
+        }
+        result.domSnapshot = interactiveDomSnapshot(page);
+        try {
+            String safeName = safe(step.stepName).replaceAll("[^a-zA-Z0-9._-]+", "-");
+            if (safeName.isBlank()) safeName = "step";
+            Path screenshot = screenshotDir.resolve("failure-" + safeName + "-" + Instant.now().toEpochMilli() + ".png");
+            page.screenshot(new Page.ScreenshotOptions().setPath(screenshot).setFullPage(true));
+            result.screenshotPath = screenshot.toAbsolutePath().normalize().toString();
+            reportScreenshotPath(result, screenshot);
+        } catch (Exception ignored) {
+            result.screenshotPath = "";
+        }
+    }
+
+    private void reportScreenshotPath(WebTestExecutionResult result, Path screenshot) {
+        // Kept as a small seam for MCP evidence capture and future artifact publishing.
+        result.screenshotPath = screenshot.toAbsolutePath().normalize().toString();
+    }
+
+    private String interactiveDomSnapshot(Page page) {
+        try {
+            Object snapshot = page.evaluate("""
+                    () => Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[data-testid],[data-test],[data-cy],[aria-label],label'))
+                      .slice(0, 300)
+                      .map((element) => {
+                        const style = getComputedStyle(element);
+                        const box = element.getBoundingClientRect();
+                        return {
+                          tag: element.tagName.toLowerCase(), id: element.id || '',
+                          name: element.getAttribute('name') || '', role: element.getAttribute('role') || '',
+                          testId: element.getAttribute('data-testid') || element.getAttribute('data-test') || element.getAttribute('data-cy') || '',
+                          ariaLabel: element.getAttribute('aria-label') || '',
+                          placeholder: element.getAttribute('placeholder') || '',
+                          text: (element.innerText || element.value || '').trim().replace(/\\s+/g, ' ').slice(0, 160),
+                          visible: style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0 && box.height > 0,
+                          enabled: !element.disabled,
+                          box: {x: box.x, y: box.y, width: box.width, height: box.height}
+                        };
+                      })
+                    """);
+            return JSONObject.valueToString(JSONObject.wrap(snapshot));
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private String safePageValue(Page page, java.util.function.Function<Page, String> reader) {
+        try {
+            return safe(reader.apply(page));
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private void captureVisualScreenshot(Page page, String selector, Path path) {
+        String target = safe(selector);
+        if (target.isBlank() || "page".equalsIgnoreCase(target)) {
+            page.screenshot(new Page.ScreenshotOptions().setPath(path));
+            return;
+        }
+        resolveLocator(page, target).screenshot(new com.microsoft.playwright.Locator.ScreenshotOptions().setPath(path));
+    }
+
+    private Path resolveVisualPath(String value, String fallbackName) {
+        String raw = safe(value).isBlank() ? fallbackName : safe(value);
+        if (!raw.toLowerCase().endsWith(".png")) {
+            raw = raw + ".png";
+        }
+        Path path = Path.of(raw);
+        return path.isAbsolute() ? path.normalize() : path.toAbsolutePath().normalize();
+    }
+
+    private double visualThreshold(String note) {
+        Matcher matcher = Pattern.compile("threshold\\s*=\\s*([0-9]*\\.?[0-9]+)", Pattern.CASE_INSENSITIVE)
+                .matcher(safe(note));
+        if (!matcher.find()) {
+            return 0.01;
+        }
+        try {
+            return Math.max(0.0, Math.min(1.0, Double.parseDouble(matcher.group(1))));
+        } catch (NumberFormatException e) {
+            return 0.01;
+        }
+    }
+
+    private VisualComparison compareImages(Path expectedPath, Path actualPath, Path outputDirectory) throws Exception {
+        BufferedImage expected = ImageIO.read(expectedPath.toFile());
+        BufferedImage actual = ImageIO.read(actualPath.toFile());
+        if (expected == null || actual == null) {
+            throw new IllegalArgumentException("Visual comparison requires readable PNG images.");
+        }
+        int width = Math.max(expected.getWidth(), actual.getWidth());
+        int height = Math.max(expected.getHeight(), actual.getHeight());
+        BufferedImage diff = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        long different = 0;
+        long total = (long) width * height;
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                boolean inExpected = x < expected.getWidth() && y < expected.getHeight();
+                boolean inActual = x < actual.getWidth() && y < actual.getHeight();
+                int expectedRgb = inExpected ? expected.getRGB(x, y) : Color.MAGENTA.getRGB();
+                int actualRgb = inActual ? actual.getRGB(x, y) : Color.CYAN.getRGB();
+                if (expectedRgb == actualRgb) {
+                    diff.setRGB(x, y, actualRgb);
+                } else {
+                    different++;
+                    diff.setRGB(x, y, Color.RED.getRGB());
+                }
+            }
+        }
+
+        Path diffPath = outputDirectory.resolve("visual-diff-" + Instant.now().toEpochMilli() + ".png");
+        ImageIO.write(diff, "png", diffPath.toFile());
+        return new VisualComparison(total == 0 ? 0.0 : different / (double) total, diffPath);
+    }
+
+    private AriaRole parseAriaRole(String value) {
+        return switch (safe(value).toLowerCase().replace("_", " ").replace("-", " ")) {
+            case "alert" -> AriaRole.ALERT;
+            case "alertdialog", "alert dialog" -> AriaRole.ALERTDIALOG;
+            case "button" -> AriaRole.BUTTON;
+            case "checkbox" -> AriaRole.CHECKBOX;
+            case "combobox", "combo box" -> AriaRole.COMBOBOX;
+            case "dialog" -> AriaRole.DIALOG;
+            case "grid" -> AriaRole.GRID;
+            case "heading" -> AriaRole.HEADING;
+            case "img", "image" -> AriaRole.IMG;
+            case "link" -> AriaRole.LINK;
+            case "list" -> AriaRole.LIST;
+            case "listitem", "list item" -> AriaRole.LISTITEM;
+            case "menu" -> AriaRole.MENU;
+            case "menuitem", "menu item" -> AriaRole.MENUITEM;
+            case "option" -> AriaRole.OPTION;
+            case "radio" -> AriaRole.RADIO;
+            case "searchbox", "search box" -> AriaRole.SEARCHBOX;
+            case "tab" -> AriaRole.TAB;
+            case "table" -> AriaRole.TABLE;
+            case "textbox", "text box", "input" -> AriaRole.TEXTBOX;
+            default -> AriaRole.BUTTON;
+        };
     }
 
     private String enrichStepFailureMessage(Page runPage, WebTestStep step, String baseMessage) {
@@ -969,5 +1349,15 @@ public class PlaywrightRecorderController {
 
     private String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static class VisualComparison {
+        final double diffRatio;
+        final Path diffPath;
+
+        VisualComparison(double diffRatio, Path diffPath) {
+            this.diffRatio = diffRatio;
+            this.diffPath = diffPath;
+        }
     }
 }

@@ -1,4 +1,4 @@
-name: TestWeave Test Suite Runner
+name: VeyraAI Test Suite Runner
 
 on:
   workflow_dispatch:
@@ -8,11 +8,11 @@ on:
         required: true
         default: testweave/test-suite.xlsx
       parallel:
-        description: Enable TestWeave parallel execution
+        description: Enable VeyraAI parallel execution
         required: true
         default: 'false'
       threads:
-        description: TestWeave thread count
+        description: VeyraAI thread count
         required: true
         default: '1'
 
@@ -21,11 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check TestWeave suite file
+      - name: Check VeyraAI suite file
         run: |
           test -f "${{ inputs.suite_file }}"
           ls -l "${{ inputs.suite_file }}"
-      - name: Run TestWeave suite in Docker Compose
+      - name: Run VeyraAI suite in Docker Compose
         env:
           SUITE_FILE: ${{ inputs.suite_file }}
           TESTWEAVE_PARALLEL: ${{ inputs.parallel }}
@@ -34,7 +34,7 @@ jobs:
         run: |
           trap 'docker compose -f docker-compose.testweave.yml down -v --remove-orphans' EXIT
           docker compose -f docker-compose.testweave.yml up --build --abort-on-container-exit --exit-code-from testweave
-      - name: Upload TestWeave report
+      - name: Upload VeyraAI report
         if: always()
         uses: actions/upload-artifact@v4
         with:

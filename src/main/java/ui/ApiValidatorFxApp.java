@@ -1,6 +1,39 @@
 package ui;
 
+import agenticai.AgentRegistry;
+import agenticai.AgentSessionManager;
+import agenticai.AgenticAIConnectionManager;
+import agenticai.DbAgentContextBuilder;
+import agenticai.DbAgentPromptBuilder;
+import agenticai.DbAnalysisAgent;
+import agenticai.DbSuggestionKnowledgeService;
+import agenticai.SharedAgentContextService;
+import agenticai.SharedKnowledgeRepository;
+import agenticai.WebAgentContextBuilder;
+import agenticai.WebAgentKnowledgeService;
+import agenticai.WebAgentPromptBuilder;
+import agenticai.WebAnalysisAgent;
+import agenticai.WebFailureSignatureService;
+import agenticai.WebHealingResponseValidator;
+import agenticai.WebKnownFixResolver;
+import agenticai.WebUiMcpServer;
+import agenticai.PlaywrightMcpServer;
+import agenticai.testplanning.ApiContractMcpServer;
+import agenticai.testplanning.DocumentConversionMcpServer;
+import agenticai.testplanning.JiraMcpServer;
+import agenticai.testplanning.KnowledgeSourceMcpServer;
+import agenticai.testplanning.ProjectRepositoryMcpServer;
+import agenticai.testplanning.TestPlanningAgent;
+import agenticai.testplanning.TestPlanningMemoryMcpServer;
+import agenticai.testplanning.TestPlanningOrchestrator;
+import agenticai.testplanning.TestPlanningPromptBuilder;
+import agenticai.testplanning.TestPlanningResponseValidator;
+import agenticai.testplanning.TestWorkbookMcpServer;
+import agenticai.testplanning.WorkspaceTerminalMcpServer;
 import compare.JsonComparator;
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
+import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -10,6 +43,7 @@ import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.event.EventHandler;
+import javafx.concurrent.WorkerStateEvent;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
@@ -17,6 +51,7 @@ import javafx.scene.Scene;
 import javafx.scene.chart.BarChart;
 import javafx.scene.chart.CategoryAxis;
 import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.PieChart;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
@@ -24,26 +59,32 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.DatePicker;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TablePosition;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.scene.control.cell.ComboBoxTableCell;
+import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.image.Image;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
@@ -56,14 +97,21 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.Line;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Polygon;
+import javafx.embed.swing.SwingNode;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
+import javafx.stage.Popup;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
+import javafx.stage.WindowEvent;
 import model.ApiRequest;
+import model.ApiRequestBodyPart;
 import model.ApiResponse;
 import model.DbConnectionConfig;
 import model.DbValidationReport;
@@ -78,14 +126,37 @@ import model.WebTestStep;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
+import org.kordamp.ikonli.javafx.FontIcon;
+import com.jediterm.core.util.TermSize;
+import com.jediterm.terminal.Questioner;
+import com.jediterm.terminal.TtyConnector;
+import com.jediterm.terminal.ui.JediTermWidget;
+import com.jediterm.terminal.ui.settings.DefaultSettingsProvider;
+import com.pty4j.PtyProcess;
+import com.pty4j.PtyProcessBuilder;
+import com.pty4j.WinSize;
+import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.PolyglotException;
+import org.graalvm.polyglot.Value;
+import org.graalvm.polyglot.proxy.ProxyExecutable;
+import org.graalvm.polyglot.proxy.ProxyObject;
 import service.ApiService;
 import service.DbValidationService;
+import service.DashboardExecutionService;
+import service.DashboardExecutionService.StorageMode;
 import service.PerformanceTestService;
 import service.PlaywrightRecorderController;
 import service.ResponseVariableService;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.Reader;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -96,16 +167,29 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Collections;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -113,36 +197,149 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.swing.SwingUtilities;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 public class ApiValidatorFxApp extends Application {
 
-    private static final String APP_NAME = "TestWeave";
-    private static final String APP_LOGO_RESOURCE = "/testweave-logo.png";
-    private static final String PRIMARY = "#1e5ed6";
+    private static final String APP_NAME = "VeyraAI";
+    private static final String APP_TAGLINE = "Weaving Intelligence into Software Quality";
+    private static final String APP_LOGO_RESOURCE = "/veyraai-logo.png";
+    private static final String APP_STYLESHEET_RESOURCE = "/css/testweave.css";
+    private static final String PRIMARY = "#ffb21a";
+    private static final String APP_BACKGROUND = "#030915";
+    private static final String PANEL_BACKGROUND = "#061225";
+    private static final String PANEL_SURFACE = "#08172c";
+    private static final String BORDER_ACCENT = "#8a4b16";
+    private static final String TEXT_PRIMARY = "#fff8e8";
+    private static final String TEXT_MUTED = "#c7bda6";
+    private static final String CYAN = "#08c7d8";
+    private static final String VIOLET = "#8e5cff";
+    private static final String WEB_FLOW_STUDIO_URL = "http://127.0.0.1:5173";
+    private static final String WEB_FLOW_STUDIO_API_URL = "http://127.0.0.1:7878";
     private static final List<String> RUNTIME_VARIABLES = List.of("randomString", "randomInt", "randomDate");
+    private static final String CODEX_DOCKER_IMAGE_ENV = "CODEX_DOCKER_IMAGE";
+    private static final String CODEX_DOCKER_IMAGE_DEFAULT = "docker/sandbox-templates:codex";
+    private static final String CODEX_CONTAINER_NAME_ENV = "CODEX_CONTAINER_NAME";
+    private static final String CODEX_CONTAINER_NAME_DEFAULT = "codex-cli";
+    private static final String CUSTOM_AGENT_PROVIDER_DEEPSEEK = "DeepSeek";
+    private static final String CUSTOM_AGENT_PROVIDER_CODEX = "OpenAI Codex CLI";
+    private static final String CODEX_HOME_ENV = "CODEX_HOME";
+    private static final String BUNDLED_CODEX_RESOURCE_ROOT = "bundled-tools/codex-cli";
+    private static final List<String> BUNDLED_CODEX_RESOURCE_FILES = List.of(
+            "codex-package.json",
+            "bin/codex-code-mode-host.exe",
+            "bin/codex.exe",
+            "codex-path/rg.exe",
+            "codex-resources/codex-command-runner.exe",
+            "codex-resources/codex-windows-sandbox-setup.exe");
+    private static final String HERMES_DOCKER_IMAGE_ENV = "HERMES_DOCKER_IMAGE";
+    private static final String HERMES_DOCKER_IMAGE_DEFAULT = "nousresearch/hermes-agent:latest";
+    private static final String HERMES_CONTAINER_NAME_ENV = "HERMES_CONTAINER_NAME";
+    private static final String HERMES_CONTAINER_NAME_DEFAULT = "hermes";
+    private static final String HERMES_DASHBOARD_URL = "http://127.0.0.1:9119";
+    private static final String CONFIG_CACHE_DB_NAME = "testweave-config-cache.db";
+    private static final String CONFIG_CACHE_TABLE = "testweave_config_paths";
+    private static final String CONFIG_ROOT_FOLDER = "VeyraAIConfig";
+    private static final String LEGACY_CONFIG_ROOT_FOLDER = "TestWeaveConfig";
+    private static final String CONFIG_STORAGE_CLOUD = "Cloud";
+    private static final String CONFIG_STORAGE_LOCAL = "Local";
+    private static final String HERMES_SESSION_TABLE = "hermes_cli_sessions";
+    private static final String API_AI_MEMORY_TABLE = "api_ai_agent_memory";
+    private static final String VEYRAAI_AGENT_SESSION_TABLE = "veyraai_ai_sessions";
+    private static final String VEYRAAI_AGENT_MESSAGE_TABLE = "veyraai_ai_messages";
+    private static final String CUSTOM_AGENT_MEMORY_TABLE = "custom_agent_memory";
+    private static final String VEYRAAI_MODEL_PROVIDER_TABLE = "veyraai_model_provider_config";
+    private static final String TEST_PLANNING_CONNECTOR_TABLE = "test_planning_connector_config";
+    private static final String GITHUB_ACTIONS_CONFIG_TABLE = "github_actions_config";
+    private static final String VEYRAAI_PROVIDER_AUTH_TABLE = "veyraai_provider_auth";
+    private static final String VEYRAAI_RELEASE_HEALTH_TABLE = "veyraai_release_health_reports";
+    private static final String API_AI_FIREBASE_PATH = "/testweave-api-ai-agent/memory";
+    private static final String API_AI_HERMES_FIREBASE_PATH = "/testweave-api-ai-agent/hermes-sessions";
+    private static final String API_AI_PROVIDER_AUTH_FIREBASE_PATH = "/testweave-api-ai-agent/provider-auth";
+    private static final String API_AI_VEYRAAI_SESSION_FIREBASE_PATH = "/testweave-api-ai-agent/veyraai-sessions";
+    private static final String API_AI_VEYRAAI_MESSAGE_FIREBASE_PATH = "/testweave-api-ai-agent/veyraai-messages";
+    private static final String GITHUB_CONFIG_FIREBASE_PATH = "/testweave-github-actions/config";
+    private static final String HERMES_NEW_SESSION = "New Session";
+    private static final String VEYRAAI_NEW_SESSION = "New Session";
+    private static final List<String> WEB_TEST_ACTIONS = List.of(
+            "Navigate",
+            "Type",
+            "Click",
+            "Select Option",
+            "Wait For Visible",
+            "Wait For Text",
+            "Wait For URL",
+            "Wait For Network Idle",
+            "Assert Element Visible",
+            "Assert URL Contains",
+            "Fill By Label",
+            "Click By Text",
+            "Click By Role",
+            "Validate Text",
+            "Get Text",
+            "Flow Variable",
+            "Screenshot",
+            "Visual Baseline",
+            "Visual Compare");
+    private static final List<String> TESTWEAVE_CONFIG_FOLDERS = List.of(
+            "API",
+            "API/ExpectedResponse",
+            "API/SavedResponse",
+            "API/SavedRequest",
+            "DB",
+            "DB/Connection",
+            "DB/SQLQuery",
+            "DB/DBRules",
+            "WebUI",
+            "WebUI/Recording",
+            "TestSuite",
+            "Variables",
+            "AIAgent",
+            "AIAgent/Sessions");
 
     private final ApiService apiService = new ApiService();
     private final JsonComparator comparator = new JsonComparator();
     private final PerformanceTestService performanceTestService = new PerformanceTestService();
+    private final DashboardExecutionService dashboardExecutionService = new DashboardExecutionService();
     private final DbValidationService dbValidationService = new DbValidationService();
     private final PlaywrightRecorderController playwrightRecorderController = new PlaywrightRecorderController();
     private final ResponseVariableService responseVariableService = new ResponseVariableService();
     private final Map<String, String> savedVariables = new ConcurrentHashMap<>();
     private final Map<String, String> savedVariablePaths = new ConcurrentHashMap<>();
     private final Map<String, String> savedVariableTypes = new ConcurrentHashMap<>();
+    private final Set<String> loadedWebRecordingFlowVariables = ConcurrentHashMap.newKeySet();
+    private final Map<String, String> postmanCollectionVariables = new ConcurrentHashMap<>();
+    private final Map<String, String> postmanEnvironmentVariables = new ConcurrentHashMap<>();
     private final List<ComboBox<String>> variableDropdowns = new ArrayList<>();
 
     private Stage stage;
+    private ProgressBar globalLoadingBar;
+    private TabPane mainNavigationTabs;
+    private boolean sliderMenuOpen;
+    private Timeline sliderMenuTimeline;
+    private Timeline sliderLeafletIdleTimeline;
+    private final AtomicInteger activeTaskCount = new AtomicInteger(0);
+    private double windowDragOffsetX;
+    private double windowDragOffsetY;
+    private double splashDragOffsetX;
+    private double splashDragOffsetY;
     private TextField endpointField;
     private ComboBox<String> apiUrlVariableBox;
     private ComboBox<String> methodBox;
@@ -150,18 +347,54 @@ public class ApiValidatorFxApp extends Application {
     private ComboBox<String> requestFormatBox;
     private PasswordField tokenField;
     private TextField visibleTokenField;
+    private ComboBox<String> oauthGrantTypeBox;
+    private TextField oauthTokenUrlField;
+    private TextField oauthClientIdField;
+    private PasswordField oauthClientSecretField;
+    private TextField oauthScopeField;
+    private TextField oauthUsernameField;
+    private PasswordField oauthPasswordField;
+    private TextField oauthAuthCodeField;
+    private TextField oauthRedirectUriField;
+    private TextField oauthRefreshTokenField;
+    private CheckBox oauthBasicAuthCheck;
+    private Label oauthStatusLabel;
+    private CheckBox sslVerificationDisabledCheck;
+    private TextField trustStorePathField;
+    private PasswordField trustStorePasswordField;
+    private TextField keyStorePathField;
+    private PasswordField keyStorePasswordField;
+    private CheckBox proxyEnabledCheck;
+    private ComboBox<String> proxySchemeBox;
+    private TextField proxyHostField;
+    private TextField proxyPortField;
+    private TextField proxyUsernameField;
+    private PasswordField proxyPasswordField;
     private TextArea headersArea;
     private TextArea bodyArea;
+    private TextArea preRequestScriptArea;
+    private TextArea testScriptArea;
     private TextArea prettyResponseArea;
     private TextArea rawResponseArea;
     private TextArea responseHeadersArea;
     private TextArea responseCookiesArea;
+    private TabPane apiTesterTabs;
+    private TreeView<PostmanCollectionNode> postmanCollectionTree;
+    private TextField postmanCollectionPathField;
+    private TextField postmanEnvironmentPathField;
+    private Label postmanCollectionStatusLabel;
+    private TextArea postmanCollectionDetailsArea;
+    private PostmanCollectionNode currentPostmanRequestNode;
+    private String currentPostmanBodyMode;
+    private List<ApiRequestBodyPart> currentPostmanMultipartParts = new ArrayList<>();
+    private String currentPostmanBinaryFilePath;
     private TabPane apiResponseTabs;
     private Label statusValueLabel;
     private Label timeValueLabel;
     private Label sizeValueLabel;
     private Label apiStatusLabel;
     private ApiResponse lastResponse;
+    private JSONObject lastApiMcpAnalysisContext;
     private String lastExpectedJson;
     private String lastActualJson;
 
@@ -185,6 +418,26 @@ public class ApiValidatorFxApp extends Application {
     private Label perfReportLabel;
     private BarChart<String, Number> perfChart;
     private Path lastPerformanceReportPath;
+    private ObservableList<Map<String, String>> dashboardRows = FXCollections.observableArrayList();
+    private TableView<Map<String, String>> dashboardTable;
+    private ComboBox<String> dashboardPeriodBox;
+    private DatePicker dashboardFromDate;
+    private DatePicker dashboardToDate;
+    private Label dashboardLastRunCasesLabel;
+    private Label dashboardExecutionsLabel;
+    private Label dashboardPassRateLabel;
+    private Label dashboardPerformanceLabel;
+    private Label dashboardHealthLabel;
+    private Label dashboardSyncLabel;
+    private Button dashboardRefreshButton;
+    private PieChart dashboardStatusChart;
+    private BarChart<String, Number> dashboardPerformanceChart;
+    private BarChart<String, Number> dashboardHistoryChart;
+    private JSONArray dashboardExecutions = new JSONArray();
+    private ObservableList<Map<String, String>> dashboardLastResultRows = FXCollections.observableArrayList();
+    private TableView<Map<String, String>> dashboardLastResultsTable;
+    private ObservableList<Map<String, String>> dashboardInsightRows = FXCollections.observableArrayList();
+    private TableView<Map<String, String>> dashboardInsightsTable;
 
     private ComboBox<String> dbTypeBox;
     private TextField jdbcUrlField;
@@ -207,6 +460,7 @@ public class ApiValidatorFxApp extends Application {
     private TextField dbValidationTestSuiteField;
     private TextField dbValidationTestCaseField;
     private TextField dbValidationTestStepField;
+    private ComboBox<String> dbAiAnalysisModeBox;
     private Path dbConnectionFilePath;
 
     private TextField webTestNameField;
@@ -221,10 +475,64 @@ public class ApiValidatorFxApp extends Application {
     private ObservableList<Map<String, String>> webStepRows;
     private TableView<Map<String, String>> webResultsTable;
     private ObservableList<Map<String, String>> webResultRows;
-    private TextArea webTipsArea;
+    private TabPane webStudioTabs;
+    private Timeline webFlowExecutionPollTimeline;
+    private final AtomicBoolean webFlowExecutionPollActive = new AtomicBoolean(false);
+    private volatile String lastImportedWebFlowRunId = "";
+    private volatile Process webFlowBackendProcess;
+    private volatile Process webFlowFrontendProcess;
+    private volatile Process webFlowDesktopProcess;
+    private volatile Path webFlowBackendLogPath;
+    private volatile Path webFlowFrontendLogPath;
+    private volatile Path webFlowDesktopLogPath;
+    private Pane workflowCanvas;
+    private ObservableList<Map<String, String>> workflowNodeRows = FXCollections.observableArrayList();
+    private ObservableList<Map<String, String>> workflowConnectionRows = FXCollections.observableArrayList();
+    private TableView<Map<String, String>> workflowDslTable;
+    private TextArea workflowJsonArea;
+    private Label workflowStatusLabel;
+    private TextField workflowNameField;
+    private TextField workflowActionField;
+    private TextField workflowSelectorField;
+    private TextField workflowValueField;
+    private TextArea workflowNoteArea;
+    private int selectedWorkflowNodeIndex = -1;
+    private int workflowNodeSequence = 1;
+
+    private TextArea codexLogArea;
+    private Stage codexCliStage;
+    private TextArea codexChatArea;
+    private TextArea codexPromptArea;
+    private Button codexSendButton;
+    private Button codexCancelButton;
+    private volatile Process codexChatProcess;
+    private boolean codexExecSessionStarted;
+    private TextArea hermesLogArea;
+    private TextArea configHermesLogArea;
+    private TextField hermesAiAgentPathField;
+    private ComboBox<String> hermesSessionBox;
+    private TextField hermesManualSessionIdField;
+    private final Map<String, HermesSessionRecord> hermesSessionRecords = new HashMap<>();
+    private TextArea testPlanningSourceArea;
+    private TextArea testPlanningLogArea;
+    private Label testPlanningStatusLabel;
+    private Label testPlanningConnectionLabel;
+    private TextField testPlanningJiraEmailField;
+    private PasswordField testPlanningJiraTokenField;
+    private Button testPlanningGenerateButton;
+    private Button testPlanningCancelButton;
+    private TextField testPlanningWorkbookPathField;
+    private final ObservableList<Path> testPlanningUploads = FXCollections.observableArrayList();
+    private javafx.scene.control.ListView<Path> testPlanningUploadList;
+    private volatile Thread testPlanningRunThread;
+    private volatile Task<?> testPlanningActiveTask;
+    private volatile Path lastTestPlanningWorkbook;
+    private volatile PtyProcess testPlanningTerminalProcess;
+    private volatile JediTermWidget testPlanningTerminalWidget;
 
     private TableView<Map<String, String>> variablesTable;
     private ObservableList<Map<String, String>> variableRows;
+    private TextField variablesPathField;
     private TableView<Map<String, String>> testSuiteStepsTable;
     private ObservableList<Map<String, String>> testSuiteRows = FXCollections.observableArrayList();
     private ObservableList<Map<String, String>> suiteBuilderTreeRows = FXCollections.observableArrayList();
@@ -250,6 +558,8 @@ public class ApiValidatorFxApp extends Application {
     private TextField githubBranchField;
     private Label githubStatusLabel;
     private String githubAccessToken;
+    private volatile boolean githubConnectionValidated;
+    private final AtomicBoolean githubCloudConfigLoadActive = new AtomicBoolean(false);
     private Path lastTestSuiteReportPath;
     private ExecutorService testSuiteRunnerExecutor;
     private final AtomicBoolean testSuiteStopRequested = new AtomicBoolean(false);
@@ -265,74 +575,1090 @@ public class ApiValidatorFxApp extends Application {
     private TextField webTestingTestSuiteField;
     private TextField webTestingTestCaseField;
     private TextField webTestingTestStepField;
+    private TextField configBasePathField;
+    private Label configStatusLabel;
+    private Label configCacheKeyLabel;
+    private Label configCacheDbLabel;
+    private ToggleButton configExecutionStorageToggle;
+    private Label configExecutionStorageLabel;
+    private ToggleButton apiAiAgentStorageToggle;
+    private ToggleButton apiAiAgentRuntimeToggle;
+    private Label apiAiAgentStorageLabel;
+    private Label apiAiAgentProfileLabel;
+    private Label apiAiTesterConnectionLabel;
+    private Label apiAiValidationConnectionLabel;
+    private ComboBox<String> veyraaiAgentProviderBox;
+    private ComboBox<String> veyraaiAgentAuthModeBox;
+    private ComboBox<String> veyraaiAgentSessionBox;
+    private TextField veyraaiAgentEndpointField;
+    private TextField veyraaiAgentModelField;
+    private PasswordField veyraaiAgentApiKeyField;
+    private TextField veyraaiAgentClientIdField;
+    private Label veyraaiAgentConnectionLabel;
+    private Label veyraaiAgentCodexPathLabel;
+    private javafx.scene.Node veyraaiAgentDeepSeekConfigRow;
+    private javafx.scene.Node veyraaiAgentCodexConfigRow;
+    private javafx.scene.Node veyraaiAgentCodexClientRow;
+    private VBox veyraaiAgentRuntimePane;
+    private ComboBox<String> apiAiHermesSessionBox;
+    private Label apiAiHermesConnectionLabel;
+    private VBox hermesAgentRuntimePane;
+    private final Map<String, VeyraAIAgentSession> veyraaiAgentSessionRecords = new HashMap<>();
+    private volatile VeyraAIAgentSession activeVeyraAIAgentSession;
+    private volatile VeyraAIModelConfig activeVeyraAIModelConfig;
+    private final Map<String, HermesSessionRecord> apiAiHermesSessionRecords = new HashMap<>();
+    private volatile HermesSessionRecord activeApiAiHermesSession;
+    private volatile String activeApiAiHermesDashboardUrl = "";
+    private volatile String apiAiConnectedModel = "Agentic AI";
+    private volatile Instant codexDeviceAuthCooldownUntil = Instant.EPOCH;
+    private final List<CustomAgentMemoryEntry> customAgentSessionMemory = Collections.synchronizedList(new ArrayList<>());
+    private final CustomAgentSkillRegistry customAgentSkillRegistry = new CustomAgentSkillRegistry();
+    private final AgentRegistry agentRegistry = createAgentRegistry();
+    private final AgentSessionManager agentSessionManager = new AgentSessionManager();
+    private final AgenticAIConnectionManager agenticAIConnectionManager =
+            new AgenticAIConnectionManager(agentSessionManager, agentRegistry);
+    private final SharedAgentContextService sharedAgentContextService = new SharedAgentContextService();
+    private final SharedKnowledgeRepository sharedKnowledgeRepository = new SharedKnowledgeRepository(
+            () -> {
+                try {
+                    return loadApiAiMemoryRepositorySample();
+                } catch (Exception exception) {
+                    logApiAiConsole("Could not load shared Agentic AI knowledge", exception);
+                    return new JSONArray();
+                }
+            },
+            this::saveApiAiMemory,
+            sharedAgentContextService);
+    private final DbAgentContextBuilder dbAgentContextBuilder = new DbAgentContextBuilder(sharedAgentContextService);
+    private final DbAnalysisAgent dbAnalysisAgent = new DbAnalysisAgent(new DbAgentPromptBuilder());
+    private final DbSuggestionKnowledgeService dbSuggestionKnowledgeService = new DbSuggestionKnowledgeService();
+    private final WebFailureSignatureService webFailureSignatureService = new WebFailureSignatureService();
+    private final WebAgentContextBuilder webAgentContextBuilder = new WebAgentContextBuilder(sharedAgentContextService);
+    private final WebAnalysisAgent webAnalysisAgent = new WebAnalysisAgent(
+            new WebKnownFixResolver(webFailureSignatureService), new WebAgentPromptBuilder(),
+            new WebHealingResponseValidator());
+    private final WebAgentKnowledgeService webAgentKnowledgeService = new WebAgentKnowledgeService();
+    private final WebUiMcpServer webUiMcpServer = new WebUiMcpServer();
+    private final PlaywrightMcpServer playwrightMcpServer = new PlaywrightMcpServer();
+    private final DocumentConversionMcpServer testPlanningDocumentMcpServer = new DocumentConversionMcpServer();
+    private final ProjectRepositoryMcpServer testPlanningProjectMcpServer = new ProjectRepositoryMcpServer();
+    private final ApiContractMcpServer testPlanningApiContractMcpServer = new ApiContractMcpServer();
+    private final JiraMcpServer testPlanningJiraMcpServer = new JiraMcpServer();
+    private final KnowledgeSourceMcpServer testPlanningKnowledgeSourceMcpServer = new KnowledgeSourceMcpServer(
+            testPlanningDocumentMcpServer, testPlanningProjectMcpServer,
+            testPlanningApiContractMcpServer, testPlanningJiraMcpServer);
+    private final TestPlanningAgent testPlanningAgent = new TestPlanningAgent(
+            new TestPlanningPromptBuilder(), new TestPlanningResponseValidator());
+    private final TestWorkbookMcpServer testPlanningWorkbookMcpServer = new TestWorkbookMcpServer();
+    private final TestPlanningMemoryMcpServer testPlanningMemoryMcpServer = new TestPlanningMemoryMcpServer();
+    private final WorkspaceTerminalMcpServer testPlanningTerminalMcpServer = new WorkspaceTerminalMcpServer();
+    private final TestPlanningOrchestrator testPlanningOrchestrator = new TestPlanningOrchestrator(
+            testPlanningKnowledgeSourceMcpServer, testPlanningAgent, testPlanningWorkbookMcpServer);
+    private Label agenticAiConnectedAgentsLabel;
+    private Label webAgentDiagnosticsLabel;
+    private volatile Instant webAgentLastAnalysis = Instant.EPOCH;
+    private volatile Instant webAgentLastModelCall = Instant.EPOCH;
+    private volatile Instant webAgentLastKnownFixResolution = Instant.EPOCH;
+
+    private AgentRegistry createAgentRegistry() {
+        AgentRegistry registry = new AgentRegistry();
+        registry.register("apiAgent", sessionId ->
+                customAgentSkillRegistry.resolve("apiExecutor", "suggestValidations"));
+        registry.register("dbAgent", sessionId -> {
+            customAgentSkillRegistry.resolve("dbStudio", "suggestColumnValidations");
+            customAgentSkillRegistry.resolve("dbStudio", "suggestDbApiMappings");
+            customAgentSkillRegistry.resolve("dbStudio", "suggestDbValidationRules");
+        });
+        registry.register("webAgent", sessionId -> {
+            customAgentSkillRegistry.resolve("uiStudio", "healFailedScript");
+            customAgentSkillRegistry.resolve("uiStudio", "healLocator");
+            customAgentSkillRegistry.resolve("uiStudio", "healExpectedResult");
+            customAgentSkillRegistry.resolve("uiStudio", "healValue");
+            customAgentSkillRegistry.resolve("uiStudio", "healVariable");
+            customAgentSkillRegistry.resolve("uiStudio", "healFlowVariable");
+            customAgentSkillRegistry.resolve("uiStudio", "suggestWaitsAndRetries");
+            customAgentSkillRegistry.resolve("uiStudio", "suggestActionReplacement");
+            customAgentSkillRegistry.resolve("uiStudio", "suggestRuntimeVariable");
+            customAgentSkillRegistry.resolve("uiStudio", "suggestSavedVariableReuse");
+            customAgentSkillRegistry.resolve("uiStudio", "retrieveKnownHealing");
+        });
+        registry.register("testPlanningAgent", sessionId -> {
+            customAgentSkillRegistry.resolve("testDesign", "generateTestPlan");
+            customAgentSkillRegistry.resolve("testDesign", "generateTestCases");
+            customAgentSkillRegistry.resolve("testDesign", "generateTestStrategy");
+            customAgentSkillRegistry.resolve("testDesign", "generateTestData");
+        });
+        return registry;
+    }
+
+    private record NavigationOption(String title, Supplier<javafx.scene.Node> contentFactory) {
+    }
+
+    private record VeyraAIAgentSession(String sessionName, String sessionId, String title, String provider,
+                                      String model, String createdAt) {
+    }
+
+    private record VeyraAIModelConfig(String provider, String endpoint, String model, String apiKey,
+                                     String authMode, String clientId) {
+    }
+
+    private record AgentRequest(String source, String action, String workspaceId, String projectId,
+                                String workflowId, String nodeId, JSONObject payload, JSONObject context) {
+    }
+
+    private record AgentResponse(String agentUsed, String source, String action, JSONArray suggestions,
+                                 String analysisSummary, JSONArray memoryUsed, JSONArray knowledgeUsed,
+                                 JSONObject raw) {
+    }
+
+    private record CustomAgentMemoryEntry(String id, String level, String scopeId, String source, String type,
+                                          JSONObject content, String summary, JSONArray tags, double confidence,
+                                          int importance, String createdAt, String updatedAt, String lastUsedAt) {
+    }
+
+    private interface CustomAgentSkill {
+        AgentResponse analyze(AgentRequest request, String prompt) throws Exception;
+    }
+
+    private class CustomAgentSkillRegistry {
+        private final Map<String, CustomAgentSkill> skills = new HashMap<>();
+
+        CustomAgentSkillRegistry() {
+            register("apiExecutor", "suggestValidations", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiExecutor", "suggestVariables", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiExecutor", "suggestDbMappings", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiCollection", "buildAnalysisContext", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiCollection", "proposeExecutionPlan", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiCollection", "executePlan", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiCollection", "proposeValidations", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiValidator", "buildAnalysisContext", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiValidator", "compareExpectedVsActual", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("apiValidator", "suggestValidationFixes", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("dbStudio", "suggestColumnValidations", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("dbStudio", "suggestDbApiMappings", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("dbStudio", "suggestDbValidationRules", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "healFailedScript", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "healLocator", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "healExpectedResult", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "suggestWaitsAndRetries", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "healValue", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "healVariable", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "healFlowVariable", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "suggestActionReplacement", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "suggestRuntimeVariable", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "suggestSavedVariableReuse", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("uiStudio", "retrieveKnownHealing", ApiValidatorFxApp.this::runCustomAgentSkill);
+            register("testDesign", "generateTestPlan", ApiValidatorFxApp.this::runTestPlanningAgentSkill);
+            register("testDesign", "generateTestCases", ApiValidatorFxApp.this::runTestPlanningAgentSkill);
+            register("testDesign", "generateTestStrategy", ApiValidatorFxApp.this::runTestPlanningAgentSkill);
+            register("testDesign", "generateTestData", ApiValidatorFxApp.this::runTestPlanningAgentSkill);
+        }
+
+        void register(String source, String action, CustomAgentSkill skill) {
+            skills.put(source + ":" + action, skill);
+        }
+
+        CustomAgentSkill resolve(String source, String action) {
+            CustomAgentSkill skill = skills.get(source + ":" + action);
+            if (skill == null) {
+                throw new IllegalArgumentException("No Custom Agent skill registered for " + source + "/" + action);
+            }
+            return skill;
+        }
+    }
 
     @Override
     public void start(Stage primaryStage) {
+        Application.setUserAgentStylesheet(
+                new atlantafx.base.theme.Dracula().getUserAgentStylesheet()
+        );
         this.stage = primaryStage;
+        loadGithubConfiguration();
+        primaryStage.initStyle(StageStyle.UNDECORATED);
         Rectangle2D visualBounds = Screen.getPrimary().getVisualBounds();
         double maxSceneWidth = Math.max(640, visualBounds.getWidth() - 32);
         double maxSceneHeight = Math.max(520, visualBounds.getHeight() - 32);
         double sceneWidth = clamp(visualBounds.getWidth() * 0.92, Math.min(900, maxSceneWidth), Math.min(1540, maxSceneWidth));
         double sceneHeight = clamp(visualBounds.getHeight() * 0.90, Math.min(620, maxSceneHeight), Math.min(1040, maxSceneHeight));
 
+        TabPane tabs = createTabs();
         BorderPane root = new BorderPane();
         root.setTop(createHeader());
-        root.setCenter(createTabs());
-        root.setStyle("-fx-background-color: #f5f7fb;");
+        root.setCenter(tabs);
+        root.setStyle("-fx-background-color: " + APP_BACKGROUND + ";");
 
-        Scene scene = new Scene(root, sceneWidth, sceneHeight);
+        Scene scene = new Scene(createSliderMenuShell(root, tabs), sceneWidth, sceneHeight);
         scene.getStylesheets().add(createInlineStylesheet());
-        primaryStage.setTitle(APP_NAME + " - JavaFX");
+        addApplicationStylesheet(scene);
+        primaryStage.setTitle(APP_NAME);
         primaryStage.setMinWidth(Math.min(900, visualBounds.getWidth() * 0.80));
         primaryStage.setMinHeight(Math.min(620, visualBounds.getHeight() * 0.80));
         primaryStage.setX(visualBounds.getMinX() + (visualBounds.getWidth() - sceneWidth) / 2);
         primaryStage.setY(visualBounds.getMinY() + (visualBounds.getHeight() - sceneHeight) / 2);
         primaryStage.setScene(scene);
         loadApplicationIcon(primaryStage);
-        primaryStage.setOnCloseRequest(event -> {
-            playwrightRecorderController.stopRecording();
-            playwrightRecorderController.stopRunningWebTest();
+        primaryStage.setOnCloseRequest(event -> cleanupBeforeClose());
+        showStartupScreenThenMain(primaryStage, visualBounds);
+    }
+
+    private void showStartupScreenThenMain(Stage primaryStage, Rectangle2D visualBounds) {
+        Stage splashStage = createStartupStage(visualBounds);
+        ProgressBar progressBar = (ProgressBar) splashStage.getScene().lookup("#startupProgressBar");
+        Label progressLabel = (Label) splashStage.getScene().lookup("#startupProgressLabel");
+        Label statusLabel = (Label) splashStage.getScene().lookup("#startupStatusLabel");
+        Timeline launchTimeline = new Timeline(
+                new KeyFrame(javafx.util.Duration.ZERO,
+                        new KeyValue(progressBar.progressProperty(), 0),
+                        new KeyValue(progressLabel.textProperty(), "0%"),
+                        new KeyValue(statusLabel.textProperty(), "Preparing VeyraAI workspace...")),
+                new KeyFrame(javafx.util.Duration.seconds(0.8),
+                        new KeyValue(progressBar.progressProperty(), 0.28),
+                        new KeyValue(progressLabel.textProperty(), "28%"),
+                        new KeyValue(statusLabel.textProperty(), "Loading quality studios and workflow tools...")),
+                new KeyFrame(javafx.util.Duration.seconds(1.7),
+                        new KeyValue(progressBar.progressProperty(), 0.67),
+                        new KeyValue(progressLabel.textProperty(), "67%"),
+                        new KeyValue(statusLabel.textProperty(), "Connecting AI quality agents...")),
+                new KeyFrame(javafx.util.Duration.seconds(3),
+                        new KeyValue(progressBar.progressProperty(), 1),
+                        new KeyValue(progressLabel.textProperty(), "100%"),
+                        new KeyValue(statusLabel.textProperty(), "Weaving intelligence into software quality..."))
+        );
+        launchTimeline.setOnFinished(event -> {
+            splashStage.close();
+            primaryStage.show();
+            primaryStage.toFront();
         });
-        primaryStage.show();
+        splashStage.show();
+        launchTimeline.play();
+    }
+
+    private Stage createStartupStage(Rectangle2D visualBounds) {
+        Stage splashStage = new Stage(StageStyle.UNDECORATED);
+        splashStage.setTitle(APP_NAME + " Startup");
+        loadApplicationIcon(splashStage);
+
+        VBox content = new VBox(18);
+        content.setAlignment(Pos.CENTER);
+        content.getStyleClass().add("startup-content");
+
+        FontIcon logo = new FontIcon("fth-command");
+        logo.setIconSize(92);
+        logo.getStyleClass().add("startup-logo");
+        Label title = new Label(APP_NAME);
+        title.getStyleClass().add("startup-title");
+        Label subtitle = new Label(APP_TAGLINE);
+        subtitle.getStyleClass().add("startup-subtitle");
+
+        HBox capabilities = new HBox(28,
+                startupCapability("fth-code", "API Studio"),
+                startupCapability("fth-database", "DB Validation"),
+                startupCapability("fth-monitor", "UI Studio"),
+                startupCapability("fth-git-branch", "Quality Flows"),
+                startupCapability("fth-bar-chart-2", "Reports & Analytics"),
+                startupCapability("fth-cpu", "AI Agents"));
+        capabilities.setAlignment(Pos.CENTER);
+        capabilities.getStyleClass().add("startup-capabilities");
+
+        HBox signal = new HBox(34,
+                startupSignal("fth-code"),
+                startupSignal("fth-database"),
+                startupSignal("fth-globe"),
+                startupSignal("fth-git-branch"),
+                startupSignal("fth-bar-chart-2"),
+                startupSignal("fth-cpu"));
+        signal.setAlignment(Pos.CENTER);
+        signal.getStyleClass().add("startup-signal-row");
+
+        Label status = new Label("Preparing VeyraAI workspace...");
+        status.setId("startupStatusLabel");
+        status.getStyleClass().add("startup-status");
+        ProgressBar progress = new ProgressBar(0);
+        progress.setId("startupProgressBar");
+        progress.getStyleClass().add("startup-progress");
+        progress.setPrefWidth(560);
+        Label percent = new Label("0%");
+        percent.setId("startupProgressLabel");
+        percent.getStyleClass().add("startup-percent");
+
+        HBox trustRow = new HBox(40,
+                startupTrust("fth-shield", "Reliable", "Indie Quality Engineering"),
+                startupTrust("fth-zap", "Intelligent", "AI-driven Assertions"),
+                startupTrust("fth-target", "Integrated", "API, DB, UI & Performance"),
+                startupTrust("fth-lock", "Secure", "Your Data, Your Control"));
+        trustRow.setAlignment(Pos.CENTER);
+        trustRow.getStyleClass().add("startup-trust-row");
+
+        Label footer = new Label("VeyraAI Enterprise");
+        footer.getStyleClass().add("startup-footer");
+        content.getChildren().addAll(logo, title, subtitle, capabilities, signal, status, progress, percent, trustRow, footer);
+
+        StackPane root = new StackPane(content);
+        root.getStyleClass().add("startup-root");
+        Scene scene = new Scene(root, 980, 680);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        splashStage.setScene(scene);
+        splashStage.setX(visualBounds.getMinX() + (visualBounds.getWidth() - 980) / 2);
+        splashStage.setY(visualBounds.getMinY() + (visualBounds.getHeight() - 680) / 2);
+        root.setOnMousePressed(event -> {
+            splashDragOffsetX = event.getSceneX();
+            splashDragOffsetY = event.getSceneY();
+        });
+        root.setOnMouseDragged(event -> {
+            splashStage.setX(event.getScreenX() - splashDragOffsetX);
+            splashStage.setY(event.getScreenY() - splashDragOffsetY);
+        });
+        return splashStage;
+    }
+
+    private VBox startupCapability(String iconLiteral, String labelText) {
+        FontIcon icon = new FontIcon(iconLiteral);
+        icon.setIconSize(34);
+        icon.getStyleClass().add("startup-capability-icon");
+        Label label = new Label(labelText);
+        label.getStyleClass().add("startup-capability-label");
+        VBox box = new VBox(8, icon, label);
+        box.setAlignment(Pos.CENTER);
+        return box;
+    }
+
+    private StackPane startupSignal(String iconLiteral) {
+        FontIcon icon = new FontIcon(iconLiteral);
+        icon.setIconSize(30);
+        icon.getStyleClass().add("startup-signal-icon");
+        StackPane tile = new StackPane(icon);
+        tile.getStyleClass().add("startup-signal-tile");
+        return tile;
+    }
+
+    private HBox startupTrust(String iconLiteral, String titleText, String detailText) {
+        FontIcon icon = new FontIcon(iconLiteral);
+        icon.setIconSize(28);
+        icon.getStyleClass().add("startup-trust-icon");
+        Label title = new Label(titleText);
+        title.getStyleClass().add("startup-trust-title");
+        Label detail = new Label(detailText);
+        detail.getStyleClass().add("startup-trust-detail");
+        VBox text = new VBox(3, title, detail);
+        HBox item = new HBox(12, icon, text);
+        item.setAlignment(Pos.CENTER_LEFT);
+        return item;
     }
 
     private HBox createHeader() {
         Label title = new Label(APP_NAME);
         title.getStyleClass().add("app-title");
-        Label version = new Label("Native JavaFX UI");
-        version.getStyleClass().add("muted");
+        HBox workLoop = createWorkLoopAnimation();
+        Label poweredBy = new Label(APP_TAGLINE);
+        poweredBy.getStyleClass().add("powered-by");
+        globalLoadingBar = new ProgressBar();
+        globalLoadingBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        globalLoadingBar.setVisible(false);
+        globalLoadingBar.setManaged(false);
+        globalLoadingBar.setPrefWidth(150);
+        globalLoadingBar.getStyleClass().add("global-loading");
+        Button minimize = windowControl("fth-minus", "Minimize");
+        minimize.setOnAction(e -> stage.setIconified(true));
+        Button maximize = windowControl("fth-square", "Maximize or restore");
+        maximize.setOnAction(e -> stage.setMaximized(!stage.isMaximized()));
+        Button close = windowControl("fth-x", "Close");
+        close.getStyleClass().add("window-close-button");
+        close.setOnAction(e -> stage.fireEvent(new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST)));
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox header = new HBox(12, title, spacer, version);
+        HBox windowControls = new HBox(8, minimize, maximize, close);
+        windowControls.getStyleClass().add("window-controls");
+        HBox header = new HBox(12, title, workLoop, spacer, globalLoadingBar, poweredBy, windowControls);
         header.setAlignment(Pos.CENTER_LEFT);
-        header.setPadding(new Insets(10, 16, 8, 16));
+        header.setPadding(new Insets(16, 24, 12, 24));
         header.getStyleClass().add("top-bar");
+        header.setOnMousePressed(event -> {
+            windowDragOffsetX = event.getSceneX();
+            windowDragOffsetY = event.getSceneY();
+        });
+        header.setOnMouseDragged(event -> {
+            if (stage != null && !stage.isMaximized()) {
+                stage.setX(event.getScreenX() - windowDragOffsetX);
+                stage.setY(event.getScreenY() - windowDragOffsetY);
+            }
+        });
+        header.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2 && stage != null) {
+                stage.setMaximized(!stage.isMaximized());
+            }
+        });
         return header;
+    }
+
+    private HBox createWorkLoopAnimation() {
+        Label plan = flowStep("fth-users", "Plan");
+        Label execute = flowStep("fth-play", "Execute");
+        Label analyze = flowStep("fth-cpu", "Analyze");
+        Label decide = flowStep("fth-check-circle", "Decide");
+        Label arrow1 = new Label(">");
+        Label arrow2 = new Label(">");
+        Label arrow3 = new Label(">");
+        HBox flow = new HBox(7, plan, arrow1, execute, arrow2, analyze, arrow3, decide);
+        flow.setAlignment(Pos.CENTER_LEFT);
+        flow.getStyleClass().add("work-loop");
+        List<Label> steps = List.of(plan, execute, analyze, decide);
+        AtomicInteger active = new AtomicInteger(0);
+        Timeline timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(1100), event -> {
+            int index = active.getAndUpdate(value -> (value + 1) % steps.size());
+            for (int i = 0; i < steps.size(); i++) {
+                steps.get(i).getStyleClass().remove("work-loop-active");
+                if (i == index) {
+                    steps.get(i).getStyleClass().add("work-loop-active");
+                }
+            }
+        }));
+        timeline.setCycleCount(Timeline.INDEFINITE);
+        timeline.play();
+        return flow;
+    }
+
+    private Label flowStep(String iconLiteral, String text) {
+        FontIcon icon = new FontIcon(iconLiteral);
+        icon.setIconSize(13);
+        Label label = new Label(text, icon);
+        label.getStyleClass().add("work-loop-step");
+        label.setGraphicTextGap(5);
+        return label;
+    }
+
+    private StackPane createSliderMenuShell(javafx.scene.Node content, TabPane tabs) {
+        double menuWidth = 250;
+        double leafletWidth = 48;
+        double hiddenOffset = -(menuWidth + leafletWidth - 8);
+        double leafletOffset = -menuWidth;
+        VBox menu = new VBox(10);
+        menu.getStyleClass().add("slider-menu");
+        menu.setPrefWidth(menuWidth);
+        menu.setMinWidth(menuWidth);
+        menu.setMaxWidth(menuWidth);
+
+        FontIcon brandIcon = new FontIcon("fth-command");
+        brandIcon.setIconSize(42);
+        brandIcon.getStyleClass().add("slider-menu-brand-icon");
+        Label title = new Label(APP_NAME);
+        title.getStyleClass().add("slider-menu-title");
+        Label subtitle = new Label(APP_TAGLINE);
+        subtitle.getStyleClass().add("slider-menu-subtitle");
+        VBox headerText = new VBox(3, title, subtitle);
+        HBox header = new HBox(12, brandIcon, headerText);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.getStyleClass().add("slider-menu-header");
+        menu.getChildren().add(header);
+
+        VBox optionList = new VBox(6);
+        optionList.getStyleClass().add("slider-menu-options");
+        menu.getChildren().add(optionList);
+
+        Button leaflet = new Button("VeyraAI");
+        leaflet.setGraphic(new FontIcon("fth-menu"));
+        leaflet.getStyleClass().add("slider-menu-leaflet");
+        leaflet.setContentDisplay(javafx.scene.control.ContentDisplay.TOP);
+        leaflet.setOnAction(event -> setSliderMenuOpen(!sliderMenuOpen, menu.getParent()));
+        leaflet.setOnMouseEntered(event -> revealSliderLeaflet(menu.getParent()));
+
+        HBox slider = new HBox(menu, leaflet);
+        slider.getStyleClass().add("slider-menu-shell");
+        slider.getProperties().put("menuWidth", menuWidth);
+        slider.getProperties().put("leafletOffset", leafletOffset);
+        slider.getProperties().put("hiddenOffset", hiddenOffset);
+        slider.setTranslateX(hiddenOffset);
+        slider.setMaxWidth(menuWidth + leafletWidth);
+        slider.setPickOnBounds(false);
+        slider.setOnMouseEntered(event -> revealSliderLeaflet(slider));
+        slider.setOnMouseExited(event -> scheduleSliderLeafletHide(slider));
+        StackPane.setAlignment(slider, Pos.CENTER_LEFT);
+
+        List<Button> optionButtons = new ArrayList<>();
+        for (NavigationOption navigationOption : mainNavigationOptions()) {
+            Button option = new Button(navigationOption.title());
+            option.setGraphic(iconFor(navigationOption.title()));
+            option.setMaxWidth(Double.MAX_VALUE);
+            option.setUserData(navigationOption.title());
+            option.getStyleClass().add("slider-menu-option");
+            option.setOnAction(event -> {
+                openNavigationTab(tabs, navigationOption);
+                setSliderMenuOpen(false, slider);
+            });
+            optionButtons.add(option);
+            optionList.getChildren().add(option);
+        }
+        tabs.getSelectionModel().selectedItemProperty().addListener((observable, oldTab, newTab) ->
+                updateSliderMenuSelection(optionButtons, tabs));
+        updateSliderMenuSelection(optionButtons, tabs);
+
+        StackPane shell = new StackPane(content, slider);
+        shell.getStyleClass().add("app-shell");
+        shell.setOnMouseMoved(event -> {
+            if (!sliderMenuOpen && event.getX() <= 18) {
+                revealSliderLeaflet(slider);
+            }
+        });
+        scheduleSliderLeafletHide(slider);
+        return shell;
+    }
+
+    private void updateSliderMenuSelection(List<Button> optionButtons, TabPane tabs) {
+        Tab selectedTab = tabs.getSelectionModel().getSelectedItem();
+        String selectedTitle = selectedTab == null ? "" : selectedTab.getText();
+        for (Button option : optionButtons) {
+            option.getStyleClass().remove("slider-menu-option-selected");
+            if (Objects.equals(option.getUserData(), selectedTitle)) {
+                option.getStyleClass().add("slider-menu-option-selected");
+            }
+        }
+    }
+
+    private void setSliderMenuOpen(boolean open, javafx.scene.Node slider) {
+        if (slider == null || sliderMenuOpen == open) {
+            return;
+        }
+        sliderMenuOpen = open;
+        if (sliderLeafletIdleTimeline != null) {
+            sliderLeafletIdleTimeline.stop();
+        }
+        if (sliderMenuTimeline != null) {
+            sliderMenuTimeline.stop();
+        }
+        double menuWidth = sliderNumericProperty(slider, "menuWidth", 250);
+        double leafletOffset = sliderNumericProperty(slider, "leafletOffset", -menuWidth);
+        sliderMenuTimeline = new Timeline(
+                new KeyFrame(javafx.util.Duration.millis(260),
+                        new KeyValue(slider.translateXProperty(), open ? 0 : leafletOffset))
+        );
+        sliderMenuTimeline.play();
+        if (!open) {
+            scheduleSliderLeafletHide(slider);
+        }
+    }
+
+    private void revealSliderLeaflet(javafx.scene.Node slider) {
+        if (slider == null || sliderMenuOpen) {
+            return;
+        }
+        if (sliderLeafletIdleTimeline != null) {
+            sliderLeafletIdleTimeline.stop();
+        }
+        if (sliderMenuTimeline != null) {
+            sliderMenuTimeline.stop();
+        }
+        double leafletOffset = sliderNumericProperty(slider, "leafletOffset", -250);
+        sliderMenuTimeline = new Timeline(
+                new KeyFrame(javafx.util.Duration.millis(180),
+                        new KeyValue(slider.translateXProperty(), leafletOffset))
+        );
+        sliderMenuTimeline.play();
+        scheduleSliderLeafletHide(slider);
+    }
+
+    private void scheduleSliderLeafletHide(javafx.scene.Node slider) {
+        if (slider == null || sliderMenuOpen) {
+            return;
+        }
+        if (sliderLeafletIdleTimeline != null) {
+            sliderLeafletIdleTimeline.stop();
+        }
+        sliderLeafletIdleTimeline = new Timeline(new KeyFrame(javafx.util.Duration.seconds(3), event -> hideSliderLeaflet(slider)));
+        sliderLeafletIdleTimeline.play();
+    }
+
+    private void hideSliderLeaflet(javafx.scene.Node slider) {
+        if (slider == null || sliderMenuOpen) {
+            return;
+        }
+        if (sliderMenuTimeline != null) {
+            sliderMenuTimeline.stop();
+        }
+        double hiddenOffset = sliderNumericProperty(slider, "hiddenOffset", -290);
+        sliderMenuTimeline = new Timeline(
+                new KeyFrame(javafx.util.Duration.millis(220),
+                        new KeyValue(slider.translateXProperty(), hiddenOffset))
+        );
+        sliderMenuTimeline.play();
+    }
+
+    private double sliderNumericProperty(javafx.scene.Node slider, String key, double fallback) {
+        Object value = slider == null ? null : slider.getProperties().get(key);
+        return value instanceof Number number ? number.doubleValue() : fallback;
     }
 
     private TabPane createTabs() {
         TabPane tabs = new TabPane();
-        tabs.getTabs().add(tab("API Tester", createApiPanel()));
-        tabs.getTabs().add(tab("API Validation", createApiValidationPanel()));
-        tabs.getTabs().add(tab("Performance Test", createPerformancePanel()));
-        tabs.getTabs().add(tab("DB Validator", createDbValidatorPanel()));
-        tabs.getTabs().add(tab("Web Testing", createWebTestingPanel()));
-        tabs.getTabs().add(tab("Test Suite Runner", createTestSuitePanel()));
-        tabs.getTabs().add(tab("Variables", createVariablesPanel()));
-        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        mainNavigationTabs = tabs;
+        Tab dashboardTab = tab("Dashboard", createDashboardPanel());
+        dashboardTab.setClosable(false);
+        dashboardTab.setOnSelectionChanged(e -> {
+            if (dashboardTab.isSelected()) refreshDashboard();
+        });
+        tabs.getTabs().add(dashboardTab);
+        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
         return tabs;
     }
 
+    private List<NavigationOption> mainNavigationOptions() {
+        return List.of(
+                new NavigationOption("Dashboard", this::createDashboardPanel),
+                new NavigationOption("API Studio", this::createApiPanel),
+                new NavigationOption("Quality Rules", this::createApiValidationPanel),
+                new NavigationOption("Load Studio", this::createPerformancePanel),
+                new NavigationOption("DB Studio", this::createDbValidatorPanel),
+                new NavigationOption("UI Studio", this::createWebTestingPanel),
+                new NavigationOption("Test Plan", this::createAiPlanningPanel),
+                new NavigationOption("Test Suites", this::createTestSuitePanel),
+                new NavigationOption("Variables", this::createVariablesPanel),
+                new NavigationOption("Settings", this::createConfigPanel));
+    }
+
+    private void openNavigationTab(TabPane tabs, NavigationOption navigationOption) {
+        for (Tab tab : tabs.getTabs()) {
+            if (Objects.equals(tab.getText(), navigationOption.title())) {
+                tabs.getSelectionModel().select(tab);
+                if ("Variables".equals(navigationOption.title())) {
+                    refreshVariablesView();
+                }
+                return;
+            }
+        }
+        Tab tab = tab(navigationOption.title(), navigationOption.contentFactory().get());
+        tab.setClosable(true);
+        tabs.getTabs().add(tab);
+        tabs.getSelectionModel().select(tab);
+    }
+
     private Tab tab(String title, javafx.scene.Node content) {
-        return new Tab(title, content);
+        Tab tab = new Tab(title, content);
+        tab.setGraphic(iconFor(title));
+        return tab;
+    }
+
+    private javafx.scene.Node createAiPlanningPanel() {
+        TabPane tabs = new TabPane();
+        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabs.getTabs().add(tab("Test Planning Agent", createTestPlanningAgentPanel()));
+        return padded(card("Test Plan", tabs));
+    }
+
+    private javafx.scene.Node createDashboardPanel() {
+        dashboardLastRunCasesLabel = metric("0");
+        dashboardExecutionsLabel = metric("0");
+        dashboardPassRateLabel = metric("0%");
+        dashboardPerformanceLabel = metric("--");
+        dashboardHealthLabel = metric("No data");
+        HBox metrics = new HBox(12,
+                dashboardMetricCard("TEST CASES - LAST RUN", dashboardLastRunCasesLabel),
+                dashboardMetricCard("QUALITY EXECUTIONS", dashboardExecutionsLabel),
+                dashboardMetricCard("PASS SIGNAL", dashboardPassRateLabel),
+                dashboardMetricCard("AVG LOAD PULSE", dashboardPerformanceLabel),
+                dashboardMetricCard("PLATFORM HEALTH", dashboardHealthLabel));
+        for (javafx.scene.Node node : metrics.getChildren()) HBox.setHgrow(node, Priority.ALWAYS);
+
+        dashboardStatusChart = new PieChart();
+        dashboardStatusChart.setTitle("Quality Signal");
+        dashboardStatusChart.setLabelsVisible(true);
+        dashboardPerformanceChart = dashboardBarChart("Load Pulse Metrics", "Metric", "Value");
+        dashboardHistoryChart = dashboardBarChart("Execution Rhythm", "Day", "Executions");
+        dashboardStatusChart.setPrefHeight(310);
+        dashboardPerformanceChart.setPrefHeight(310);
+        dashboardHistoryChart.setPrefHeight(310);
+        HBox charts = new HBox(12, card("Quality Split", dashboardStatusChart),
+                card("Load Test Pulse", dashboardPerformanceChart), card("Run Rhythm", dashboardHistoryChart));
+        for (javafx.scene.Node node : charts.getChildren()) {
+            HBox.setHgrow(node, Priority.ALWAYS);
+            ((Region) node).setMaxWidth(Double.MAX_VALUE);
+        }
+
+        dashboardPeriodBox = combo("Past 3 days", "Past 5 days", "1 month", "3 months", "Custom dates");
+        dashboardFromDate = new DatePicker(LocalDate.now().minusDays(3));
+        dashboardToDate = new DatePicker(LocalDate.now());
+        updateDashboardDateControls();
+        dashboardSyncLabel = new Label("VeyraAI mirrors execution intelligence locally and synchronizes cloud runs.");
+        dashboardSyncLabel.getStyleClass().add("muted");
+        dashboardRefreshButton = primary("Refresh Dashboard");
+        dashboardRefreshButton.setOnAction(e -> refreshDashboard());
+        dashboardPeriodBox.setOnAction(e -> {
+            updateDashboardDateControls();
+            applyDashboardFilter();
+        });
+        dashboardFromDate.setOnAction(e -> applyDashboardFilter());
+        dashboardToDate.setOnAction(e -> applyDashboardFilter());
+        FlowPane filters = actionRow(labeled("Period", dashboardPeriodBox), labeled("From", dashboardFromDate),
+                labeled("To", dashboardToDate));
+
+        dashboardLastResultsTable = mapTable(dashboardLastResultRows, "Test Suite", "suite", "Test Case", "case",
+                "Test Step", "step", "Type", "type", "Status", "status", "Details", "message");
+        dashboardLastResultsTable.setMinHeight(220);
+        dashboardInsightsTable = mapTable(dashboardInsightRows, "Area", "area", "Status", "status",
+                "Metric", "metric", "Value", "value", "Risk", "risk", "Suggestion", "suggestion");
+        dashboardInsightsTable.setMinHeight(220);
+        Button analyzeRelease = secondary("Analyze Release Health");
+        analyzeRelease.setOnAction(e -> analyzeDashboardReleaseHealth());
+
+        dashboardTable = mapTable(dashboardRows, "Executed", "executed", "Execution", "name", "Type", "type",
+                "Test Cases", "testCases", "Passed", "passed", "Failed", "failed", "Health", "health");
+        dashboardTable.setRowFactory(table -> {
+            javafx.scene.control.TableRow<Map<String, String>> row = new javafx.scene.control.TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (!row.isEmpty() && event.getClickCount() == 1) showDashboardExecutionDetails(row.getItem());
+            });
+            return row;
+        });
+        dashboardTable.setMinHeight(280);
+        VBox overview = new VBox(14, metrics, charts,
+                card("Last Execution Results", dashboardLastResultsTable),
+                card("Release Intelligence", new VBox(10, actionRow(analyzeRelease), dashboardInsightsTable)),
+                card("Executions So Far", new VBox(10, filters, dashboardTable)));
+        VBox.setVgrow(overview.getChildren().get(4), Priority.ALWAYS);
+
+        Label weaving = new Label("VeyraAI Quality Weave");
+        weaving.getStyleClass().add("weaving-title");
+        BorderPane jira = new BorderPane(weaving);
+        jira.setPadding(new Insets(80));
+        TabPane dashboardTabs = new TabPane(tab("Overview", padded(new ScrollPane(overview))), tab("JIRA", jira));
+        dashboardTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        VBox dashboard = new VBox(12, actionRow(dashboardRefreshButton, dashboardSyncLabel), dashboardTabs);
+        VBox.setVgrow(dashboardTabs, Priority.ALWAYS);
+        return padded(dashboard);
+    }
+
+    private VBox dashboardMetricCard(String title, Label value) {
+        Label heading = new Label(title);
+        heading.getStyleClass().add("dashboard-metric-title");
+        VBox box = new VBox(8, heading, value);
+        box.getStyleClass().addAll("card", "dashboard-metric-card");
+        box.setMinWidth(170);
+        return box;
+    }
+
+    private BarChart<String, Number> dashboardBarChart(String title, String xLabel, String yLabel) {
+        CategoryAxis x = new CategoryAxis();
+        x.setLabel(xLabel);
+        NumberAxis y = new NumberAxis();
+        y.setLabel(yLabel);
+        BarChart<String, Number> chart = new BarChart<>(x, y);
+        chart.setTitle(title);
+        chart.setLegendVisible(false);
+        chart.setAnimated(false);
+        return chart;
+    }
+
+    private void refreshDashboard() {
+        if (dashboardSyncLabel == null) return;
+        if (dashboardRefreshButton != null) dashboardRefreshButton.setDisable(true);
+        dashboardSyncLabel.setText("Refreshing VeyraAI execution intelligence...");
+        Path reportsRoot = configuredBaseReportsDirectory();
+        Task<JSONArray> task = new Task<>() {
+            @Override protected JSONArray call() throws Exception {
+                StorageMode storageMode = selectedDashboardStorageMode();
+                Path sqliteDbPath = dashboardExecutionSqlitePath(storageMode);
+                dashboardExecutionService.importExistingReports(reportsRoot, storageMode, sqliteDbPath);
+                return dashboardExecutionService.load(reportsRoot, storageMode, sqliteDbPath);
+            }
+        };
+        task.setOnSucceeded(e -> {
+            dashboardExecutions = task.getValue();
+            dashboardSyncLabel.setText("Loaded " + dashboardExecutions.length()
+                    + " VeyraAI execution(s) from local reports and cloud history.");
+            if (dashboardRefreshButton != null) dashboardRefreshButton.setDisable(false);
+            updateDashboardDateControls();
+            applyDashboardFilter();
+        });
+        task.setOnFailed(e -> {
+            dashboardSyncLabel.setText("Dashboard refresh failed: " + exceptionMessage(task.getException()));
+            if (dashboardRefreshButton != null) dashboardRefreshButton.setDisable(false);
+            applyDashboardFilter();
+        });
+        start(task);
+    }
+
+    private void applyDashboardFilter() {
+        if (dashboardTable == null) return;
+        LocalDate[] range = dashboardFilterRange();
+        LocalDate from = range[0];
+        LocalDate to = range[1];
+        if (from.isAfter(to)) {
+            LocalDate swap = from;
+            from = to;
+            to = swap;
+        }
+        if (!"Custom dates".equals(dashboardPeriodBox == null ? "" : dashboardPeriodBox.getValue())) {
+            dashboardFromDate.setValue(from);
+            dashboardToDate.setValue(to);
+        }
+        if (dashboardSyncLabel != null) {
+            dashboardSyncLabel.setText("Showing executions from " + from + " to " + to
+                    + " (" + dashboardExecutions.length() + " loaded).");
+        }
+        long start = from.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        long end = to.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() - 1;
+        List<JSONObject> filtered = new ArrayList<>();
+        for (JSONObject execution : sortedDashboardExecutions()) {
+            long executedAt = execution.optLong("executedAt");
+            if (executedAt >= start && executedAt <= end) {
+                filtered.add(execution);
+            }
+        }
+        renderDashboard(filtered);
+    }
+
+    private void updateDashboardDateControls() {
+        if (dashboardPeriodBox == null || dashboardFromDate == null || dashboardToDate == null) return;
+        boolean custom = "Custom dates".equals(dashboardPeriodBox.getValue());
+        dashboardFromDate.setDisable(!custom);
+        dashboardToDate.setDisable(!custom);
+        dashboardFromDate.setManaged(true);
+        dashboardToDate.setManaged(true);
+        if (!custom) {
+            LocalDate[] range = dashboardFilterRange();
+            dashboardFromDate.setValue(range[0]);
+            dashboardToDate.setValue(range[1]);
+        }
+    }
+
+    private LocalDate[] dashboardFilterRange() {
+        LocalDate to = LocalDate.now();
+        LocalDate from = to.minusDays(2);
+        String period = dashboardPeriodBox == null ? "Past 3 days" : dashboardPeriodBox.getValue();
+        if ("Past 5 days".equals(period)) from = to.minusDays(4);
+        if ("1 month".equals(period)) from = to.minusMonths(1);
+        if ("3 months".equals(period)) from = to.minusMonths(3);
+        if ("Custom dates".equals(period)) {
+            from = dashboardFromDate.getValue() == null ? LocalDate.MIN : dashboardFromDate.getValue();
+            to = dashboardToDate.getValue() == null ? LocalDate.now() : dashboardToDate.getValue();
+        }
+        return new LocalDate[] {from, to};
+    }
+
+    private List<JSONObject> sortedDashboardExecutions() {
+        List<JSONObject> executions = new ArrayList<>();
+        for (int i = 0; i < dashboardExecutions.length(); i++) {
+            JSONObject execution = dashboardExecutions.optJSONObject(i);
+            if (execution != null) executions.add(execution);
+        }
+        executions.sort((left, right) -> Long.compare(right.optLong("executedAt"), left.optLong("executedAt")));
+        return executions;
+    }
+
+    private void renderDashboard(List<JSONObject> executions) {
+        dashboardRows.clear();
+        dashboardLastResultRows.clear();
+        long passed = 0, failed = 0;
+        double avgMs = 0, p90Ms = 0, p95Ms = 0, throughput = 0;
+        int performanceRuns = 0;
+        JSONObject latestSuite = null;
+        JSONObject latestExecution = executions.isEmpty() ? null : executions.get(0);
+        Map<LocalDate, Integer> daily = new LinkedHashMap<>();
+        for (JSONObject execution : executions) {
+            passed += execution.optLong("passed");
+            failed += execution.optLong("failed");
+            if ("PERFORMANCE".equals(execution.optString("type"))) {
+                JSONObject performance = execution.optJSONObject("performance");
+                if (performance != null) {
+                    avgMs += performance.optDouble("averageMs");
+                    p90Ms += performance.optDouble("p90Ms");
+                    p95Ms += performance.optDouble("p95Ms");
+                    throughput += performance.optDouble("throughputPerSecond");
+                    performanceRuns++;
+                }
+            } else if (latestSuite == null) latestSuite = execution;
+            LocalDate day = Instant.ofEpochMilli(execution.optLong("executedAt"))
+                    .atZone(ZoneId.systemDefault()).toLocalDate();
+            daily.merge(day, 1, Integer::sum);
+            dashboardRows.add(row("executed", Instant.ofEpochMilli(execution.optLong("executedAt")).toString(),
+                    "name", execution.optString("name", "Execution"), "type", execution.optString("type"),
+                    "testCases", String.valueOf(execution.optInt("totalTestCases")),
+                    "passed", String.valueOf(execution.optLong("passed")), "failed", String.valueOf(execution.optLong("failed")),
+                    "health", execution.optString("health"), "json", execution.toString()));
+        }
+        renderLastExecutionResults(latestExecution);
+        long total = passed + failed;
+        double passRate = total == 0 ? 0 : passed * 100.0 / total;
+        dashboardLastRunCasesLabel.setText(latestSuite == null ? "0" : String.valueOf(latestSuite.optInt("totalTestCases")));
+        dashboardExecutionsLabel.setText(String.valueOf(executions.size()));
+        dashboardPassRateLabel.setText(String.format("%.1f%%", passRate));
+        dashboardPerformanceLabel.setText(performanceRuns == 0 ? "No load runs"
+                : String.format("%.0f ms · %.1f/s", avgMs / performanceRuns, throughput / performanceRuns));
+        dashboardHealthLabel.setText(total == 0 ? "No data" : passRate >= 95 ? "Excellent" : passRate >= 80 ? "Watch" : "At risk");
+        dashboardStatusChart.setData(FXCollections.observableArrayList(new PieChart.Data("Passed", passed), new PieChart.Data("Failed", failed)));
+        dashboardPerformanceChart.getData().clear();
+        XYChart.Series<String, Number> performanceSeries = new XYChart.Series<>();
+        performanceSeries.getData().add(new XYChart.Data<>("Avg ms", performanceRuns == 0 ? 0 : avgMs / performanceRuns));
+        performanceSeries.getData().add(new XYChart.Data<>("P90 ms", performanceRuns == 0 ? 0 : p90Ms / performanceRuns));
+        performanceSeries.getData().add(new XYChart.Data<>("P95 ms", performanceRuns == 0 ? 0 : p95Ms / performanceRuns));
+        performanceSeries.getData().add(new XYChart.Data<>("Throughput/s", performanceRuns == 0 ? 0 : throughput / performanceRuns));
+        dashboardPerformanceChart.getData().add(performanceSeries);
+        dashboardHistoryChart.getData().clear();
+        XYChart.Series<String, Number> history = new XYChart.Series<>();
+        daily.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> history.getData().add(new XYChart.Data<>(entry.getKey().toString(), entry.getValue())));
+        dashboardHistoryChart.getData().add(history);
+        renderRuleBasedReleaseInsights(executions, passRate, performanceRuns == 0 ? 0 : p95Ms / performanceRuns);
+    }
+
+    private void renderRuleBasedReleaseInsights(List<JSONObject> executions, double passRate, double avgP95Ms) {
+        if (dashboardInsightRows == null) {
+            return;
+        }
+        dashboardInsightRows.clear();
+        String health = passRate >= 90 ? "GREEN" : passRate >= 70 ? "AMBER" : "RED";
+        String recommendation = "GREEN".equals(health) ? "Go" : "AMBER".equals(health) ? "Conditional Go" : "No-Go";
+        dashboardInsightRows.add(row("area", "Release", "status", health, "metric", "Pass rate",
+                "value", String.format("%.1f%%", passRate), "risk", "GREEN".equals(health) ? "Low" : "High",
+                "suggestion", recommendation));
+        long apiFailures = executions.stream().filter(e -> "API".equalsIgnoreCase(e.optString("type"))).mapToLong(e -> e.optLong("failed")).sum();
+        long dbFailures = executions.stream().filter(e -> "DB".equalsIgnoreCase(e.optString("type"))).mapToLong(e -> e.optLong("failed")).sum();
+        long webFailures = executions.stream().filter(e -> "WEB".equalsIgnoreCase(e.optString("type")) || "UI".equalsIgnoreCase(e.optString("type"))).mapToLong(e -> e.optLong("failed")).sum();
+        dashboardInsightRows.add(row("area", "API", "status", apiFailures == 0 ? "PASS" : "FAIL",
+                "metric", "Failures", "value", String.valueOf(apiFailures), "risk", apiFailures == 0 ? "Low" : "Medium",
+                "suggestion", apiFailures == 0 ? "Maintain validation coverage" : "Run API AI Analysis on failed responses"));
+        dashboardInsightRows.add(row("area", "DB", "status", dbFailures == 0 ? "PASS" : "FAIL",
+                "metric", "Mismatches", "value", String.valueOf(dbFailures), "risk", dbFailures == 0 ? "Low" : "High",
+                "suggestion", dbFailures == 0 ? "Maintain DB mappings" : "Use DB AI Analysis for API-to-DB mapping fixes"));
+        dashboardInsightRows.add(row("area", "UI", "status", webFailures == 0 ? "PASS" : "WARN",
+                "metric", "Failed steps", "value", String.valueOf(webFailures), "risk", webFailures == 0 ? "Low" : "Medium",
+                "suggestion", webFailures == 0 ? "Keep locator memory current" : "Use Web AI Analysis for locator healing"));
+        if (avgP95Ms > 0) {
+            dashboardInsightRows.add(row("area", "Load", "status", avgP95Ms <= 1000 ? "PASS" : "WARN",
+                    "metric", "Avg p95", "value", String.format("%.0f ms", avgP95Ms), "risk", avgP95Ms <= 1000 ? "Low" : "Medium",
+                    "suggestion", avgP95Ms <= 1000 ? "Maintain current SLA" : "Investigate slow endpoints and DB indexes"));
+        }
+    }
+
+    private void analyzeDashboardReleaseHealth() {
+        if (!apiAiAgentConnected()) {
+            showWarning(selectedApiAiAgentName(), "Connect " + selectedApiAiAgentName() + " in Settings before running release health analysis.");
+            return;
+        }
+        JSONArray executions = compactDashboardExecutions(dashboardExecutions, 30);
+        String prompt = """
+                Analyze these VeyraAI execution reports and return ONLY strict JSON:
+                {
+                  "summary": "...",
+                  "releaseHealth": {"status":"GREEN|AMBER|RED","score":0,"recommendation":"Go|Conditional Go|No-Go"},
+                  "insights":[{"area":"API|DB|UI|Load|Suite|Release","status":"PASS|WARN|FAIL","metric":"...","value":"...","risk":"Low|Medium|High","suggestion":"..."}]
+                }
+
+                Execution reports:
+                %s
+                """.formatted(executions.toString(2));
+        Task<JSONObject> task = new Task<>() {
+            @Override protected JSONObject call() throws Exception {
+                return extractJsonObject(runApiAiPrompt(prompt));
+            }
+        };
+        task.setOnSucceeded(e -> renderAgentReleaseHealth(task.getValue()));
+        task.setOnFailed(e -> showError("Release Health Analysis Failed", task.getException()));
+        start(task);
+    }
+
+    private void renderAgentReleaseHealth(JSONObject root) {
+        dashboardInsightRows.clear();
+        JSONObject release = root.optJSONObject("releaseHealth");
+        if (release != null) {
+            dashboardInsightRows.add(row("area", "Release", "status", release.optString("status"),
+                    "metric", "Score", "value", String.valueOf(release.optInt("score")),
+                    "risk", "RED".equalsIgnoreCase(release.optString("status")) ? "High"
+                            : "AMBER".equalsIgnoreCase(release.optString("status")) ? "Medium" : "Low",
+                    "suggestion", release.optString("recommendation")));
+        }
+        JSONArray insights = root.optJSONArray("insights");
+        if (insights != null) {
+            for (int i = 0; i < insights.length(); i++) {
+                JSONObject item = insights.optJSONObject(i);
+                if (item == null) continue;
+                dashboardInsightRows.add(row("area", item.optString("area"), "status", item.optString("status"),
+                        "metric", item.optString("metric"), "value", item.optString("value"),
+                        "risk", item.optString("risk"), "suggestion", item.optString("suggestion")));
+            }
+        }
+        saveVeyraAIReleaseHealth(root);
+    }
+
+    private void saveVeyraAIReleaseHealth(JSONObject root) {
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            JSONObject release = root.optJSONObject("releaseHealth");
+            JSONArray insights = root.optJSONArray("insights");
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + VEYRAAI_RELEASE_HEALTH_TABLE
+                         + " (id, summary, release_health_json, insights_json, created_at) VALUES (?, ?, ?, ?, ?)")) {
+                statement.setString(1, "release-" + System.currentTimeMillis() + "-" + UUID.randomUUID());
+                statement.setString(2, root.optString("summary"));
+                statement.setString(3, release == null ? "{}" : release.toString());
+                statement.setString(4, insights == null ? "[]" : insights.toString());
+                statement.setString(5, Instant.now().toString());
+                statement.executeUpdate();
+            }
+        } catch (Exception e) {
+            logApiAiConsole("Could not save VeyraAI release health report", e);
+        }
+    }
+
+    private void renderLastExecutionResults(JSONObject execution) {
+        if (execution == null) return;
+        JSONArray details = execution.optJSONArray("details");
+        if (details == null || details.isEmpty()) {
+            dashboardLastResultRows.add(row("suite", execution.optString("name", "Execution"), "case", "",
+                    "step", "", "type", execution.optString("type"), "status", execution.optString("health"),
+                    "message", "No detailed results were stored for the latest execution."));
+            return;
+        }
+        for (int i = 0; i < details.length(); i++) {
+            JSONObject detail = details.optJSONObject(i);
+            if (detail != null) dashboardLastResultRows.add(row("suite", detail.optString("suite"),
+                    "case", detail.optString("testCase"), "step", detail.optString("testStep"),
+                    "type", detail.optString("type"), "status", detail.optString("status"),
+                    "message", detail.optString("message")));
+        }
+    }
+
+    private void showDashboardExecutionDetails(Map<String, String> selected) {
+        if (selected == null || selected.getOrDefault("json", "").isBlank()) return;
+        JSONObject execution = new JSONObject(selected.get("json"));
+        ObservableList<Map<String, String>> rows = FXCollections.observableArrayList();
+        JSONArray details = execution.optJSONArray("details");
+        if (details != null) for (int i = 0; i < details.length(); i++) {
+            JSONObject detail = details.optJSONObject(i);
+            if (detail != null) rows.add(row("suite", detail.optString("suite"), "case", detail.optString("testCase"),
+                    "step", detail.optString("testStep"), "type", detail.optString("type"),
+                    "status", detail.optString("status"), "message", detail.optString("message")));
+        }
+        TableView<Map<String, String>> table = mapTable(rows, "Test Suite", "suite", "Test Case", "case",
+                "Test Step", "step", "Type", "type", "Status", "status", "Details", "message");
+        Stage detailStage = new Stage();
+        detailStage.setTitle("Execution Details - " + execution.optString("name"));
+        VBox content = new VBox(12, sectionTitle(execution.optString("name", "Execution Details")), table);
+        content.setPadding(new Insets(16));
+        VBox.setVgrow(table, Priority.ALWAYS);
+        Scene scene = new Scene(content, 1100, 620);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        detailStage.setScene(scene);
+        detailStage.show();
     }
 
     private javafx.scene.Node createApiPanel() {
+        apiTesterTabs = new TabPane();
+        apiTesterTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        apiTesterTabs.getTabs().add(tab("API Executor", createApiExecutorPanel()));
+        apiTesterTabs.getTabs().add(tab("Import Collection", createPostmanCollectionPanel()));
+        VBox panel = new VBox(apiTesterTabs);
+        panel.setPadding(new Insets(14, 0, 0, 0));
+        VBox.setVgrow(apiTesterTabs, Priority.ALWAYS);
+        return panel;
+    }
+
+    private javafx.scene.Node createApiExecutorPanel() {
         endpointField = new TextField();
         endpointField.setText("https://jsonplaceholder.typicode.com/posts/1");
         methodBox = combo("GET", "POST", "PUT", "PATCH", "DELETE");
         apiUrlVariableBox = createVariableDropdown();
-        authTypeBox = combo("No Auth", "Bearer Token");
+        authTypeBox = combo("No Auth", "Bearer Token", "OAuth2");
         requestFormatBox = combo("JSON");
         tokenField = new PasswordField();
         tokenField.setDisable(true);
@@ -341,10 +1667,37 @@ public class ApiValidatorFxApp extends Application {
         visibleTokenField.setDisable(true);
         visibleTokenField.setManaged(false);
         visibleTokenField.setVisible(false);
+        oauthGrantTypeBox = combo("client_credentials", "password", "authorization_code", "refresh_token");
+        oauthTokenUrlField = new TextField();
+        oauthClientIdField = new TextField();
+        oauthClientSecretField = new PasswordField();
+        oauthScopeField = new TextField();
+        oauthUsernameField = new TextField();
+        oauthPasswordField = new PasswordField();
+        oauthAuthCodeField = new TextField();
+        oauthRedirectUriField = new TextField();
+        oauthRefreshTokenField = new TextField();
+        oauthBasicAuthCheck = new CheckBox("Use Basic client auth");
+        oauthBasicAuthCheck.setSelected(true);
+        oauthStatusLabel = new Label("OAuth2 ready");
+        oauthStatusLabel.getStyleClass().add("muted");
+        sslVerificationDisabledCheck = new CheckBox("Disable SSL certificate verification");
+        trustStorePathField = new TextField();
+        trustStorePasswordField = new PasswordField();
+        keyStorePathField = new TextField();
+        keyStorePasswordField = new PasswordField();
+        proxyEnabledCheck = new CheckBox("Use proxy");
+        proxySchemeBox = combo("http", "https");
+        proxyHostField = new TextField();
+        proxyPortField = new TextField();
+        proxyUsernameField = new TextField();
+        proxyPasswordField = new PasswordField();
         authTypeBox.setOnAction(e -> updateAuthControls());
         methodBox.setOnAction(e -> updateRequestBodyState());
         headersArea = editor("Accept: application/json\nContent-Type: application/json\nUser-Agent: API-Validator-Tool/1.0");
         bodyArea = requestEditor("");
+        preRequestScriptArea = requestEditor("");
+        testScriptArea = requestEditor("");
         prettyResponseArea = responseEditor("");
         rawResponseArea = responseEditor("");
         responseHeadersArea = responseEditor("");
@@ -354,6 +1707,9 @@ public class ApiValidatorFxApp extends Application {
         sizeValueLabel = metric("--");
         apiStatusLabel = new Label("Ready");
         apiStatusLabel.getStyleClass().add("muted");
+        apiAiTesterConnectionLabel = new Label();
+        apiAiTesterConnectionLabel.getStyleClass().add("muted");
+        updateApiAiConnectionLabels();
 
         ComboBox<String> apiVariableBox = createVariableDropdown();
         Button insertVariable = secondary("Insert Variable");
@@ -364,6 +1720,8 @@ public class ApiValidatorFxApp extends Application {
         beautify.setOnAction(e -> beautifyBody());
         Button send = primary("Send Request");
         send.setOnAction(e -> sendRequest());
+        Button aiAnalysis = secondary("AI Analysis");
+        aiAnalysis.setOnAction(e -> runApiAiAnalysisForLastResponse());
         Button clear = secondary("Clear");
         clear.setOnAction(e -> clearApiForm());
         Button saveRequest = secondary("Save Request");
@@ -394,10 +1752,25 @@ public class ApiValidatorFxApp extends Application {
 
         FlowPane bodyTools = actionRow(new Label("Format:"), requestFormatBox, apiVariableBox, insertVariable, beautify);
 
-        SplitPane editors = new SplitPane(card("Headers", headersArea), card("Request Body", withFooter(bodyArea, bodyTools)));
-        editors.setDividerPositions(0.35);
+        TabPane requestSectionTabs = new TabPane();
+        requestSectionTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        requestSectionTabs.getTabs().add(tab("Headers", headersArea));
+        requestSectionTabs.getTabs().add(tab("Body", withFooter(bodyArea, bodyTools)));
+        requestSectionTabs.getTabs().add(tab("OAuth2", createOAuth2Panel()));
+        requestSectionTabs.getTabs().add(tab("Settings", createApiTransportSettingsPanel()));
+        requestSectionTabs.getTabs().add(tab("Pre-request Script", preRequestScriptArea));
+        requestSectionTabs.getTabs().add(tab("Tests", testScriptArea));
+        requestSectionTabs.setMinHeight(360);
+        VBox requestSectionsCard = card("Request Sections", requestSectionTabs);
+        requestSectionsCard.setMinWidth(0);
+        headersArea.setPrefHeight(230);
+        bodyArea.setPrefHeight(230);
+        preRequestScriptArea.setPrefHeight(230);
+        testScriptArea.setPrefHeight(230);
+        requestSectionsCard.setMinHeight(430);
+        VBox.setVgrow(requestSectionTabs, Priority.ALWAYS);
 
-        FlowPane actions = actionRow(send, clear, saveResponse, saveRequest, apiStatusLabel);
+        FlowPane actions = actionRow(send, aiAnalysis, clear, saveResponse, saveRequest, apiStatusLabel, apiAiTesterConnectionLabel);
 
         apiResponseTabs = new TabPane();
         apiResponseTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
@@ -414,17 +1787,799 @@ public class ApiValidatorFxApp extends Application {
                 new Label("Size:"), sizeValueLabel,
                 copyResponse);
 
-        VBox request = new VBox(14, sectionTitle("Request"), form, editors, actions);
-        VBox response = new VBox(12, sectionTitle("Response"), metrics, apiResponseTabs);
+        VBox request = new VBox(16, form, actions);
+        VBox response = new VBox(16, metrics, apiResponseTabs);
         VBox.setVgrow(apiResponseTabs, Priority.ALWAYS);
-        request.setMinHeight(0);
-        response.setMinHeight(0);
+        request.setMinHeight(Region.USE_PREF_SIZE);
+        response.setMinHeight(Region.USE_PREF_SIZE);
+        apiResponseTabs.setPrefHeight(480);
 
-        SplitPane split = new SplitPane(wrap(request), wrap(response));
-        split.setOrientation(javafx.geometry.Orientation.VERTICAL);
-        split.setDividerPositions(0.40);
+        VBox requestCard = card("API Request Card", request);
+        requestCard.setMinHeight(245);
+        VBox responseCard = card("Response Card", response);
+        responseCard.setMinHeight(620);
+        VBox panel = new VBox(24, requestCard, requestSectionsCard, responseCard);
+        panel.setMinWidth(0);
+        panel.setFillWidth(true);
         updateRequestBodyState();
-        return padded(split);
+        ScrollPane scrollPane = padded(panel);
+        scrollPane.setFitToHeight(false);
+        return scrollPane;
+    }
+
+    private javafx.scene.Node createOAuth2Panel() {
+        Button fetchToken = primary("Fetch Token");
+        fetchToken.setOnAction(e -> fetchOAuth2Token());
+        Button useAccessTokenVariable = secondary("Use ${access_token}");
+        useAccessTokenVariable.setOnAction(e -> {
+            authTypeBox.setValue("Bearer Token");
+            tokenField.setText("${access_token}");
+            updateAuthControls();
+        });
+
+        GridPane grid = grid();
+        grid.add(labeled("Grant Type", oauthGrantTypeBox), 0, 0);
+        grid.add(labeled("Token URL", oauthTokenUrlField), 1, 0, 2, 1);
+        grid.add(labeled("Client ID", oauthClientIdField), 0, 1);
+        grid.add(labeled("Client Secret", oauthClientSecretField), 1, 1);
+        grid.add(labeled("Scope", oauthScopeField), 2, 1);
+        grid.add(labeled("Username", oauthUsernameField), 0, 2);
+        grid.add(labeled("Password", oauthPasswordField), 1, 2);
+        grid.add(labeled("Authorization Code", oauthAuthCodeField), 0, 3);
+        grid.add(labeled("Redirect URI", oauthRedirectUriField), 1, 3);
+        grid.add(labeled("Refresh Token", oauthRefreshTokenField), 2, 3);
+        grid.add(labeled("Client Auth", oauthBasicAuthCheck), 0, 4);
+        grid.add(actionRow(fetchToken, useAccessTokenVariable, oauthStatusLabel), 1, 4, 2, 1);
+        oauthTokenUrlField.setMinWidth(420);
+        GridPane.setHgrow(oauthTokenUrlField, Priority.ALWAYS);
+        return new VBox(16, grid);
+    }
+
+    private javafx.scene.Node createApiTransportSettingsPanel() {
+        Button browseTrustStore = secondary("Browse");
+        browseTrustStore.setOnAction(e -> chooseIntoField(trustStorePathField, "Trust Store", "*.*"));
+        Button browseKeyStore = secondary("Browse");
+        browseKeyStore.setOnAction(e -> chooseIntoField(keyStorePathField, "Key Store", "*.*"));
+
+        GridPane sslGrid = grid();
+        sslGrid.add(labeled("Verification", sslVerificationDisabledCheck), 0, 0);
+        sslGrid.add(labeled("Trust Store", wrapTextFieldWithActions(trustStorePathField, browseTrustStore)), 0, 1, 2, 1);
+        sslGrid.add(labeled("Trust Store Password", trustStorePasswordField), 2, 1);
+        sslGrid.add(labeled("Client Certificate / Key Store", wrapTextFieldWithActions(keyStorePathField, browseKeyStore)), 0, 2, 2, 1);
+        sslGrid.add(labeled("Key Store Password", keyStorePasswordField), 2, 2);
+
+        GridPane proxyGrid = grid();
+        proxyGrid.add(labeled("Proxy", proxyEnabledCheck), 0, 0);
+        proxyGrid.add(labeled("Scheme", proxySchemeBox), 1, 0);
+        proxyGrid.add(labeled("Host", proxyHostField), 0, 1);
+        proxyGrid.add(labeled("Port", proxyPortField), 1, 1);
+        proxyGrid.add(labeled("Username", proxyUsernameField), 0, 2);
+        proxyGrid.add(labeled("Password", proxyPasswordField), 1, 2);
+        proxyHostField.setMinWidth(280);
+        trustStorePathField.setMinWidth(420);
+        keyStorePathField.setMinWidth(420);
+
+        return new VBox(18, sectionTitle("SSL / Certificates"), sslGrid, sectionTitle("Proxy"), proxyGrid);
+    }
+
+    private void chooseIntoField(TextField field, String description, String extension) {
+        File file = chooseOpenFile(description, extension);
+        if (file != null) {
+            field.setText(file.toPath().toAbsolutePath().normalize().toString());
+        }
+    }
+
+    private javafx.scene.Node createPostmanCollectionPanel() {
+        postmanCollectionPathField = new TextField();
+        postmanCollectionPathField.setEditable(false);
+        postmanCollectionPathField.setPrefColumnCount(90);
+        postmanEnvironmentPathField = new TextField();
+        postmanEnvironmentPathField.setEditable(false);
+        postmanEnvironmentPathField.setPrefColumnCount(90);
+        postmanCollectionStatusLabel = new Label("No Postman collection imported.");
+        postmanCollectionStatusLabel.getStyleClass().add("muted");
+        postmanCollectionTree = new TreeView<>();
+        postmanCollectionTree.setShowRoot(true);
+        postmanCollectionTree.setRoot(new TreeItem<>(PostmanCollectionNode.placeholder("Import a Postman collection JSON file")));
+        postmanCollectionDetailsArea = editor("");
+        postmanCollectionDetailsArea.setEditable(false);
+        postmanCollectionDetailsArea.setWrapText(true);
+        postmanCollectionDetailsArea.setPrefHeight(220);
+
+        Button browse = secondary("Import Collection");
+        browse.setOnAction(e -> importPostmanCollection());
+        Button importEnvironment = secondary("Import Environment");
+        importEnvironment.setOnAction(e -> importPostmanEnvironment());
+        Button load = primary("Load Selected Request");
+        load.setOnAction(e -> loadSelectedPostmanRequest());
+        Button runSelected = primary("Run Selected");
+        runSelected.setOnAction(e -> runSelectedPostmanCollectionNode());
+        FlowPane tools = actionRow(browse, importEnvironment, load, runSelected, postmanCollectionStatusLabel);
+
+        postmanCollectionTree.getSelectionModel().selectedItemProperty().addListener((observable, oldValue, newValue) -> {
+            PostmanCollectionNode node = newValue == null ? null : newValue.getValue();
+            renderPostmanCollectionDetails(node);
+            if (node != null && node.isRequest()) {
+                loadPostmanRequest(node);
+            }
+        });
+        postmanCollectionTree.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                loadSelectedPostmanRequest();
+            }
+        });
+
+        SplitPane split = new SplitPane(postmanCollectionTree, postmanCollectionDetailsArea);
+        split.setDividerPositions(0.42);
+        VBox panel = new VBox(14,
+                labeled("Collection Path", wrapTextFieldWithActions(postmanCollectionPathField, browse)),
+                labeled("Environment Path", wrapTextFieldWithActions(postmanEnvironmentPathField, importEnvironment)),
+                tools,
+                split);
+        VBox.setVgrow(split, Priority.ALWAYS);
+        postmanCollectionTree.setMinHeight(520);
+        postmanCollectionDetailsArea.setMinHeight(520);
+        return padded(panel);
+    }
+
+    private void importPostmanCollection() {
+        File file = chooseOpenFile("Postman Collection", "*.json");
+        if (file == null) {
+            return;
+        }
+        try {
+            JSONObject collection = new JSONObject(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+            postmanCollectionPathField.setText(file.getAbsolutePath());
+            postmanCollectionVariables.clear();
+            TreeItem<PostmanCollectionNode> root = buildPostmanCollectionTree(collection);
+            postmanCollectionTree.setRoot(root);
+            root.setExpanded(true);
+            int variables = importPostmanVariables(collection.optJSONArray("variable"), postmanCollectionVariables, "Postman Collection")
+                    + importPostmanItemVariables(collection.optJSONArray("item"));
+            postmanCollectionStatusLabel.setText("Imported " + root.getValue().name + " with "
+                    + countPostmanRequests(root) + " request(s), " + variables + " variable(s).");
+            refreshVariablesView();
+        } catch (Exception e) {
+            showError("Import Postman Collection Failed", e);
+        }
+    }
+
+    private void importPostmanEnvironment() {
+        File file = chooseOpenFile("Postman Environment", "*.json");
+        if (file == null) {
+            return;
+        }
+        try {
+            JSONObject environment = new JSONObject(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+            postmanEnvironmentPathField.setText(file.getAbsolutePath());
+            postmanEnvironmentVariables.clear();
+            int variables = importPostmanVariables(environment.optJSONArray("values"), postmanEnvironmentVariables, "Postman Environment");
+            postmanCollectionStatusLabel.setText("Imported environment "
+                    + firstNonBlank(environment.optString("name"), file.getName()) + " with " + variables + " variable(s).");
+            refreshVariablesView();
+        } catch (Exception e) {
+            showError("Import Postman Environment Failed", e);
+        }
+    }
+
+    private TreeItem<PostmanCollectionNode> buildPostmanCollectionTree(JSONObject collection) {
+        JSONObject info = collection.optJSONObject("info");
+        String name = info == null ? "Postman Collection" : firstNonBlank(info.optString("name"), "Postman Collection");
+        TreeItem<PostmanCollectionNode> root = new TreeItem<>(PostmanCollectionNode.collection(name, collection));
+        JSONArray items = collection.optJSONArray("item");
+        if (items != null) {
+            appendPostmanItems(root, items, collection.optJSONObject("auth"));
+        }
+        return root;
+    }
+
+    private void appendPostmanItems(TreeItem<PostmanCollectionNode> parent, JSONArray items, JSONObject inheritedAuth) {
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            String name = firstNonBlank(item.optString("name"), "Untitled");
+            JSONObject effectiveAuth = item.has("auth") ? item.optJSONObject("auth") : inheritedAuth;
+            if (item.has("request")) {
+                JSONObject request = item.optJSONObject("request");
+                request = request == null ? new JSONObject() : new JSONObject(request.toString());
+                if (!request.has("auth") && effectiveAuth != null) {
+                    request.put("auth", effectiveAuth);
+                }
+                parent.getChildren().add(new TreeItem<>(PostmanCollectionNode.request(name, request == null ? new JSONObject() : request, item)));
+            } else {
+                TreeItem<PostmanCollectionNode> folder = new TreeItem<>(PostmanCollectionNode.folder(name, item));
+                JSONArray children = item.optJSONArray("item");
+                if (children != null) {
+                    appendPostmanItems(folder, children, effectiveAuth);
+                }
+                folder.setExpanded(false);
+                parent.getChildren().add(folder);
+            }
+        }
+    }
+
+    private int importPostmanVariables(JSONArray variables, Map<String, String> targetScope, String type) {
+        if (variables == null) {
+            return 0;
+        }
+        int count = 0;
+        for (int i = 0; i < variables.length(); i++) {
+            JSONObject variable = variables.optJSONObject(i);
+            if (variable == null || variable.optBoolean("disabled", false)
+                    || (variable.has("enabled") && !variable.optBoolean("enabled", true))) {
+                continue;
+            }
+            String key = normalizeVariableName(variable.optString("key"));
+            if (key.isBlank()) {
+                continue;
+            }
+            String value = postmanVariableRawValue(variable);
+            targetScope.put(key, value);
+            savedVariables.putIfAbsent(key, value);
+            savedVariableTypes.putIfAbsent(key, type);
+            savedVariablePaths.putIfAbsent(key, "Postman Environment".equals(type)
+                    ? (postmanEnvironmentPathField == null ? "" : postmanEnvironmentPathField.getText())
+                    : (postmanCollectionPathField == null ? "" : postmanCollectionPathField.getText()));
+            count++;
+        }
+        return count;
+    }
+
+    private String postmanVariableRawValue(JSONObject variable) {
+        if (variable == null) {
+            return "";
+        }
+        if (variable.has("currentValue")) {
+            return String.valueOf(variable.opt("currentValue") == null ? "" : variable.opt("currentValue"));
+        }
+        if (variable.has("value")) {
+            return String.valueOf(variable.opt("value") == null ? "" : variable.opt("value"));
+        }
+        if (variable.has("initialValue")) {
+            return String.valueOf(variable.opt("initialValue") == null ? "" : variable.opt("initialValue"));
+        }
+        return "";
+    }
+
+    private int importPostmanItemVariables(JSONArray items) {
+        if (items == null) {
+            return 0;
+        }
+        int count = 0;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            count += importPostmanVariables(item.optJSONArray("variable"), postmanCollectionVariables, "Postman Collection");
+            count += importPostmanItemVariables(item.optJSONArray("item"));
+            JSONObject request = item.optJSONObject("request");
+            JSONObject url = request == null ? null : request.optJSONObject("url");
+            if (url != null) {
+                count += importPostmanVariables(url.optJSONArray("variable"), postmanCollectionVariables, "Postman Collection");
+            }
+        }
+        return count;
+    }
+
+    private int countPostmanRequests(TreeItem<PostmanCollectionNode> item) {
+        if (item == null) {
+            return 0;
+        }
+        int count = item.getValue() != null && item.getValue().isRequest() ? 1 : 0;
+        for (TreeItem<PostmanCollectionNode> child : item.getChildren()) {
+            count += countPostmanRequests(child);
+        }
+        return count;
+    }
+
+    private void runSelectedPostmanCollectionNode() {
+        TreeItem<PostmanCollectionNode> selected = postmanCollectionTree == null
+                ? null : postmanCollectionTree.getSelectionModel().getSelectedItem();
+        if (selected == null || selected.getValue() == null || "placeholder".equals(selected.getValue().kind)) {
+            showWarning("Postman Collection", "Import a collection and select a request, folder, or collection to run.");
+            return;
+        }
+        List<TreeItem<PostmanCollectionNode>> requestItems = new ArrayList<>();
+        collectPostmanRequestItems(selected, requestItems);
+        if (requestItems.isEmpty()) {
+            showWarning("Postman Collection", "The selected item does not contain any runnable requests.");
+            return;
+        }
+        AtomicInteger completed = new AtomicInteger();
+        postmanCollectionStatusLabel.setText("Running " + requestItems.size() + " request(s) from " + selected.getValue().name + "...");
+        Task<PostmanCollectionRunResult> runner = new Task<>() {
+            @Override
+            protected PostmanCollectionRunResult call() {
+                PostmanCollectionRunResult result = new PostmanCollectionRunResult(selected.getValue().name, requestItems.size());
+                for (TreeItem<PostmanCollectionNode> item : requestItems) {
+                    if (isCancelled()) {
+                        break;
+                    }
+                    PostmanCollectionNode node = item.getValue();
+                    try {
+                        runPostmanPreRequestScripts(item);
+                        ApiRequest request = buildPostmanApiRequest(node);
+                        List<String> unresolvedVariables = unresolvedRequestVariables(request);
+                        if (!unresolvedVariables.isEmpty()) {
+                            throw new IllegalStateException("Unresolved variables: " + String.join(", ", unresolvedVariables));
+                        }
+                        boolean bearerAuth = request.token != null && !request.token.isBlank();
+                        hydratePostmanBearerTokenIfNeeded(request, bearerAuth, request.token);
+                        ApiResponse response = apiService.sendRequest(request);
+                        lastResponse = response;
+                        captureAccessTokenFromResponse(response);
+                        Platform.runLater(() -> renderResponse(response));
+                        boolean passed = response.statusCode >= 200 && response.statusCode < 400;
+                        String scriptMessage = "";
+                        try {
+                            capturePostmanTestVariables(item, response);
+                        } catch (Exception scriptError) {
+                            passed = false;
+                            scriptMessage = "Postman test script failed: " + exceptionMessage(scriptError);
+                        }
+                        result.add(node.name, response.statusCode, passed ? "PASS" : "FAIL",
+                                passed ? "" : firstNonBlank(scriptMessage, response.statusLine));
+                    } catch (Exception ex) {
+                        result.add(node == null ? "Request" : node.name, 0, "ERROR", exceptionMessage(ex));
+                    }
+                    int done = completed.incrementAndGet();
+                    Platform.runLater(() -> postmanCollectionStatusLabel.setText("Ran " + done + " of "
+                            + requestItems.size() + " request(s) from " + selected.getValue().name + "..."));
+                }
+                return result;
+            }
+        };
+        runner.setOnSucceeded(e -> {
+            PostmanCollectionRunResult result = runner.getValue();
+            postmanCollectionStatusLabel.setText(result.summary());
+            postmanCollectionDetailsArea.setText(result.details());
+            refreshVariablesView();
+            showInfo("Postman Collection Run", result.summary());
+        });
+        runner.setOnFailed(e -> {
+            postmanCollectionStatusLabel.setText("Collection run failed");
+            showError("Postman Collection Run Failed", runner.getException());
+        });
+        start(runner);
+    }
+
+    private void collectPostmanRequestItems(TreeItem<PostmanCollectionNode> item, List<TreeItem<PostmanCollectionNode>> requests) {
+        if (item == null || item.getValue() == null) {
+            return;
+        }
+        if (item.getValue().isRequest()) {
+            requests.add(item);
+            return;
+        }
+        for (TreeItem<PostmanCollectionNode> child : item.getChildren()) {
+            collectPostmanRequestItems(child, requests);
+        }
+    }
+
+    private void runPostmanPreRequestScripts(TreeItem<PostmanCollectionNode> requestItem) {
+        for (PostmanCollectionNode node : postmanExecutionPath(requestItem)) {
+            executeBasicPostmanPreRequestVariables(node);
+        }
+    }
+
+    private void capturePostmanTestVariables(TreeItem<PostmanCollectionNode> requestItem, ApiResponse response) {
+        for (PostmanCollectionNode node : postmanExecutionPath(requestItem)) {
+            capturePostmanTestVariables(node, response);
+        }
+    }
+
+    private List<PostmanCollectionNode> postmanExecutionPath(TreeItem<PostmanCollectionNode> requestItem) {
+        List<PostmanCollectionNode> path = new ArrayList<>();
+        TreeItem<PostmanCollectionNode> current = requestItem;
+        while (current != null) {
+            PostmanCollectionNode node = current.getValue();
+            if (node != null && !"placeholder".equals(node.kind)) {
+                path.add(node);
+            }
+            current = current.getParent();
+        }
+        Collections.reverse(path);
+        return path;
+    }
+
+    private void loadSelectedPostmanRequest() {
+        TreeItem<PostmanCollectionNode> selected = postmanCollectionTree == null
+                ? null : postmanCollectionTree.getSelectionModel().getSelectedItem();
+        PostmanCollectionNode node = selected == null ? null : selected.getValue();
+        if (node == null || !node.isRequest()) {
+            showWarning("Postman Collection", "Select a request from the imported collection.");
+            return;
+        }
+        loadPostmanRequest(node);
+    }
+
+    private void loadPostmanRequest(PostmanCollectionNode node) {
+        currentPostmanRequestNode = node;
+        JSONObject request = node.request;
+        String method = firstNonBlank(request.optString("method"), "GET").toUpperCase();
+        if (methodBox.getItems().contains(method)) {
+            methodBox.setValue(method);
+        }
+        endpointField.setText(postmanRequestUrl(node));
+        headersArea.setText(postmanHeadersText(request));
+        JSONObject postmanBody = request.optJSONObject("body");
+        currentPostmanBodyMode = postmanBody == null ? "" : postmanBody.optString("mode");
+        currentPostmanMultipartParts = postmanMultipartParts(postmanBody);
+        currentPostmanBinaryFilePath = postmanBinaryFilePath(postmanBody);
+        String body = postmanBodyText(postmanBody);
+        bodyArea.setText(body);
+        preRequestScriptArea.setText(postmanEventScript(node.source, "prerequest"));
+        testScriptArea.setText(postmanEventScript(node.source, "test"));
+        applyPostmanAuth(request);
+        updateRequestBodyState();
+        apiStatusLabel.setText("Loaded collection request: " + node.name);
+        if (apiTesterTabs != null && !apiTesterTabs.getTabs().isEmpty()) {
+            apiTesterTabs.getSelectionModel().select(0);
+        }
+    }
+
+    private String postmanEventScript(JSONObject source, String listen) {
+        JSONArray events = source == null ? null : source.optJSONArray("event");
+        if (events == null || events.isEmpty()) {
+            return "";
+        }
+        List<String> scripts = new ArrayList<>();
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event != null && listen.equalsIgnoreCase(event.optString("listen"))) {
+                String script = postmanScriptText(event.optJSONObject("script"));
+                if (!script.isBlank()) {
+                    scripts.add(script);
+                }
+            }
+        }
+        return String.join(System.lineSeparator() + System.lineSeparator(), scripts);
+    }
+
+    private void renderPostmanCollectionDetails(PostmanCollectionNode node) {
+        if (postmanCollectionDetailsArea == null) {
+            return;
+        }
+        if (node == null) {
+            postmanCollectionDetailsArea.clear();
+            return;
+        }
+        if (!node.isRequest()) {
+            postmanCollectionDetailsArea.setText(node.name + "\n\n" + firstNonBlank(node.source.optString("description"), "Folder"));
+            return;
+        }
+        JSONObject request = node.request;
+        postmanCollectionDetailsArea.setText("Request: " + node.name
+                + "\nMethod: " + firstNonBlank(request.optString("method"), "GET")
+                + "\nURL: " + postmanRequestUrl(node)
+                + "\nAuth: " + postmanAuthType(request.optJSONObject("auth"))
+                + "\n\nHeaders:\n" + postmanHeadersText(request)
+                + "\n\nBody:\n" + postmanBodyText(request.optJSONObject("body"))
+                + "\n\nDescription:\n" + firstNonBlank(request.optString("description"), ""));
+    }
+
+    private String postmanUrl(Object urlValue) {
+        if (urlValue == null || urlValue == JSONObject.NULL) {
+            return "";
+        }
+        if (urlValue instanceof String text) {
+            return postmanVariableToVeyraAI(text);
+        }
+        if (urlValue instanceof JSONObject url) {
+            String raw = url.optString("raw");
+            if (!raw.isBlank()) {
+                return postmanVariableToVeyraAI(raw);
+            }
+            String protocol = url.optString("protocol");
+            String host = postmanStringOrArray(url.opt("host"), ".");
+            String path = postmanStringOrArray(url.opt("path"), "/");
+            StringBuilder builder = new StringBuilder();
+            if (!protocol.isBlank()) {
+                builder.append(protocol).append("://");
+            }
+            builder.append(host);
+            if (!path.isBlank()) {
+                if (builder.length() > 0 && builder.charAt(builder.length() - 1) != '/') {
+                    builder.append('/');
+                }
+                builder.append(path);
+            }
+            String query = postmanQueryString(url.optJSONArray("query"));
+            if (!query.isBlank()) {
+                builder.append('?').append(query);
+            }
+            return postmanVariableToVeyraAI(builder.toString());
+        }
+        return postmanVariableToVeyraAI(String.valueOf(urlValue));
+    }
+
+    private String postmanRequestUrl(PostmanCollectionNode node) {
+        JSONObject request = node == null ? null : node.request;
+        if (request == null) {
+            return "";
+        }
+        String url = postmanUrl(request.opt("url"));
+        JSONObject urlObject = request.optJSONObject("url");
+        if (urlObject != null) {
+            url = applyPostmanPathVariables(url, urlObject.optJSONArray("variable"));
+        }
+        return applyPostmanPathVariables(url, node.source.optJSONArray("variable"));
+    }
+
+    private String applyPostmanPathVariables(String url, JSONArray variables) {
+        if (url == null || url.isBlank() || variables == null) {
+            return url == null ? "" : url;
+        }
+        String resolved = url;
+        for (int i = 0; i < variables.length(); i++) {
+            JSONObject variable = variables.optJSONObject(i);
+            if (variable == null || variable.optBoolean("disabled", false)) {
+                continue;
+            }
+            String key = variable.optString("key");
+            if (!key.isBlank()) {
+                resolved = resolved.replace(":" + key, "${" + normalizeVariableName(key) + "}");
+            }
+        }
+        return resolved;
+    }
+
+    private String postmanHeadersText(JSONObject request) {
+        List<String> lines = new ArrayList<>();
+        JSONArray headers = request.optJSONArray("header");
+        if (headers != null) {
+            for (int i = 0; i < headers.length(); i++) {
+                JSONObject header = headers.optJSONObject(i);
+                if (header == null || header.optBoolean("disabled", false)) {
+                    continue;
+                }
+                String key = header.optString("key");
+                if (!key.isBlank()) {
+                    lines.add(key + ": " + postmanVariableToVeyraAI(header.optString("value")));
+                }
+            }
+        }
+        JSONObject body = request.optJSONObject("body");
+        if (body != null && "urlencoded".equalsIgnoreCase(body.optString("mode"))
+                && lines.stream().noneMatch(line -> line.toLowerCase().startsWith("content-type:"))) {
+            lines.add("Content-Type: application/x-www-form-urlencoded");
+        } else if (body != null && "raw".equalsIgnoreCase(body.optString("mode"))
+                && postmanRawBodyLooksJson(body)
+                && lines.stream().noneMatch(line -> line.toLowerCase().startsWith("content-type:"))) {
+            lines.add("Content-Type: application/json");
+        }
+        if (lines.stream().noneMatch(line -> line.toLowerCase().startsWith("accept:"))) {
+            lines.add(0, "Accept: application/json");
+        }
+        return String.join(System.lineSeparator(), lines);
+    }
+
+    private boolean postmanRawBodyLooksJson(JSONObject body) {
+        JSONObject options = body.optJSONObject("options");
+        JSONObject rawOptions = options == null ? null : options.optJSONObject("raw");
+        String language = rawOptions == null ? "" : rawOptions.optString("language");
+        String raw = body.optString("raw").trim();
+        return "json".equalsIgnoreCase(language) || raw.startsWith("{") || raw.startsWith("[");
+    }
+
+    private String postmanBodyText(JSONObject body) {
+        if (body == null) {
+            return "";
+        }
+        String mode = body.optString("mode");
+        if ("raw".equalsIgnoreCase(mode)) {
+            return postmanVariableToVeyraAI(body.optString("raw"));
+        }
+        if ("urlencoded".equalsIgnoreCase(mode)) {
+            return postmanKeyValueBody(body.optJSONArray("urlencoded"), true);
+        }
+        if ("formdata".equalsIgnoreCase(mode)) {
+            return postmanKeyValueBody(body.optJSONArray("formdata"), false);
+        }
+        if ("graphql".equalsIgnoreCase(mode)) {
+            JSONObject graphql = body.optJSONObject("graphql");
+            return graphql == null ? "" : graphql.toString(2);
+        }
+        if ("file".equalsIgnoreCase(mode)) {
+            return postmanBinaryFilePath(body);
+        }
+        return "";
+    }
+
+    private List<ApiRequestBodyPart> postmanMultipartParts(JSONObject body) {
+        List<ApiRequestBodyPart> parts = new ArrayList<>();
+        if (body == null || !"formdata".equalsIgnoreCase(body.optString("mode"))) {
+            return parts;
+        }
+        JSONArray values = body.optJSONArray("formdata");
+        if (values == null) {
+            return parts;
+        }
+        for (int i = 0; i < values.length(); i++) {
+            JSONObject item = values.optJSONObject(i);
+            if (item == null || item.optBoolean("disabled", false)) {
+                continue;
+            }
+            String key = postmanVariableToVeyraAI(item.optString("key"));
+            String type = item.optString("type");
+            if ("file".equalsIgnoreCase(type)) {
+                Object src = item.opt("src");
+                if (src instanceof JSONArray array) {
+                    for (int j = 0; j < array.length(); j++) {
+                        String path = postmanVariableToVeyraAI(array.optString(j));
+                        if (!path.isBlank()) {
+                            parts.add(ApiRequestBodyPart.file(key, path, item.optString("contentType")));
+                        }
+                    }
+                } else {
+                    String path = src == null || src == JSONObject.NULL ? "" : postmanVariableToVeyraAI(String.valueOf(src));
+                    if (!path.isBlank()) {
+                        parts.add(ApiRequestBodyPart.file(key, path, item.optString("contentType")));
+                    }
+                }
+            } else {
+                parts.add(ApiRequestBodyPart.text(key, postmanVariableToVeyraAI(item.optString("value"))));
+            }
+        }
+        return parts;
+    }
+
+    private String postmanBinaryFilePath(JSONObject body) {
+        if (body == null || !"file".equalsIgnoreCase(body.optString("mode"))) {
+            return "";
+        }
+        JSONObject file = body.optJSONObject("file");
+        return file == null ? "" : postmanVariableToVeyraAI(file.optString("src"));
+    }
+
+    private List<ApiRequestBodyPart> resolveRequestBodyParts(List<ApiRequestBodyPart> parts) {
+        List<ApiRequestBodyPart> resolved = new ArrayList<>();
+        if (parts == null) {
+            return resolved;
+        }
+        for (ApiRequestBodyPart part : parts) {
+            if (part == null) {
+                continue;
+            }
+            if (part.file) {
+                resolved.add(ApiRequestBodyPart.file(resolveVariables(part.name), resolveVariables(part.filePath),
+                        resolveVariables(part.contentType)));
+            } else {
+                resolved.add(ApiRequestBodyPart.text(resolveVariables(part.name), resolveVariables(part.value)));
+            }
+        }
+        return resolved;
+    }
+
+    private String postmanKeyValueBody(JSONArray values, boolean encode) {
+        if (values == null) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < values.length(); i++) {
+            JSONObject item = values.optJSONObject(i);
+            if (item == null || item.optBoolean("disabled", false)) {
+                continue;
+            }
+            String key = postmanVariableToVeyraAI(item.optString("key"));
+            String value = postmanVariableToVeyraAI(item.optString("value"));
+            if (!key.isBlank()) {
+                parts.add(encode ? urlEncode(key) + "=" + urlEncode(value) : key + "=" + value);
+            }
+        }
+        return String.join("&", parts);
+    }
+
+    private String postmanQueryString(JSONArray query) {
+        if (query == null) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < query.length(); i++) {
+            JSONObject item = query.optJSONObject(i);
+            if (item == null || item.optBoolean("disabled", false)) {
+                continue;
+            }
+            String key = postmanVariableToVeyraAI(item.optString("key"));
+            String value = postmanVariableToVeyraAI(item.optString("value"));
+            if (!key.isBlank()) {
+                parts.add(urlEncode(key) + "=" + urlEncode(value));
+            }
+        }
+        return String.join("&", parts);
+    }
+
+    private String postmanStringOrArray(Object value, String delimiter) {
+        if (value instanceof JSONArray array) {
+            List<String> parts = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                parts.add(array.optString(i));
+            }
+            return String.join(delimiter, parts);
+        }
+        return value == null || value == JSONObject.NULL ? "" : String.valueOf(value);
+    }
+
+    private String postmanVariableToVeyraAI(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replaceAll("\\{\\{\\s*([$A-Za-z0-9_.-]+)\\s*}}", "\\${$1}");
+    }
+
+    private void applyPostmanAuth(JSONObject request) {
+        JSONObject auth = request.optJSONObject("auth");
+        String type = postmanAuthType(auth);
+        if ("bearer".equalsIgnoreCase(type)) {
+            authTypeBox.setValue("Bearer Token");
+            tokenField.setText(postmanAuthValue(auth, "bearer", "token"));
+            updateAuthControls();
+            return;
+        }
+        authTypeBox.setValue("No Auth");
+        tokenField.clear();
+        updateAuthControls();
+        if ("basic".equalsIgnoreCase(type)) {
+            String username = postmanAuthValue(auth, "basic", "username");
+            String password = postmanAuthValue(auth, "basic", "password");
+            appendHeaderIfMissing("Authorization", "Basic " + Base64.getEncoder()
+                    .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8)));
+        } else if ("apikey".equalsIgnoreCase(type)) {
+            String key = postmanAuthValue(auth, "apikey", "key");
+            String value = postmanAuthValue(auth, "apikey", "value");
+            String in = postmanAuthValue(auth, "apikey", "in");
+            if ("header".equalsIgnoreCase(in) && !key.isBlank()) {
+                appendHeaderIfMissing(key, value);
+            } else if ("query".equalsIgnoreCase(in) && !key.isBlank()) {
+                endpointField.setText(appendQueryParameter(endpointField.getText(), key, value));
+            }
+        }
+    }
+
+    private String appendQueryParameter(String url, String key, String value) {
+        if (url == null || url.isBlank()) {
+            return url == null ? "" : url;
+        }
+        String separator = url.contains("?") ? "&" : "?";
+        return url + separator + urlEncode(key) + "=" + urlEncode(value == null ? "" : value);
+    }
+
+    private String postmanAuthType(JSONObject auth) {
+        return auth == null ? "No Auth" : firstNonBlank(auth.optString("type"), "No Auth");
+    }
+
+    private String postmanAuthValue(JSONObject auth, String arrayName, String keyName) {
+        Object rawValues = auth == null ? null : auth.opt(arrayName);
+        if (rawValues instanceof JSONObject object) {
+            return postmanVariableToVeyraAI(object.optString(keyName));
+        }
+        JSONArray values = rawValues instanceof JSONArray array ? array : null;
+        if (values == null) return "";
+        for (int i = 0; i < values.length(); i++) {
+            JSONObject item = values.optJSONObject(i);
+            if (item != null && keyName.equalsIgnoreCase(item.optString("key"))) {
+                return postmanVariableToVeyraAI(item.optString("value"));
+            }
+        }
+        return "";
+    }
+
+    private void appendHeaderIfMissing(String key, String value) {
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String current = headersArea.getText() == null ? "" : headersArea.getText();
+        boolean exists = parseHeaders(current).keySet().stream().anyMatch(existing -> existing.equalsIgnoreCase(key));
+        if (!exists) {
+            headersArea.appendText((current.isBlank() ? "" : System.lineSeparator()) + key + ": " + value);
+        }
+    }
+
+    private String urlEncode(String value) {
+        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private javafx.scene.Node createResponseVariableCapturePanel() {
@@ -434,6 +2589,8 @@ public class ApiValidatorFxApp extends Application {
                 "Variable Name", "variableName", "Type", "type", "Value", "value");
         responseFieldsTable.getSelectionModel().setCellSelectionEnabled(false);
 
+        Button toggleAll = secondary("Toggle All");
+        toggleAll.setOnAction(e -> toggleAllSelected(responseFieldRows, responseFieldsTable));
         Button selectAll = secondary("Select All");
         selectAll.setOnAction(e -> {
             responseFieldRows.forEach(row -> row.put("selected", "true"));
@@ -448,13 +2605,16 @@ public class ApiValidatorFxApp extends Application {
         selectTopLevel.setOnAction(e -> selectTopLevelResponseFields());
         Button save = primary("Save Selected Variables");
         save.setOnAction(e -> saveSelectedResponseVariables());
-        FlowPane tools = actionRow(selectAll, selectTopLevel, clear, save);
+        FlowPane tools = actionRow(toggleAll, selectAll, selectTopLevel, clear, save);
         tools.getStyleClass().add("capture-toolbar");
 
         BorderPane panel = new BorderPane(responseFieldsTable);
         panel.setTop(tools);
         BorderPane.setMargin(tools, new Insets(0, 0, 12, 0));
         panel.getStyleClass().add("capture-panel");
+        if (lastResponse != null && lastResponse.rawBody != null && !lastResponse.rawBody.isBlank()) {
+            parseResponseFields(lastResponse.rawBody);
+        }
         return panel;
     }
 
@@ -463,7 +2623,7 @@ public class ApiValidatorFxApp extends Application {
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getTabs().add(tab("Field Validation", createFieldValidationPanel()));
         tabs.getTabs().add(tab("JSON Compare", createComparePanel()));
-        return padded(tabs);
+        return padded(card("Validation Card", tabs));
     }
 
     private javafx.scene.Node createFieldValidationPanel() {
@@ -478,12 +2638,22 @@ public class ApiValidatorFxApp extends Application {
                 "Null Validation", "nullValidation", "Type Validation", "typeValidation",
                 "Expected Value / Variable", "expected", "Result", "result",
                 "Actual Value", "actual", "Actual Type", "actualType", "Message", "message");
+        configureFieldValidationTableEditors();
 
         Button reset = secondary("Reset Defaults");
         reset.setOnAction(e -> resetFieldValidationDefaults());
+        Button toggleAll = secondary("Toggle All");
+        toggleAll.setOnAction(e -> toggleAllSelected(fieldValidationRows, fieldValidationsTable));
         Button validate = primary("Validate Fields");
         validate.setOnAction(e -> runFieldValidations());
-        FlowPane tools = actionRow(reset, validate);
+        Button fieldHtmlReport = secondary("Open Report");
+        fieldHtmlReport.setOnAction(e -> createAndOpenStandaloneHtmlReport(
+                "API_VALIDATION", "API Validation", "Field Validation", localApiValidationReportsDirectory(),
+                fieldValidationRows, "field", "expected", "actual", "nullValidation", "typeValidation", "result", "message"));
+        apiAiValidationConnectionLabel = new Label();
+        apiAiValidationConnectionLabel.getStyleClass().add("muted");
+        updateApiAiConnectionLabels();
+        FlowPane tools = actionRow(toggleAll, reset, validate, fieldHtmlReport, apiAiValidationConnectionLabel);
 
         VBox top = new VBox(16,
                 createTestRunnerContextPanel(fieldValidationTestSuiteField, fieldValidationTestCaseField,
@@ -494,7 +2664,118 @@ public class ApiValidatorFxApp extends Application {
         BorderPane panel = new BorderPane(fieldValidationsTable);
         panel.setTop(top);
         BorderPane.setMargin(top, new Insets(0, 0, 16, 0));
+        if (lastResponse != null && lastResponse.rawBody != null && !lastResponse.rawBody.isBlank()) {
+            parseResponseFields(lastResponse.rawBody);
+        }
         return panel;
+    }
+
+    private void configureFieldValidationTableEditors() {
+        configureComboColumn(fieldValidationsTable, "nullValidation", () -> List.of("Not Null", "Null", "Skip"));
+        configureComboColumn(fieldValidationsTable, "typeValidation", this::jsonTypeValidationOptions);
+        configureEditableComboColumn(fieldValidationsTable, "expected", this::savedVariableReferences);
+    }
+
+    private List<String> jsonTypeValidationOptions() {
+        return List.of("Skip", "string", "number", "integer", "boolean", "object", "array", "null");
+    }
+
+    private List<String> savedVariableReferences() {
+        return savedVariables.keySet().stream().sorted().map(name -> "${" + name + "}").toList();
+    }
+
+    private void configureComboColumn(TableView<Map<String, String>> table, String key, Supplier<List<String>> values) {
+        TableColumn<Map<String, String>, String> column = findStringColumn(table, key);
+        if (column == null) {
+            return;
+        }
+        column.setEditable(true);
+        column.setCellFactory(ComboBoxTableCell.forTableColumn(FXCollections.observableArrayList(values.get())));
+        column.setOnEditCommit(event -> event.getRowValue().put(key, nullToBlank(event.getNewValue())));
+    }
+
+    private void configureEditableComboColumn(TableView<Map<String, String>> table, String key,
+                                              Supplier<List<String>> values) {
+        TableColumn<Map<String, String>, String> column = findStringColumn(table, key);
+        if (column == null) {
+            return;
+        }
+        column.setEditable(true);
+        column.setCellFactory(col -> new TableCell<>() {
+            private final ComboBox<String> combo = new ComboBox<>();
+
+            {
+                combo.setEditable(true);
+                combo.setMaxWidth(Double.MAX_VALUE);
+                combo.setOnAction(e -> commitComboValue());
+                combo.getEditor().setOnAction(e -> commitComboValue());
+                combo.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+                    if (!isFocused && isEditing()) {
+                        commitComboValue();
+                    }
+                });
+            }
+
+            @Override
+            public void startEdit() {
+                super.startEdit();
+                combo.setItems(FXCollections.observableArrayList(values.get()));
+                String value = nullToBlank(getItem());
+                combo.setValue(value);
+                combo.getEditor().setText(value);
+                setText(null);
+                setGraphic(combo);
+                Platform.runLater(() -> {
+                    combo.requestFocus();
+                    combo.getEditor().selectAll();
+                });
+            }
+
+            @Override
+            public void cancelEdit() {
+                super.cancelEdit();
+                setText(nullToBlank(getItem()));
+                setGraphic(null);
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) {
+                    setText(null);
+                    setGraphic(null);
+                } else if (isEditing()) {
+                    combo.getEditor().setText(nullToBlank(item));
+                    setText(null);
+                    setGraphic(combo);
+                } else {
+                    setText(nullToBlank(item));
+                    setGraphic(null);
+                }
+            }
+
+            private void commitComboValue() {
+                String value = combo.getEditor().getText();
+                if (value == null) {
+                    value = combo.getValue();
+                }
+                commitEdit(nullToBlank(value));
+            }
+        });
+        column.setOnEditCommit(event -> event.getRowValue().put(key, nullToBlank(event.getNewValue())));
+    }
+
+    @SuppressWarnings("unchecked")
+    private TableColumn<Map<String, String>, String> findStringColumn(TableView<Map<String, String>> table, String key) {
+        if (table == null) {
+            return null;
+        }
+        for (TableColumn<Map<String, String>, ?> column : table.getColumns()) {
+            if (key.equals(column.getId())) {
+                return (TableColumn<Map<String, String>, String>) column;
+            }
+        }
+        return null;
     }
 
     private javafx.scene.Node createComparePanel() {
@@ -504,6 +2785,9 @@ public class ApiValidatorFxApp extends Application {
         applySharedTestSuiteContext(jsonCompareTestSuiteField, jsonCompareTestCaseField);
 
         expectedJsonPathField = new TextField();
+        expectedJsonPathField.setPrefColumnCount(90);
+        expectedJsonPathField.setPrefWidth(900);
+        expectedJsonPathField.setMinWidth(520);
         compareModeBox = combo("Strict", "Lenient");
         compareRows = FXCollections.observableArrayList();
         compareTable = mapTable(compareRows,
@@ -515,8 +2799,12 @@ public class ApiValidatorFxApp extends Application {
         compare.setOnAction(e -> runCompare(false));
         Button matched = secondary("Show Matched");
         matched.setOnAction(e -> runCompare(true));
-        FlowPane controls = actionRow(labeled("Expected JSON File", expectedJsonPathField), browse,
-                labeled("Compare Mode", compareModeBox), compare, matched);
+        Button compareHtmlReport = secondary("Open Report");
+        compareHtmlReport.setOnAction(e -> createAndOpenStandaloneHtmlReport(
+                "API_VALIDATION", "API Validation", "JSON Compare", localApiValidationReportsDirectory(),
+                compareRows, "path", "expected", "actual", "status", "message"));
+        FlowPane controls = actionRow(labeled("Expected JSON File", wrapTextFieldWithActions(expectedJsonPathField, browse)),
+                labeled("Compare Mode", compareModeBox), compare, matched, compareHtmlReport);
 
         VBox top = new VBox(16,
                 createTestRunnerContextPanel(jsonCompareTestSuiteField, jsonCompareTestCaseField,
@@ -549,7 +2837,7 @@ public class ApiValidatorFxApp extends Application {
         ComboBox<String> perfVariableBox = createVariableDropdown();
         Button insertPerfVariable = secondary("Insert Variable");
         insertPerfVariable.setOnAction(e -> insertVariable(perfBodyArea, perfVariableBox));
-        Button copyBody = secondary("Copy From API Tester");
+        Button copyBody = secondary("Copy From API Studio");
         copyBody.setOnAction(e -> perfBodyArea.setText(bodyArea == null ? "" : bodyArea.getText()));
         Button run = primary("Run Load Test");
         run.setOnAction(e -> runPerformanceTest());
@@ -579,7 +2867,7 @@ public class ApiValidatorFxApp extends Application {
         FlowPane perfBodyTools = spacedActionRow(perfVariableBox, insertPerfVariable, copyBody);
         perfBodyArea.setPrefRowCount(12);
         perfBodyArea.setMinHeight(240);
-        VBox panel = new VBox(14, sectionTitle("Performance Test"), runnerContext,
+        VBox panel = new VBox(14, sectionTitle("Load Studio"), runnerContext,
                 card("Request Body Override", withFooter(perfBodyArea, perfBodyTools)), metrics, center);
         VBox.setVgrow(center, Priority.ALWAYS);
         return padded(panel);
@@ -617,37 +2905,64 @@ public class ApiValidatorFxApp extends Application {
         Button insertDbVariable = secondary("Insert Variable");
         insertDbVariable.setOnAction(e -> insertVariable(dbQueryArea, dbVariableDropdown));
         Button saveQuery = secondary("Save Query");
-        saveQuery.setOnAction(e -> saveTextFile(dbQueryArea.getText(), "dbquery.sql"));
+        saveQuery.setOnAction(e -> saveTextFile(dbQueryArea.getText(), "dbquery.sql", configuredFolder("DB", "SQLQuery")));
         Button loadQuery = secondary("Load Query");
-        loadQuery.setOnAction(e -> loadTextFile(dbQueryArea));
+        loadQuery.setOnAction(e -> loadTextFile(dbQueryArea, configuredFolder("DB", "SQLQuery")));
         Button useApiVariables = secondary("Use API Response Variables");
         useApiVariables.setOnAction(e -> populateDefaultDbRules());
         Button runQuery = primary("Run Query");
         runQuery.setOnAction(e -> runDbQuery());
+        dbAiAnalysisModeBox = combo("DB Validation + API-DB Mapping", "DB Validation", "API-DB Mapping");
+        dbAiAnalysisModeBox.setValue("DB Validation + API-DB Mapping");
+        dbAiAnalysisModeBox.setPrefWidth(260);
+        Button dbAiAnalysis = secondary("AI Analysis");
+        dbAiAnalysis.setOnAction(e -> runDbAiAnalysisForResultSet());
         Button saveSelectedCell = secondary("Save Selected Cell as Variable");
         saveSelectedCell.setOnAction(e -> saveSelectedDbResultCellAsVariable());
 
-        GridPane dbForm = grid();
-        dbForm.add(labeled("DB Type", dbTypeBox), 0, 0);
-        dbForm.add(labeled("JDBC URL", jdbcUrlField), 1, 0);
-        dbForm.add(labeled("Username", dbUsernameField), 2, 0);
-        dbForm.add(labeled("Password", wrapDbPasswordField(showPassword)), 3, 0);
-        dbForm.add(labeled("Driver Class", driverClassField), 0, 1);
-        dbForm.add(actionRow(defaults, testConnection, saveConnection, loadConnection, dbConnectionStatusLabel), 1, 1, 3, 1);
-        GridPane.setHgrow(jdbcUrlField, Priority.ALWAYS);
+        dbTypeBox.setMinWidth(180);
+        dbTypeBox.setPrefWidth(220);
+        jdbcUrlField.setMinWidth(320);
+        jdbcUrlField.setPrefWidth(560);
+        dbUsernameField.setMinWidth(210);
+        dbUsernameField.setPrefWidth(260);
+        dbPasswordField.setMinWidth(230);
+        visibleDbPasswordField.setMinWidth(230);
+        driverClassField.setMinWidth(320);
+        driverClassField.setPrefWidth(430);
+        showPassword.setMinWidth(92);
+        dbConnectionStatusLabel.setMinWidth(180);
+
+        FlowPane connectionActions = spacedActionRow(defaults, testConnection, saveConnection, loadConnection);
+        connectionActions.setHgap(20);
+        connectionActions.setVgap(14);
+        connectionActions.setPrefWrapLength(560);
+        VBox dbForm = new VBox(18,
+                labeled("DB Type", dbTypeBox),
+                labeled("JDBC URL", jdbcUrlField),
+                labeled("Username", dbUsernameField),
+                labeled("Password", wrapDbPasswordField(showPassword)),
+                labeled("Driver Class", driverClassField),
+                labeled("Status", dbConnectionStatusLabel),
+                connectionActions);
+        dbForm.setMinWidth(0);
+        dbForm.setFillWidth(true);
 
         dbQueryResultRows = FXCollections.observableArrayList();
         dbQueryResultsTable = mapTable(dbQueryResultRows, "Row", "row");
         dbQueryResultsTable.getSelectionModel().setCellSelectionEnabled(true);
         dbRuleRows = FXCollections.observableArrayList();
         dbRulesTable = mapTable(dbRuleRows,
-                "Validate", "selected", "API Field", "apiField", "DB Column", "dbColumn", "Operator", "operator", "Description", "description");
+                "Validate", "selected", "API Field", "apiField", "DB Table", "dbTable",
+                "DB Column", "dbColumn", "Transformation", "transformation",
+                "Operator", "operator", "Confidence", "confidence", "Description", "description");
         dbResultRows = FXCollections.observableArrayList();
         dbResultsTable = mapTable(dbResultRows,
                 "Result", "result", "Field", "field", "Expected", "expected", "Actual", "actual", "Operator", "operator", "Message", "message");
         dbColumnValidationRows = FXCollections.observableArrayList();
         dbColumnValidationsTable = mapTable(dbColumnValidationRows,
                 "Validate", "selected", "DB Column Name", "dbColumnName", "Value", "value",
+                "AI Rule", "rule",
                 "Null Validation", "nullValidation", "Type Validation", "typeValidation",
                 "Expected Value / Variable", "expectedValueOrVariable", "Result", "result");
         dbSummaryLabel = metric("--");
@@ -668,10 +2983,24 @@ public class ApiValidatorFxApp extends Application {
         loadRules.setOnAction(e -> loadDbRules());
         Button validate = primary("Run DB Validation");
         validate.setOnAction(e -> runDbValidation());
+        Button dbHtmlReport = secondary("Open Report");
+        dbHtmlReport.setOnAction(e -> createAndOpenDbStudioHtmlReport());
 
-        FlowPane queryActions = spacedActionRow(dbVariableDropdown, insertDbVariable, saveQuery, loadQuery, useApiVariables, runQuery);
-        SplitPane top = new SplitPane(card("Connection", dbForm), card("Query", withFooter(dbQueryArea, queryActions)));
-        top.setDividerPositions(0.54);
+        FlowPane queryActions = spacedActionRow(dbVariableDropdown, insertDbVariable, saveQuery, loadQuery,
+                useApiVariables, runQuery, labeled("AI Analysis Mode", dbAiAnalysisModeBox), dbAiAnalysis);
+        queryActions.setPrefWrapLength(620);
+        dbQueryArea.setMinHeight(260);
+        dbQueryArea.setPrefRowCount(12);
+        VBox queryBox = new VBox(16, dbQueryArea, queryActions);
+        queryBox.setMinWidth(0);
+        queryBox.setFillWidth(true);
+        VBox.setVgrow(dbQueryArea, Priority.ALWAYS);
+        VBox connectionCard = card("Connection", verticalSectionScroll(dbForm, 360));
+        VBox queryCard = card("Query", verticalSectionScroll(queryBox, 360));
+        connectionCard.setPrefWidth(760);
+        queryCard.setPrefWidth(640);
+        SplitPane top = new SplitPane(connectionCard, queryCard);
+        top.setDividerPositions(0.56);
         TabPane validationTabs = new TabPane();
         validationTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         validationTabs.getTabs().add(tab("API-DB Validation", withFooter(dbRulesTable,
@@ -691,9 +3020,9 @@ public class ApiValidatorFxApp extends Application {
                 top,
                 card("Query Resultset", withFooter(dbQueryResultsTable, spacedActionRow(saveSelectedCell))),
                 card("Validation Rules", rulesBox),
-                card("Validation Results", withFooter(dbResultsTable, dbSummaryLabel)));
+                card("Validation Results", withFooter(dbResultsTable, spacedActionRow(dbSummaryLabel, dbHtmlReport))));
         panel.getStyleClass().add("db-workflow");
-        top.setMinHeight(330);
+        top.setMinHeight(460);
         dbQueryResultsTable.setMinHeight(260);
         validationTabs.setMinHeight(360);
         dbResultsTable.setMinHeight(300);
@@ -701,16 +3030,30 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private javafx.scene.Node createWebTestingPanel() {
+        webStudioTabs = new TabPane();
+        webStudioTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        webStudioTabs.getTabs().add(tab("Web Testing", createWebTestingRecorderPanel()));
+        VBox shell = new VBox(webStudioTabs);
+        VBox.setVgrow(webStudioTabs, Priority.ALWAYS);
+        webStudioTabs.setMinHeight(1040);
+        shell.setMinHeight(1040);
+        return paddedVertical(card("UI Studio", shell));
+    }
+
+    private javafx.scene.Node createWebTestingRecorderPanel() {
         webTestNameField = new TextField("Web Test");
         webStartUrlField = new TextField();
         webCdpEndpointField = new TextField("http://127.0.0.1:9222");
         webHeadlessCheck = new CheckBox("Headless");
         webHeadlessCheck.setSelected(true);
         webSlowMoCheck = new CheckBox("Slow Mo");
+        for (CheckBox option : new CheckBox[]{webHeadlessCheck, webSlowMoCheck}) {
+            option.getStyleClass().add("web-option-check");
+            option.setMinWidth(110);
+        }
         webRecorderStatusLabel = new Label("Recorder idle");
         webBrowserUrlLabel = new Label("Browser URL: --");
         webRunSummaryLabel = metric("--");
-        webTipsArea = editor("Recorded steps and execution notes appear here.");
         webTestingTestSuiteField = new TextField();
         webTestingTestCaseField = new TextField();
         webTestingTestStepField = new TextField();
@@ -718,10 +3061,11 @@ public class ApiValidatorFxApp extends Application {
 
         webStepRows = FXCollections.observableArrayList();
         webStepsTable = mapTable(webStepRows,
-                "Step", "step", "Action", "action", "Selector", "selector", "Value", "value", "Note", "note");
+                "Step", "step", "Step Name", "stepName", "Action", "action", "Selector / Variable Name", "selector", "Value", "value", "Note", "note");
         webResultRows = FXCollections.observableArrayList();
         webResultsTable = mapTable(webResultRows,
-                "Result", "result", "Action", "action", "Selector", "selector", "Expected", "expected", "Message", "message", "Duration", "duration");
+                "Result", "result", "Step Name", "stepName", "Action", "action", "Selector", "selector", "Expected", "expected", "Message", "message", "Duration", "duration");
+        startWebFlowExecutionPolling();
 
         Button record = primary("Record");
         record.setOnAction(e -> startWebRecording());
@@ -755,18 +3099,32 @@ public class ApiValidatorFxApp extends Application {
         load.setOnAction(e -> loadWebRecording());
         Button run = primary("Run Web Test");
         run.setOnAction(e -> runWebTest());
+        Button webAiAnalysis = secondary("AI Analysis");
+        webAiAnalysis.setOnAction(e -> runWebAiAnalysisForFailures());
         Button stopRun = secondary("Stop Run");
         stopRun.setOnAction(e -> playwrightRecorderController.stopRunningWebTest());
+        Button webHtmlReport = secondary("Open Report");
+        webHtmlReport.setOnAction(e -> createAndOpenStandaloneHtmlReport(
+                "WEB_TESTING", "UI Studio", "Web Test", localWebTestingReportsDirectory(), webResultRows,
+                "stepName", "action", "selector", "expected", "actualValue", "duration", "result", "message"));
+        Button launchWorkflowBuilder = primary("Launch Workflow Builder");
+        launchWorkflowBuilder.setOnAction(e -> launchWebFlowStudioService());
+        Button pushToWorkflowBuilder = secondary("Push Steps to Builder");
+        pushToWorkflowBuilder.setOnAction(e -> pushRecordedStepsToWebFlowStudio());
 
         GridPane form = grid();
         form.add(labeled("Test Name", webTestNameField), 0, 0);
         form.add(labeled("Start URL", webStartUrlField), 1, 0);
         form.add(labeled("Active Browser CDP", webCdpEndpointField), 2, 0);
         GridPane.setHgrow(webStartUrlField, Priority.ALWAYS);
-        FlowPane recorderTools = spacedActionRow(record, attach, launchDebug, stop, stopNoClose, clearSteps, save, load, screenshot, webRecorderStatusLabel);
+        FlowPane recorderTools = spacedActionRow(record, attach, launchDebug, stop, stopNoClose, clearSteps, save,
+                load, screenshot, webRecorderStatusLabel);
         VBox header = new VBox(10, form, recorderTools, webBrowserUrlLabel);
+        FlowPane workflowBuilderTools = spacedActionRow(launchWorkflowBuilder, pushToWorkflowBuilder,
+                new Label("Embedded Workflow Builder receives pushed recorded steps automatically."));
 
-        FlowPane runControls = spacedActionRow(run, stopRun, webHeadlessCheck, webSlowMoCheck, labeled("Summary", webRunSummaryLabel));
+        FlowPane runControls = spacedActionRow(run, webAiAnalysis, stopRun, webHtmlReport,
+                webHeadlessCheck, webSlowMoCheck, labeled("Summary", webRunSummaryLabel));
         runControls.setPrefWrapLength(1000);
         VBox runnerContext = new VBox(12,
                 createTestRunnerContextPanel(webTestingTestSuiteField, webTestingTestCaseField,
@@ -774,23 +3132,1625 @@ public class ApiValidatorFxApp extends Application {
                 runControls);
         runnerContext.getStyleClass().add("validation-toolbar");
         FlowPane stepTools = spacedActionRow(add, edit, delete, moveUp, moveDown, merge);
-        HBox capturedSection = new HBox(14,
-                card("Captured Steps", withFooter(webStepsTable, stepTools)),
-                card("Recorder Notes", webTipsArea));
-        capturedSection.setMinWidth(0);
-        HBox.setHgrow(capturedSection.getChildren().get(0), Priority.ALWAYS);
-        HBox.setHgrow(capturedSection.getChildren().get(1), Priority.SOMETIMES);
+        VBox capturedSection = card("Captured Steps", withFooter(webStepsTable, stepTools));
         webStepsTable.setMinHeight(260);
-        webTipsArea.setMinHeight(260);
-        webTipsArea.setPrefWidth(360);
-        webTipsArea.setWrapText(true);
 
         VBox resultsSection = card("Step Results", webResultsTable);
         webResultsTable.setMinHeight(300);
 
-        VBox panel = new VBox(14, header, capturedSection, runnerContext, resultsSection);
+        VBox panel = new VBox(16, card("UI Workflow Card", header), card("Workflow Builder Service", workflowBuilderTools),
+                capturedSection, runnerContext, resultsSection);
         VBox.setVgrow(resultsSection, Priority.ALWAYS);
+        return panel;
+    }
+
+    private javafx.scene.Node createWorkflowBuilderPanel() {
+        workflowNameField = new TextField("Visual Web Workflow");
+        workflowStatusLabel = new Label("Canvas ready");
+        workflowJsonArea = editor("");
+        workflowJsonArea.setEditable(false);
+        workflowJsonArea.setWrapText(false);
+        workflowJsonArea.setMinHeight(170);
+
+        workflowDslTable = mapTable(workflowNodeRows,
+                "Step", "step", "Block", "blockType", "Action", "action", "Selector / Variable", "selector",
+                "Value", "value", "Note", "note");
+        workflowDslTable.setMinHeight(180);
+        workflowDslTable.getSelectionModel().selectedIndexProperty().addListener((observable, oldValue, newValue) -> {
+            int index = newValue == null ? -1 : newValue.intValue();
+            if (index >= 0 && index < workflowNodeRows.size()) {
+                selectWorkflowNode(index);
+            }
+        });
+
+        workflowCanvas = new Pane();
+        workflowCanvas.getStyleClass().add("builder-canvas");
+        workflowCanvas.setMinSize(1800, 1200);
+        workflowCanvas.setPrefSize(1800, 1200);
+        workflowCanvas.setOnDragOver(event -> {
+            if (event.getDragboard().hasString()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        workflowCanvas.setOnDragDropped(event -> {
+            Dragboard dragboard = event.getDragboard();
+            if (dragboard.hasString()) {
+                addWorkflowNodeFromPalette(dragboard.getString(), event.getX(), event.getY());
+                event.setDropCompleted(true);
+            }
+            event.consume();
+        });
+
+        if (workflowNodeRows.isEmpty()) {
+            seedWorkflowCanvas();
+        } else {
+            renderWorkflowCanvas();
+        }
+
+        ScrollPane canvasScroll = new ScrollPane(workflowCanvas);
+        canvasScroll.setPannable(true);
+        canvasScroll.setFitToWidth(false);
+        canvasScroll.setFitToHeight(false);
+        canvasScroll.setMinHeight(520);
+        canvasScroll.getStyleClass().add("workspace-scroll");
+
+        Button importRecording = primary("Import Recorded Steps");
+        importRecording.setOnAction(e -> importWebStepsToWorkflowBuilder());
+        Button autoLayout = secondary("Auto Layout");
+        autoLayout.setOnAction(e -> autoLayoutWorkflow());
+        Button addCondition = secondary("Add IF Block");
+        addCondition.setOnAction(e -> addWorkflowNodeFromPalette("Condition|IF|Custom expression", 420, 320));
+        Button addLoop = secondary("Add Loop");
+        addLoop.setOnAction(e -> addWorkflowNodeFromPalette("Iteration|For Each Item|collection", 420, 440));
+        Button clear = secondary("Clear Canvas");
+        clear.setOnAction(e -> clearWorkflowCanvas());
+        Button copyJson = secondary("Copy DSL JSON");
+        copyJson.setOnAction(e -> copyWorkflowDslJson());
+
+        VBox builderControls = card("Workflow Builder",
+                new VBox(12,
+                        new HBox(12, labeled("Workflow Name", workflowNameField), labeled("Status", workflowStatusLabel)),
+                        spacedActionRow(importRecording, autoLayout, addCondition, addLoop, clear, copyJson)));
+
+        VBox library = card("Block Library", createWorkflowBlockLibrary());
+        library.setMinWidth(320);
+        library.setPrefWidth(360);
+        VBox properties = card("Properties", createWorkflowPropertiesPanel());
+        properties.setMinWidth(330);
+        properties.setPrefWidth(380);
+        BorderPane canvasPane = new BorderPane(canvasScroll);
+        canvasPane.setMinWidth(0);
+        VBox canvasCard = card("Canvas", canvasPane);
+        VBox body = new VBox(canvasCard);
+        HBox.setHgrow(canvasCard, Priority.ALWAYS);
+        VBox.setVgrow(canvasScroll, Priority.ALWAYS);
+        VBox.setVgrow(canvasCard, Priority.ALWAYS);
+
+        TabPane bottomTabs = new TabPane();
+        bottomTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        bottomTabs.getTabs().add(tab("Workflow DSL", workflowDslTable));
+        bottomTabs.getTabs().add(tab("Generated JSON", workflowJsonArea));
+        bottomTabs.setMinHeight(230);
+
+        VBox panel = new VBox(14, body, bottomTabs);
+        VBox.setVgrow(body, Priority.ALWAYS);
+        ScrollPane pageScroll = new ScrollPane(panel);
+        pageScroll.setFitToWidth(true);
+        pageScroll.setPannable(true);
+        pageScroll.getStyleClass().add("workspace-scroll");
+        StackPane builderShell = new StackPane(pageScroll,
+                workflowSideSlider("Builder", "fth-sliders", builderControls, 620, true, "workflow-builder-slider"),
+                workflowSideSlider("Blocks", "fth-grid", library, 390, true, "workflow-library-slider"),
+                workflowSideSlider("Props", "fth-edit-3", properties, 420, false, "workflow-properties-slider"));
+        builderShell.getStyleClass().add("workflow-builder-shell");
+        builderShell.setOnMouseMoved(event -> {
+            if (event.getX() <= 18) {
+                revealWorkflowSideSlider(builderShell, true);
+            } else if (event.getX() >= Math.max(0, builderShell.getWidth() - 18)) {
+                revealWorkflowSideSlider(builderShell, false);
+            }
+        });
+        VBox.setVgrow(builderShell, Priority.ALWAYS);
+        return builderShell;
+    }
+
+    private javafx.scene.Node workflowSideSlider(String title, String iconLiteral, javafx.scene.Node content,
+                                                 double panelWidth, boolean leftSide, String styleClass) {
+        double leafletWidth = 50;
+        double hiddenOffset = leftSide ? -(panelWidth + leafletWidth - 8) : panelWidth + leafletWidth - 8;
+        double leafletOffset = leftSide ? -panelWidth : panelWidth;
+        Button leaflet = new Button(title);
+        leaflet.setGraphic(new FontIcon(iconLiteral));
+        leaflet.setContentDisplay(javafx.scene.control.ContentDisplay.TOP);
+        leaflet.getStyleClass().add("workflow-slider-leaflet");
+        leaflet.getStyleClass().add(leftSide ? "workflow-slider-leaflet-left" : "workflow-slider-leaflet-right");
+
+        StackPane panel = new StackPane(content);
+        panel.getStyleClass().add("workflow-side-slider-panel");
+        panel.getStyleClass().add(styleClass);
+        panel.setMinWidth(panelWidth);
+        panel.setPrefWidth(panelWidth);
+        panel.setMaxWidth(panelWidth);
+
+        HBox slider = leftSide ? new HBox(panel, leaflet) : new HBox(leaflet, panel);
+        slider.getStyleClass().add("workflow-side-slider");
+        slider.getProperties().put("leftSide", leftSide);
+        slider.getProperties().put("open", false);
+        slider.getProperties().put("leafletOffset", leafletOffset);
+        slider.getProperties().put("hiddenOffset", hiddenOffset);
+        slider.getProperties().put("group", leftSide ? "left" : "right");
+        slider.setTranslateX(hiddenOffset);
+        slider.setMaxWidth(panelWidth + leafletWidth);
+        slider.setPickOnBounds(false);
+        slider.setOnMouseEntered(event -> setWorkflowSideSliderPeek(slider));
+        slider.setOnMouseExited(event -> {
+            if (!Boolean.TRUE.equals(slider.getProperties().get("open"))) {
+                setWorkflowSideSliderOpen(slider, false);
+            }
+        });
+        leaflet.setOnAction(event -> setWorkflowSideSliderOpen(slider, !Boolean.TRUE.equals(slider.getProperties().get("open"))));
+        leaflet.setOnMouseEntered(event -> setWorkflowSideSliderPeek(slider));
+        StackPane.setAlignment(slider, leftSide ? Pos.CENTER_LEFT : Pos.CENTER_RIGHT);
+        StackPane.setMargin(slider, leftSide && title.equals("Builder") ? new Insets(0, 0, 240, 0) : Insets.EMPTY);
+        StackPane.setMargin(slider, leftSide && title.equals("Blocks") ? new Insets(240, 0, 0, 0) : StackPane.getMargin(slider));
+        return slider;
+    }
+
+    private void revealWorkflowSideSlider(StackPane shell, boolean leftSide) {
+        if (shell == null) {
+            return;
+        }
+        for (javafx.scene.Node child : shell.getChildren()) {
+            if (child.getStyleClass().contains("workflow-side-slider")
+                    && Objects.equals(child.getProperties().get("leftSide"), leftSide)) {
+                setWorkflowSideSliderPeek(child);
+            }
+        }
+    }
+
+    private void setWorkflowSideSliderOpen(javafx.scene.Node slider, boolean open) {
+        if (slider == null) {
+            return;
+        }
+        slider.getProperties().put("open", open);
+        Timeline existing = (Timeline) slider.getProperties().get("timeline");
+        if (existing != null) {
+            existing.stop();
+        }
+        double target = open ? 0 : sliderNumericProperty(slider, "hiddenOffset", 0);
+        Timeline timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(260),
+                new KeyValue(slider.translateXProperty(), target)));
+        slider.getProperties().put("timeline", timeline);
+        timeline.play();
+    }
+
+    private void setWorkflowSideSliderPeek(javafx.scene.Node slider) {
+        if (slider == null || Boolean.TRUE.equals(slider.getProperties().get("open"))) {
+            return;
+        }
+        Timeline existing = (Timeline) slider.getProperties().get("timeline");
+        if (existing != null) {
+            existing.stop();
+        }
+        Timeline timeline = new Timeline(new KeyFrame(javafx.util.Duration.millis(180),
+                new KeyValue(slider.translateXProperty(), sliderNumericProperty(slider, "leafletOffset", 0))));
+        slider.getProperties().put("timeline", timeline);
+        timeline.play();
+        Timeline idle = (Timeline) slider.getProperties().get("idleTimeline");
+        if (idle != null) {
+            idle.stop();
+        }
+        idle = new Timeline(new KeyFrame(javafx.util.Duration.seconds(3), event -> {
+            if (!Boolean.TRUE.equals(slider.getProperties().get("open"))) {
+                setWorkflowSideSliderOpen(slider, false);
+            }
+        }));
+        slider.getProperties().put("idleTimeline", idle);
+        idle.play();
+    }
+
+    private javafx.scene.Node createWorkflowBlockLibrary() {
+        VBox library = new VBox(12);
+        library.setMinWidth(0);
+        addWorkflowPaletteSection(library, "Browser Blocks",
+                "Browser|Open Page|url",
+                "Browser|Wait For Visible|selector",
+                "Browser|Wait For Network Idle|");
+        addWorkflowPaletteSection(library, "Action Blocks",
+                "Action|Click|selector",
+                "Action|Type|selector + value",
+                "Action|Select Option|selector + value");
+        addWorkflowPaletteSection(library, "Validation Blocks",
+                "Validation|Assert Element Visible|selector",
+                "Validation|Validate Text|selector + expected",
+                "Validation|Assert URL Contains|expected");
+        addWorkflowPaletteSection(library, "Logic Blocks",
+                "Variable|Create Variable|name + value",
+                "Condition|IF|expression",
+                "Iteration|For Each Item|collection",
+                "Collection|Capture Collection|selector",
+                "Method|Call Method|method name",
+                "Class|Page Object Action|page object",
+                "Error Handling|Try / Catch|");
+        ScrollPane scroll = new ScrollPane(library);
+        scroll.setFitToWidth(true);
+        scroll.setMinHeight(480);
+        scroll.getStyleClass().add("workspace-scroll");
+        return scroll;
+    }
+
+    private void addWorkflowPaletteSection(VBox library, String title, String... blockSpecs) {
+        Label section = sectionTitle(title);
+        FlowPane blocks = new FlowPane(8, 8);
+        blocks.setPrefWrapLength(230);
+        for (String blockSpec : blockSpecs) {
+            Button block = secondary(workflowBlockName(blockSpec));
+            block.setMinWidth(210);
+            block.setMaxWidth(Double.MAX_VALUE);
+            block.setOnDragDetected(event -> {
+                Dragboard dragboard = block.startDragAndDrop(TransferMode.COPY);
+                ClipboardContent content = new ClipboardContent();
+                content.putString(blockSpec);
+                dragboard.setContent(content);
+                event.consume();
+            });
+            block.setOnAction(e -> addWorkflowNodeFromPalette(blockSpec, nextWorkflowX(), nextWorkflowY()));
+            blocks.getChildren().add(block);
+        }
+        library.getChildren().addAll(section, blocks);
+    }
+
+    private javafx.scene.Node createWorkflowPropertiesPanel() {
+        workflowActionField = new TextField();
+        workflowSelectorField = new TextField();
+        workflowValueField = new TextField();
+        workflowNoteArea = editor("");
+        workflowNoteArea.setPrefRowCount(4);
+        workflowNoteArea.setMinHeight(100);
+        Button apply = primary("Apply Changes");
+        apply.setOnAction(e -> applyWorkflowNodeProperties());
+        Button delete = secondary("Delete Node");
+        delete.setOnAction(e -> deleteSelectedWorkflowNode());
+        Button connectNext = secondary("Connect To Next");
+        connectNext.setOnAction(e -> connectSelectedWorkflowNodeToNext());
+        VBox panel = new VBox(12,
+                labeled("Action / Block Name", workflowActionField),
+                labeled("Selector / Variable", workflowSelectorField),
+                labeled("Value / Expression", workflowValueField),
+                labeled("Note", workflowNoteArea),
+                spacedActionRow(apply, delete, connectNext));
+        return panel;
+    }
+
+    private void seedWorkflowCanvas() {
+        workflowNodeRows.clear();
+        workflowConnectionRows.clear();
+        workflowNodeRows.add(workflowNodeRow("Event", "Start", "", "", "Workflow entry", 120, 80));
+        workflowNodeRows.add(workflowNodeRow("Event", "End", "", "", "Workflow complete", 120, 260));
+        workflowConnectionRows.add(row("from", "0", "to", "1"));
+        renderWorkflowCanvas();
+    }
+
+    private void addWorkflowNodeFromPalette(String blockSpec, double x, double y) {
+        String[] parts = blockSpec.split("\\|", -1);
+        String blockType = valueAt(parts, 0);
+        String action = valueAt(parts, 1);
+        String hint = valueAt(parts, 2);
+        workflowNodeRows.add(workflowNodeRow(blockType, action, "", "", hint, x, y));
+        relinkWorkflowSequentially();
+        renderWorkflowCanvas();
+        selectWorkflowNode(workflowNodeRows.size() - 1);
+        updateWorkflowDslPreview();
+    }
+
+    private Map<String, String> workflowNodeRow(String blockType, String action, String selector, String value,
+                                                String note, double x, double y) {
+        String id = "wf-" + workflowNodeSequence++;
+        return row("id", id,
+                "step", String.valueOf(workflowNodeRows.size() + 1),
+                "blockType", blockType,
+                "action", action,
+                "selector", selector,
+                "value", value,
+                "note", note,
+                "x", String.valueOf(Math.max(30, x)),
+                "y", String.valueOf(Math.max(30, y)));
+    }
+
+    private void importWebStepsToWorkflowBuilder() {
+        if (webStepRows == null || webStepRows.isEmpty()) {
+            showWarning("Workflow Builder", "No recorded web steps are available to import.");
+            return;
+        }
+        workflowNodeRows.clear();
+        workflowConnectionRows.clear();
+        workflowNodeRows.add(workflowNodeRow("Event", "Start", "", "", "Imported recording", 120, 80));
+
+        int index = 0;
+        for (Map<String, String> webRow : webStepRows) {
+            workflowNodeRows.add(workflowNodeRow(
+                    workflowBlockTypeForAction(webRow.get("action")),
+                    firstNonBlank(webRow.get("action"), "Web Step"),
+                    webRow.getOrDefault("selector", ""),
+                    webRow.getOrDefault("value", ""),
+                    webRow.getOrDefault("note", ""),
+                    420 + (index % 2) * 360,
+                    120 + index * 150));
+            index++;
+        }
+        workflowNodeRows.add(workflowNodeRow("Event", "End", "", "", "Workflow complete", 860, 180 + index * 150));
+        relinkWorkflowSequentially();
+        selectedWorkflowNodeIndex = -1;
+        renderWorkflowCanvas();
+        workflowStatusLabel.setText("Imported " + webStepRows.size() + " recorded step(s)");
+        showInfo("Workflow Builder", "Imported " + webStepRows.size() + " recorded step(s) into the in-app Workflow Builder.");
+    }
+
+    private void launchWebFlowStudioService() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                ensureWebFlowStudioDesktopShell();
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> {
+            showInfo("Workflow Builder", "Opened VeyraAI Workflow Builder in VeyraAI Studio.");
+        });
+        task.setOnFailed(e -> showError("Workflow Builder Launch Failed", task.getException()));
+        start(task);
+    }
+
+    private void pushRecordedStepsToWebFlowStudio() {
+        if (webStepRows == null || webStepRows.isEmpty()) {
+            showWarning("Workflow Builder", "Load or record web steps before pushing to the embedded Workflow Builder.");
+            return;
+        }
+
+        Task<Integer> task = new Task<>() {
+            @Override
+            protected Integer call() throws Exception {
+                JSONArray steps = new JSONArray();
+                int index = 1;
+                for (Map<String, String> row : webStepRows) {
+                    steps.put(webRowToBuilderStep(row, index++));
+                }
+
+                JSONObject recordingJson = new JSONObject()
+                        .put("recordingId", "veyraai-platform-" + System.currentTimeMillis())
+                        .put("name", nullToBlank(webTestNameField == null ? "" : webTestNameField.getText()).isBlank()
+                                ? "VeyraAI Platform Recording" : webTestNameField.getText())
+                        .put("source", "veyraai-platform")
+                        .put("recordedAt", Instant.now().toString())
+                        .put("steps", steps);
+
+                JSONObject payload = new JSONObject()
+                        .put("name", recordingJson.optString("name"))
+                        .put("recordingJson", recordingJson);
+
+                URI pushUri = URI.create(WEB_FLOW_STUDIO_API_URL + "/api/workflow-builder/recorded-steps");
+                HttpRequest request = HttpRequest.newBuilder(pushUri)
+                        .timeout(Duration.ofSeconds(12))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
+                        .build();
+                HttpResponse<String> response = sendWorkflowBuilderPushRequest(request, pushUri);
+                if (response.statusCode() == 405) {
+                    writeWorkflowBuilderInboxPush(recordingJson, steps);
+                    return steps.length();
+                }
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IllegalStateException("Workflow Builder push failed at " + pushUri + ": HTTP "
+                            + response.statusCode() + " " + shorten(response.body(), 600));
+                }
+                return steps.length();
+            }
+        };
+        task.setOnSucceeded(e -> showToast("Recording pushed to embedded Workflow Builder", "toast-success"));
+        task.setOnFailed(e -> showError("Workflow Builder Push Failed", task.getException()));
+        start(task);
+    }
+
+    private void writeWorkflowBuilderInboxPush(JSONObject recordingJson, JSONArray normalizedSteps) throws IOException {
+        Path projectRoot = discoverWebFlowStudioProjectRoot();
+        Path builderInboxDir = projectRoot.resolve("backend").resolve("data").resolve("builder-inbox")
+                .toAbsolutePath()
+                .normalize();
+        Files.createDirectories(builderInboxDir);
+
+        JSONObject push = new JSONObject()
+                .put("id", "builder_push_" + UUID.randomUUID())
+                .put("name", recordingJson.optString("name", "Pushed Recording"))
+                .put("normalizedSteps", normalizedSteps)
+                .put("createdAt", Instant.now().toString());
+        Files.writeString(builderInboxDir.resolve("latest-recorded-steps.json"), push.toString(2), StandardCharsets.UTF_8);
+    }
+
+    private HttpResponse<String> sendWorkflowBuilderPushRequest(HttpRequest request, URI pushUri) throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+        Exception lastFailure = null;
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            try {
+                return client.send(request, HttpResponse.BodyHandlers.ofString());
+            } catch (IOException e) {
+                lastFailure = e;
+                if (attempt == 5) {
+                    break;
+                }
+                Thread.sleep(750);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+        }
+
+        throw new IllegalStateException("Workflow Builder push endpoint did not respond at " + pushUri
+                + ". Keep the embedded Workflow Builder window open and try Push Steps to Builder again.", lastFailure);
+    }
+
+    private void ensureWebFlowStudioDevProcesses() throws Exception {
+        Path projectRoot = discoverWebFlowStudioProjectRoot();
+        Path backendDir = projectRoot.resolve("backend");
+        Path frontendDir = projectRoot.resolve("frontend");
+        if (!Files.exists(backendDir.resolve("package.json")) || !Files.exists(frontendDir.resolve("package.json"))) {
+            throw new IOException("Could not find frontend/backend package.json files from " + projectRoot
+                    + ". Start VeyraAI from the api-validator project root or run the builder manually.");
+        }
+
+        if (!isWebFlowBackendReachable() && (webFlowBackendProcess == null || !webFlowBackendProcess.isAlive())) {
+            webFlowBackendProcess = startNpmProcess(backendDir, "dev", "backend");
+        }
+
+        if (!isUrlReachable(WEB_FLOW_STUDIO_URL)) {
+            webFlowFrontendProcess = startNpmProcess(frontendDir, "dev", "frontend", "--", "--host", "127.0.0.1", "--strictPort");
+        }
+
+        ensureWebFlowStudioDesktopShell();
+    }
+
+    private Process startNpmProcess(Path workingDirectory, String script, String logName, String... extraArgs) throws IOException {
+        Path logDirectory = Path.of(System.getProperty("java.io.tmpdir"), "veyraai", "web-flow-studio-logs")
+                .toAbsolutePath()
+                .normalize();
+        Files.createDirectories(logDirectory);
+        Path logPath = logDirectory.resolve(logName + "-" + System.currentTimeMillis() + ".log");
+        if ("backend".equals(logName)) {
+            webFlowBackendLogPath = logPath;
+        } else if ("frontend".equals(logName)) {
+            webFlowFrontendLogPath = logPath;
+        }
+
+        List<String> command = new ArrayList<>();
+        command.add(isWindows() ? "npm.cmd" : "npm");
+        command.add("run");
+        command.add(script);
+        command.addAll(List.of(extraArgs));
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(workingDirectory.toFile());
+        builder.redirectErrorStream(true);
+        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logPath.toFile()));
+        return builder.start();
+    }
+
+    private void ensureWebFlowStudioDesktopShell() throws IOException {
+        if (webFlowDesktopProcess != null && webFlowDesktopProcess.isAlive()) {
+            return;
+        }
+
+        Path projectRoot = discoverWebFlowStudioProjectRoot();
+        Path frontendIndex = projectRoot.resolve("frontend").resolve("dist").resolve("index.html");
+        if (shouldRebuildWebFlowStudioFrontend(frontendIndex)) {
+            runNpmCommand(projectRoot, "run", "build:frontend");
+        }
+        Path desktopMain = projectRoot.resolve("desktop").resolve("dist").resolve("main.js");
+        if (shouldRebuildWebFlowStudioDesktop(desktopMain)) {
+            runNpmCommand(projectRoot, "run", "build:desktop");
+        }
+
+        Path logDirectory = Path.of(System.getProperty("java.io.tmpdir"), "veyraai", "web-flow-studio-logs")
+                .toAbsolutePath()
+                .normalize();
+        Files.createDirectories(logDirectory);
+        webFlowDesktopLogPath = logDirectory.resolve("desktop-" + System.currentTimeMillis() + ".log");
+
+        List<String> command = new ArrayList<>();
+        command.add(resolveElectronExecutable(projectRoot).toString());
+        command.add(desktopMain.toString());
+
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(projectRoot.toFile());
+        builder.redirectErrorStream(true);
+        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(webFlowDesktopLogPath.toFile()));
+        builder.environment().put("VEYRAAI_STUDIO_URL", WEB_FLOW_STUDIO_API_URL + "/studio");
+        webFlowDesktopProcess = builder.start();
+    }
+
+    private Path resolveElectronExecutable(Path projectRoot) throws IOException {
+        Path electronModule = projectRoot.resolve("node_modules").resolve("electron");
+        Path pathFile = electronModule.resolve("path.txt");
+        if (Files.exists(pathFile)) {
+            String relativeExecutable = Files.readString(pathFile, StandardCharsets.UTF_8).trim();
+            if (!relativeExecutable.isBlank()) {
+                Path executable = electronModule.resolve("dist").resolve(relativeExecutable).toAbsolutePath().normalize();
+                if (Files.isRegularFile(executable)) {
+                    return executable;
+                }
+            }
+        }
+
+        Path fallback = electronModule.resolve("dist").resolve(isWindows() ? "electron.exe" : "electron")
+                .toAbsolutePath()
+                .normalize();
+        if (Files.isRegularFile(fallback)) {
+            return fallback;
+        }
+
+        throw new IOException("Could not find the Electron executable under " + electronModule
+                + ". Run npm install from the api-validator project root and try again.");
+    }
+
+    private boolean shouldRebuildWebFlowStudioDesktop(Path desktopMain) {
+        if (!Files.exists(desktopMain)) {
+            return true;
+        }
+
+        try {
+            Path sourceMain = desktopMain.getParent().getParent().resolve("main.ts");
+            Path sourcePreload = desktopMain.getParent().getParent().resolve("preload.ts");
+            Instant builtAt = Files.getLastModifiedTime(desktopMain).toInstant();
+            return (Files.exists(sourceMain) && Files.getLastModifiedTime(sourceMain).toInstant().isAfter(builtAt))
+                    || (Files.exists(sourcePreload) && Files.getLastModifiedTime(sourcePreload).toInstant().isAfter(builtAt));
+        } catch (IOException ignored) {
+            return true;
+        }
+    }
+
+    private boolean shouldRebuildWebFlowStudioFrontend(Path frontendIndex) {
+        if (!Files.exists(frontendIndex)) {
+            return true;
+        }
+
+        try {
+            String html = Files.readString(frontendIndex, StandardCharsets.UTF_8);
+            return html.contains("src=\"/assets/") || html.contains("href=\"/assets/");
+        } catch (IOException ignored) {
+            return true;
+        }
+    }
+
+    private void runNpmCommand(Path workingDirectory, String... args) throws IOException {
+        List<String> command = new ArrayList<>();
+        command.add(isWindows() ? "npm.cmd" : "npm");
+        command.addAll(List.of(args));
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(workingDirectory.toFile());
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        String output;
+        try (java.io.InputStream stream = process.getInputStream()) {
+            output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        try {
+            if (!process.waitFor(90, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("Command timed out: " + String.join(" ", command));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Command interrupted: " + String.join(" ", command), e);
+        }
+        if (process.exitValue() != 0) {
+            throw new IOException("Command failed: " + String.join(" ", command) + System.lineSeparator()
+                    + shorten(output, 1200));
+        }
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private void waitForUrl(String url, int timeoutSeconds, Process process, Path logPath) throws Exception {
+        Instant deadline = Instant.now().plusSeconds(timeoutSeconds);
+        while (Instant.now().isBefore(deadline)) {
+            if (isUrlReachable(url) || isFrontendReady(url, logPath)) {
+                return;
+            }
+            if (process != null && !process.isAlive()) {
+                throw new IllegalStateException("Workflow Builder service process exited before " + url
+                        + " responded. " + webFlowStudioLogHint(logPath));
+            }
+            Thread.sleep(500);
+        }
+        throw new IllegalStateException("Workflow Builder service did not respond at " + url + " within "
+                + timeoutSeconds + " seconds. " + webFlowStudioLogHint(logPath));
+    }
+
+    private void waitForWebFlowBackend(int timeoutSeconds) throws Exception {
+        Instant deadline = Instant.now().plusSeconds(timeoutSeconds);
+        while (Instant.now().isBefore(deadline)) {
+            if (isWebFlowBackendReachable() || isSpawnedWebFlowBackendReady()) {
+                return;
+            }
+            if (webFlowBackendProcess != null && !webFlowBackendProcess.isAlive()) {
+                if (logContainsAddressInUse(webFlowBackendLogPath) && isBackendPortReachable()) {
+                    webFlowBackendProcess = null;
+                    Thread.sleep(500);
+                    continue;
+                }
+                throw new IllegalStateException("Workflow Builder backend process exited before "
+                        + WEB_FLOW_STUDIO_API_URL + "/api/health responded with the VeyraAI backend health payload. "
+                        + webFlowStudioLogHint(webFlowBackendLogPath));
+            }
+            Thread.sleep(500);
+        }
+        throw new IllegalStateException("Workflow Builder backend did not respond at "
+                + WEB_FLOW_STUDIO_API_URL + "/api/health within " + timeoutSeconds
+                + " seconds. Another service may be using port 7878. " + webFlowStudioLogHint(webFlowBackendLogPath));
+    }
+
+    private boolean isWebFlowBackendReachable() {
+        return isVeyraAIBackendHealthUrl(WEB_FLOW_STUDIO_API_URL + "/api/health")
+                || isVeyraAIBackendHealthUrl("http://localhost:7878/api/health")
+                || isVeyraAILocalServiceHealthUrl(WEB_FLOW_STUDIO_API_URL + "/health")
+                || isVeyraAILocalServiceHealthUrl("http://localhost:7878/health")
+                || isVeyraAIBuilderPushEndpointUrl(WEB_FLOW_STUDIO_API_URL + "/api/workflow-builder/recorded-steps/latest")
+                || isVeyraAIBuilderPushEndpointUrl("http://localhost:7878/api/workflow-builder/recorded-steps/latest")
+                || isVeyraAIBackendRootUrl(WEB_FLOW_STUDIO_API_URL)
+                || isVeyraAIBackendRootUrl("http://localhost:7878");
+    }
+
+    private boolean isVeyraAIBackendHealthUrl(String url) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() >= 200
+                    && response.statusCode() < 300
+                    && response.body() != null
+                    && response.body().contains("veyraai-web-flow-studio-backend");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isVeyraAIBackendRootUrl(String url) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() >= 200
+                    && response.statusCode() < 300
+                    && response.body() != null
+                    && response.body().contains("veyraai-web-flow-studio-backend");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isVeyraAILocalServiceHealthUrl(String url) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() >= 200
+                    && response.statusCode() < 300
+                    && response.body() != null
+                    && response.body().contains("veyraai-local-service");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isVeyraAIBuilderPushEndpointUrl(String url) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() >= 200
+                    && response.statusCode() < 300
+                    && response.body() != null
+                    && response.body().contains("\"success\":true");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isSpawnedWebFlowBackendReady() {
+        return webFlowBackendProcess != null && webFlowBackendProcess.isAlive() && logContainsBackendReady(webFlowBackendLogPath);
+    }
+
+    private boolean logContainsBackendReady(Path logPath) {
+        if (logPath == null || !Files.exists(logPath)) {
+            return false;
+        }
+
+        try {
+            String logText = Files.readString(logPath, StandardCharsets.UTF_8);
+            return logText.contains("Backend scaffold listening on http://localhost:7878");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean logContainsAddressInUse(Path logPath) {
+        if (logPath == null || !Files.exists(logPath)) {
+            return false;
+        }
+
+        try {
+            String logText = Files.readString(logPath, StandardCharsets.UTF_8);
+            return logText.contains("EADDRINUSE") && logText.contains("7878");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean isBackendPortReachable() {
+        return isTcpPortReachable(WEB_FLOW_STUDIO_API_URL) || isTcpPortReachable("http://localhost:7878");
+    }
+
+    private boolean isFrontendReady(String url, Path logPath) {
+        if (!WEB_FLOW_STUDIO_URL.equals(url)) {
+            return false;
+        }
+
+        return isTcpPortReachable(url) || logContainsViteReady(logPath);
+    }
+
+    private boolean isTcpPortReachable(String url) {
+        try {
+            URI uri = URI.create(url);
+            int port = uri.getPort();
+            if (port <= 0) {
+                return false;
+            }
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(uri.getHost(), port), 1500);
+                return true;
+            }
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean logContainsViteReady(Path logPath) {
+        if (logPath == null || !Files.exists(logPath)) {
+            return false;
+        }
+
+        try {
+            String logText = Files.readString(logPath, StandardCharsets.UTF_8);
+            return logText.contains("Local:") && logText.contains("127.0.0.1:5173");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private Path discoverWebFlowStudioProjectRoot() throws IOException {
+        List<Path> candidates = new ArrayList<>();
+        candidates.add(Path.of("").toAbsolutePath().normalize());
+        try {
+            Path codeSource = Path.of(ApiValidatorFxApp.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                    .toAbsolutePath()
+                    .normalize();
+            candidates.add(Files.isDirectory(codeSource) ? codeSource : codeSource.getParent());
+        } catch (Exception ignored) {
+            // Current working directory candidates are still checked below.
+        }
+
+        for (Path candidate : candidates) {
+            Path current = candidate;
+            while (current != null) {
+                if (Files.exists(current.resolve("package.json"))
+                        && Files.exists(current.resolve("frontend").resolve("package.json"))
+                        && Files.exists(current.resolve("backend").resolve("package.json"))) {
+                    return current;
+                }
+                current = current.getParent();
+            }
+        }
+
+        throw new IOException("Could not locate the api-validator project root. Run VeyraAI from the project folder or start npm services manually.");
+    }
+
+    private String webFlowStudioLogHint(Path logPath) {
+        if (logPath == null) {
+            return "No startup log was captured.";
+        }
+
+        String tail = "";
+        try {
+            if (Files.exists(logPath)) {
+                String text = Files.readString(logPath, StandardCharsets.UTF_8);
+                tail = shorten(text, 1400);
+            }
+        } catch (Exception ignored) {
+            // The log path itself is still useful.
+        }
+
+        return "Startup log: " + logPath + (tail.isBlank() ? "" : System.lineSeparator() + tail);
+    }
+
+    private JSONObject webRowToBuilderStep(Map<String, String> row, int index) {
+        String action = row.getOrDefault("action", "");
+        String selector = row.getOrDefault("selector", "");
+        String value = row.getOrDefault("value", "");
+        String note = row.getOrDefault("note", "");
+        String normalized = action.toLowerCase();
+        String id = "veyraai_step_" + index;
+        String label = firstNonBlank(row.getOrDefault("stepName", ""),
+                autoWebStepName(action, selector, value, note, row.getOrDefault("flowVariableName", "")),
+                action.isBlank() ? "Recorded Step " + index : action);
+
+        if (normalized.contains("open") || normalized.contains("navigate") || normalized.contains("page")) {
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "openPage")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("url", firstNonBlank(value, selector, webStartUrlField == null ? "" : webStartUrlField.getText(), "${baseUrl}"));
+        }
+
+        if (normalized.contains("type") || normalized.contains("input") || normalized.contains("enter")) {
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "enterText")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("target", cssTarget(selector))
+                    .put("value", value);
+        }
+
+        if (normalized.contains("flow variable")) {
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "storeStaticValue")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("variableName", firstNonBlank(row.getOrDefault("flowVariableName", ""), selector, note, "variable" + index))
+                    .put("value", value);
+        }
+
+        if (normalized.contains("get text")) {
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "captureText")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("target", cssTarget(selector))
+                    .put("variableName", firstNonBlank(row.getOrDefault("flowVariableName", ""), note, "capturedText" + index))
+                    .put("trim", true);
+        }
+
+        if (normalized.contains("wait")) {
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "waitUntilElementVisible")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("target", cssTarget(selector))
+                    .put("timeout", 10000);
+        }
+
+        if (normalized.contains("assert") || normalized.contains("verify") || normalized.contains("validate")) {
+            if (!value.isBlank() && selector.isBlank()) {
+                return new JSONObject()
+                        .put("id", id)
+                        .put("type", "verifyTextExists")
+                        .put("label", label)
+                        .put("description", firstNonBlank(action, note))
+                        .put("text", value)
+                        .put("caseSensitive", false);
+            }
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "verifyElementVisible")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("target", cssTarget(selector))
+                    .put("timeout", 10000);
+        }
+
+        if (normalized.contains("click") || !selector.isBlank()) {
+            return new JSONObject()
+                    .put("id", id)
+                    .put("type", "click")
+                    .put("label", label)
+                    .put("description", firstNonBlank(action, note))
+                    .put("target", cssTarget(selector));
+        }
+
+        return new JSONObject()
+                .put("id", id)
+                .put("type", "waitForSeconds")
+                .put("label", label)
+                .put("seconds", 1)
+                .put("description", firstNonBlank(note, "Imported unsupported VeyraAI action as a safe wait."));
+    }
+
+    private JSONObject cssTarget(String selector) {
+        return new JSONObject()
+                .put("strategy", "css")
+                .put("value", selector == null || selector.isBlank() ? "body" : selector);
+    }
+
+    private String workflowBlockTypeForAction(String action) {
+        String normalized = action == null ? "" : action.toLowerCase();
+        if (normalized.contains("assert") || normalized.contains("validate") || normalized.contains("visual compare")) {
+            return "Validation";
+        }
+        if (normalized.contains("wait")) {
+            return "Browser";
+        }
+        if (normalized.contains("variable") || normalized.contains("get text")) {
+            return "Variable";
+        }
+        if (normalized.contains("navigate")) {
+            return "Browser";
+        }
+        if (normalized.contains("screenshot") || normalized.contains("baseline")) {
+            return "Utility";
+        }
+        return "Action";
+    }
+
+    private void renderWorkflowCanvas() {
+        if (workflowCanvas == null) {
+            return;
+        }
+        workflowCanvas.getChildren().clear();
+        renderWorkflowConnections();
+        for (int i = 0; i < workflowNodeRows.size(); i++) {
+            workflowCanvas.getChildren().add(createWorkflowNodeView(i));
+        }
+        renumberWorkflowNodes();
+        updateWorkflowDslPreview();
+        if (workflowDslTable != null) {
+            workflowDslTable.refresh();
+        }
+    }
+
+    private javafx.scene.Node createWorkflowNodeView(int index) {
+        Map<String, String> node = workflowNodeRows.get(index);
+        Label type = new Label(node.getOrDefault("blockType", "Block"));
+        type.getStyleClass().add("metric");
+        Label title = new Label(node.getOrDefault("action", "Workflow Block"));
+        title.getStyleClass().add("builder-node-title");
+        title.setWrapText(true);
+        Label detail = new Label(firstNonBlank(node.get("selector"), node.get("value"), node.get("note"), "Drag to position, select to configure"));
+        detail.getStyleClass().add("muted");
+        detail.setWrapText(true);
+        VBox card = new VBox(6, type, title, detail);
+        card.getStyleClass().add("builder-node");
+        if (index == selectedWorkflowNodeIndex) {
+            card.getStyleClass().add("builder-node-selected");
+        }
+        card.setMinSize(240, 96);
+        card.setPrefSize(240, 96);
+        card.setMaxWidth(240);
+        card.setLayoutX(parseDouble(node.get("x"), 80));
+        card.setLayoutY(parseDouble(node.get("y"), 80));
+        final double[] dragOffset = new double[2];
+        card.setOnMousePressed(event -> {
+            selectWorkflowNode(index);
+            dragOffset[0] = event.getX();
+            dragOffset[1] = event.getY();
+            event.consume();
+        });
+        card.setOnMouseDragged(event -> {
+            double x = clamp(card.getLayoutX() + event.getX() - dragOffset[0], 20, workflowCanvas.getWidth() - 260);
+            double y = clamp(card.getLayoutY() + event.getY() - dragOffset[1], 20, workflowCanvas.getHeight() - 120);
+            card.setLayoutX(x);
+            card.setLayoutY(y);
+            node.put("x", String.valueOf(x));
+            node.put("y", String.valueOf(y));
+            renderWorkflowConnections();
+            event.consume();
+        });
+        card.setOnMouseReleased(event -> updateWorkflowDslPreview());
+        return card;
+    }
+
+    private void renderWorkflowConnections() {
+        if (workflowCanvas == null) {
+            return;
+        }
+        workflowCanvas.getChildren().removeIf(child -> Boolean.TRUE.equals(child.getProperties().get("workflowConnection")));
+        int insertAt = 0;
+        for (Map<String, String> connection : workflowConnectionRows) {
+            int from = parseInt(connection.get("from"), -1);
+            int to = parseInt(connection.get("to"), -1);
+            if (from < 0 || to < 0 || from >= workflowNodeRows.size() || to >= workflowNodeRows.size()) {
+                continue;
+            }
+            Map<String, String> source = workflowNodeRows.get(from);
+            Map<String, String> target = workflowNodeRows.get(to);
+            double startX = parseDouble(source.get("x"), 0) + 240;
+            double startY = parseDouble(source.get("y"), 0) + 48;
+            double endX = parseDouble(target.get("x"), 0);
+            double endY = parseDouble(target.get("y"), 0) + 48;
+            Line line = new Line(startX, startY, endX, endY);
+            line.getStyleClass().add("builder-connector");
+            line.getProperties().put("workflowConnection", true);
+            double angle = Math.atan2(endY - startY, endX - startX);
+            double arrowLength = 14;
+            double arrowWidth = 7;
+            Polygon arrow = new Polygon(
+                    endX, endY,
+                    endX - arrowLength * Math.cos(angle) + arrowWidth * Math.sin(angle),
+                    endY - arrowLength * Math.sin(angle) - arrowWidth * Math.cos(angle),
+                    endX - arrowLength * Math.cos(angle) - arrowWidth * Math.sin(angle),
+                    endY - arrowLength * Math.sin(angle) + arrowWidth * Math.cos(angle));
+            arrow.getStyleClass().add("builder-arrow");
+            arrow.getProperties().put("workflowConnection", true);
+            EventHandler<javafx.scene.input.MouseEvent> deleteConnection = event -> {
+                workflowConnectionRows.remove(connection);
+                renderWorkflowCanvas();
+                workflowStatusLabel.setText("Execution arrow deleted");
+                event.consume();
+            };
+            line.setOnMouseClicked(deleteConnection);
+            arrow.setOnMouseClicked(deleteConnection);
+            workflowCanvas.getChildren().add(insertAt++, line);
+            workflowCanvas.getChildren().add(insertAt++, arrow);
+        }
+    }
+
+    private void selectWorkflowNode(int index) {
+        if (index < 0 || index >= workflowNodeRows.size()) {
+            selectedWorkflowNodeIndex = -1;
+            return;
+        }
+        selectedWorkflowNodeIndex = index;
+        Map<String, String> node = workflowNodeRows.get(index);
+        if (workflowActionField != null) {
+            workflowActionField.setText(node.getOrDefault("action", ""));
+            workflowSelectorField.setText(node.getOrDefault("selector", ""));
+            workflowValueField.setText(node.getOrDefault("value", ""));
+            workflowNoteArea.setText(node.getOrDefault("note", ""));
+        }
+        if (workflowDslTable != null && workflowDslTable.getSelectionModel().getSelectedIndex() != index) {
+            workflowDslTable.getSelectionModel().select(index);
+        }
+        renderWorkflowCanvas();
+    }
+
+    private void applyWorkflowNodeProperties() {
+        if (selectedWorkflowNodeIndex < 0 || selectedWorkflowNodeIndex >= workflowNodeRows.size()) {
+            showWarning("Workflow Builder", "Select a workflow block before applying changes.");
+            return;
+        }
+        Map<String, String> node = workflowNodeRows.get(selectedWorkflowNodeIndex);
+        node.put("action", workflowActionField.getText());
+        node.put("selector", workflowSelectorField.getText());
+        node.put("value", workflowValueField.getText());
+        node.put("note", workflowNoteArea.getText());
+        renderWorkflowCanvas();
+        workflowStatusLabel.setText("Updated block " + node.getOrDefault("step", ""));
+    }
+
+    private void deleteSelectedWorkflowNode() {
+        if (selectedWorkflowNodeIndex < 0 || selectedWorkflowNodeIndex >= workflowNodeRows.size()) {
+            return;
+        }
+        workflowNodeRows.remove(selectedWorkflowNodeIndex);
+        relinkWorkflowSequentially();
+        selectedWorkflowNodeIndex = Math.min(selectedWorkflowNodeIndex, workflowNodeRows.size() - 1);
+        renderWorkflowCanvas();
+        if (selectedWorkflowNodeIndex >= 0) {
+            selectWorkflowNode(selectedWorkflowNodeIndex);
+        }
+    }
+
+    private void connectSelectedWorkflowNodeToNext() {
+        if (selectedWorkflowNodeIndex < 0 || selectedWorkflowNodeIndex + 1 >= workflowNodeRows.size()) {
+            return;
+        }
+        workflowConnectionRows.add(row("from", String.valueOf(selectedWorkflowNodeIndex),
+                "to", String.valueOf(selectedWorkflowNodeIndex + 1)));
+        renderWorkflowCanvas();
+    }
+
+    private void clearWorkflowCanvas() {
+        workflowNodeRows.clear();
+        workflowConnectionRows.clear();
+        selectedWorkflowNodeIndex = -1;
+        seedWorkflowCanvas();
+        workflowStatusLabel.setText("Canvas cleared");
+    }
+
+    private void autoLayoutWorkflow() {
+        for (int i = 0; i < workflowNodeRows.size(); i++) {
+            Map<String, String> node = workflowNodeRows.get(i);
+            node.put("x", String.valueOf(120 + (i % 3) * 310));
+            node.put("y", String.valueOf(80 + (i / 3) * 150));
+        }
+        relinkWorkflowSequentially();
+        renderWorkflowCanvas();
+        workflowStatusLabel.setText("Auto layout applied");
+    }
+
+    private void relinkWorkflowSequentially() {
+        workflowConnectionRows.clear();
+        for (int i = 0; i + 1 < workflowNodeRows.size(); i++) {
+            workflowConnectionRows.add(row("from", String.valueOf(i), "to", String.valueOf(i + 1)));
+        }
+        renumberWorkflowNodes();
+    }
+
+    private void renumberWorkflowNodes() {
+        for (int i = 0; i < workflowNodeRows.size(); i++) {
+            workflowNodeRows.get(i).put("step", String.valueOf(i + 1));
+        }
+    }
+
+    private void updateWorkflowDslPreview() {
+        if (workflowJsonArea == null) {
+            return;
+        }
+        JSONObject workflow = new JSONObject();
+        workflow.put("workflowId", normalizeVariableName(workflowNameField == null ? "visual_web_workflow" : workflowNameField.getText()).toLowerCase());
+        workflow.put("name", workflowNameField == null ? "Visual Web Workflow" : workflowNameField.getText());
+        workflow.put("runtime", "typescript-playwright");
+        JSONArray steps = new JSONArray();
+        for (Map<String, String> node : workflowNodeRows) {
+            JSONObject step = new JSONObject();
+            step.put("id", node.getOrDefault("id", ""));
+            step.put("blockType", node.getOrDefault("blockType", ""));
+            step.put("action", node.getOrDefault("action", ""));
+            step.put("selector", node.getOrDefault("selector", ""));
+            step.put("value", node.getOrDefault("value", ""));
+            step.put("note", node.getOrDefault("note", ""));
+            step.put("position", new JSONObject()
+                    .put("x", parseDouble(node.get("x"), 0))
+                    .put("y", parseDouble(node.get("y"), 0)));
+            steps.put(step);
+        }
+        JSONArray connections = new JSONArray();
+        for (Map<String, String> connection : workflowConnectionRows) {
+            connections.put(new JSONObject()
+                    .put("from", connection.getOrDefault("from", ""))
+                    .put("to", connection.getOrDefault("to", "")));
+        }
+        workflow.put("steps", steps);
+        workflow.put("connections", connections);
+        workflowJsonArea.setText(workflow.toString(2));
+    }
+
+    private void copyWorkflowDslJson() {
+        updateWorkflowDslPreview();
+        ClipboardContent content = new ClipboardContent();
+        content.putString(workflowJsonArea == null ? "" : workflowJsonArea.getText());
+        Clipboard.getSystemClipboard().setContent(content);
+        workflowStatusLabel.setText("Workflow DSL JSON copied");
+    }
+
+    private String workflowBlockName(String blockSpec) {
+        String[] parts = blockSpec.split("\\|", -1);
+        return valueAt(parts, 1);
+    }
+
+    private double nextWorkflowX() {
+        int index = workflowNodeRows == null ? 0 : workflowNodeRows.size();
+        return 120 + (index % 3) * 310;
+    }
+
+    private double nextWorkflowY() {
+        int index = workflowNodeRows == null ? 0 : workflowNodeRows.size();
+        return 90 + (index / 3) * 150;
+    }
+
+    private int parseInt(String value, int fallback) {
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private double parseDouble(String value, double fallback) {
+        try {
+            return Double.parseDouble(value);
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private javafx.scene.Node createCodexCliPanel() {
+        codexLogArea = editor("");
+        codexLogArea.setEditable(false);
+        codexLogArea.setWrapText(true);
+        codexLogArea.setMinHeight(420);
+
+        Button setupCodex = primary("Setup Codex CLI");
+        setupCodex.setOnAction(e -> setupCodexCliDocker());
+        Button startCodex = secondary("Start Codex CLI");
+        startCodex.setOnAction(e -> startCodexCliContainer());
+        Button stopCodex = secondary("Stop Codex CLI");
+        stopCodex.setOnAction(e -> stopCodexCliContainer());
+
+        FlowPane codexControls = spacedActionRow(setupCodex, startCodex, stopCodex);
+        VBox logs = card("Logs", codexLogArea);
+        VBox panel = new VBox(14, codexControls, logs);
+        VBox.setVgrow(logs, Priority.ALWAYS);
+        return padded(card("Variable Card", panel));
+    }
+
+    private javafx.scene.Node createHermesAgentPanel() {
+        hermesAiAgentPathField = new TextField();
+        hermesAiAgentPathField.setEditable(false);
+        hermesAiAgentPathField.setPrefColumnCount(90);
+        hermesAiAgentPathField.setPrefWidth(900);
+        hermesAiAgentPathField.setMinWidth(520);
+        updateHermesAiAgentPathField();
+
+        hermesSessionBox = new ComboBox<>();
+        hermesSessionBox.setEditable(false);
+        hermesSessionBox.setPrefWidth(320);
+        refreshHermesSessionOptions();
+
+        hermesManualSessionIdField = new TextField();
+        hermesManualSessionIdField.setPromptText("Paste Hermes session id, for example 20260619_084413_a6ed26");
+        hermesManualSessionIdField.setPrefWidth(420);
+        Button saveHermesSession = secondary("Save Session");
+        saveHermesSession.setOnAction(e -> saveManualHermesSessionId());
+
+        hermesLogArea = editor("");
+        hermesLogArea.setEditable(false);
+        hermesLogArea.setWrapText(true);
+        hermesLogArea.setMinHeight(420);
+
+        Button startHermes = secondary("Start Hermes CLI");
+        startHermes.setOnAction(e -> startHermesAgentContainer());
+        Button embeddedHermes = secondary("Embedded Hermes CLI");
+        embeddedHermes.setOnAction(e -> startEmbeddedHermesCli());
+        Button browserHermes = secondary("Launch Browser");
+        browserHermes.setOnAction(e -> launchHermesAgentBrowser());
+        Button stopHermes = secondary("Stop Hermes");
+        stopHermes.setOnAction(e -> stopHermesAgentContainer());
+
+        FlowPane hermesControls = spacedActionRow(labeled("Session", hermesSessionBox), startHermes, embeddedHermes, browserHermes, stopHermes);
+        FlowPane manualSessionControls = spacedActionRow(labeled("Session ID", hermesManualSessionIdField), saveHermesSession);
+        VBox logs = card("Logs", hermesLogArea);
+        VBox panel = new VBox(14, labeled("AI Agent Path", hermesAiAgentPathField), hermesControls, manualSessionControls, logs);
+        VBox.setVgrow(logs, Priority.ALWAYS);
         return padded(panel);
+    }
+
+    private javafx.scene.Node createTestPlanningAgentPanel() {
+        testPlanningSourceArea = editor("");
+        testPlanningSourceArea.setPromptText("""
+                Enter one source per line:
+                C:\\projects\\my-application
+                https://github.com/company/project.git
+                https://company.atlassian.net/browse/PROJ-123
+                https://api.example.com/openapi.json
+                """);
+        testPlanningSourceArea.setWrapText(true);
+        testPlanningSourceArea.setMinHeight(130);
+        testPlanningSourceArea.setPrefHeight(160);
+
+        testPlanningUploadList = new javafx.scene.control.ListView<>(testPlanningUploads);
+        testPlanningUploadList.setMinHeight(90);
+        testPlanningUploadList.setPrefHeight(120);
+        testPlanningUploadList.setPlaceholder(new Label("No documents uploaded."));
+
+        testPlanningLogArea = editor("");
+        testPlanningLogArea.setEditable(false);
+        testPlanningLogArea.setWrapText(true);
+        testPlanningLogArea.setMinHeight(150);
+        testPlanningLogArea.getStyleClass().add("vision-terminal");
+
+        testPlanningStatusLabel = new Label("Ready. Connect Agentic AI in Settings, then add knowledge sources.");
+        testPlanningStatusLabel.getStyleClass().add("muted");
+        testPlanningConnectionLabel = new Label();
+        testPlanningConnectionLabel.getStyleClass().add("muted");
+        updateTestPlanningConnectionStatus();
+
+        testPlanningWorkbookPathField = new TextField();
+        testPlanningWorkbookPathField.setEditable(false);
+        testPlanningWorkbookPathField.setPromptText("Generated workbook path");
+        testPlanningWorkbookPathField.setMaxWidth(Double.MAX_VALUE);
+
+        Button upload = secondary("Upload Files");
+        upload.setOnAction(e -> uploadTestPlanningFiles());
+        Button remove = secondary("Remove Selected");
+        remove.setOnAction(e -> {
+            Path selected = testPlanningUploadList.getSelectionModel().getSelectedItem();
+            if (selected != null) testPlanningUploads.remove(selected);
+        });
+        Button clearSources = secondary("Clear Sources");
+        clearSources.setOnAction(e -> {
+            testPlanningSourceArea.clear();
+            testPlanningUploads.clear();
+        });
+
+        testPlanningGenerateButton = primary("Analyse and Generate Test Plan");
+        testPlanningGenerateButton.setOnAction(e -> runTestPlanningGeneration());
+        testPlanningCancelButton = secondary("Cancel");
+        testPlanningCancelButton.getStyleClass().add("danger-button");
+        testPlanningCancelButton.setDisable(true);
+        testPlanningCancelButton.setOnAction(e -> cancelTestPlanningGeneration());
+        Button openWorkbook = secondary("Open Workbook");
+        openWorkbook.setOnAction(e -> openPath(lastTestPlanningWorkbook,
+                "Generate a Test Planning workbook before opening it."));
+        Button openFolder = secondary("Open Folder");
+        openFolder.setOnAction(e -> openPath(lastTestPlanningWorkbook == null ? null : lastTestPlanningWorkbook.getParent(),
+                "Generate a Test Planning workbook before opening its folder."));
+
+        VBox sourceCard = card("Knowledge Sources", new VBox(10,
+                new Label("Project, Git, Jira, Swagger/OpenAPI, or documentation links and local paths"),
+                testPlanningSourceArea,
+                spacedActionRow(upload, remove, clearSources),
+                testPlanningUploadList));
+        VBox outputCard = card("Agent Execution", new VBox(8, testPlanningConnectionLabel,
+                testPlanningStatusLabel, testPlanningLogArea,
+                spacedActionRow(testPlanningGenerateButton, testPlanningCancelButton, openWorkbook, openFolder),
+                labeled("Workbook", testPlanningWorkbookPathField)));
+        javafx.scene.Node terminal = createTestPlanningTerminalPane();
+
+        SplitPane lower = new SplitPane(outputCard, terminal);
+        lower.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+        lower.setDividerPositions(0.52);
+        VBox panel = new VBox(12, sourceCard, lower);
+        VBox.setVgrow(lower, Priority.ALWAYS);
+        panel.setMinHeight(720);
+        return padded(panel);
+    }
+
+    private javafx.scene.Node createTestPlanningTerminalPane() {
+        SwingNode terminalNode = new SwingNode();
+        Label status = new Label("Starting workspace terminal...");
+        status.getStyleClass().add("muted");
+        Button restart = secondary("Restart Terminal");
+        Button stop = secondary("Stop Terminal");
+        restart.setOnAction(e -> startTestPlanningTerminal(terminalNode, status));
+        stop.setOnAction(e -> stopTestPlanningTerminal(status));
+        BorderPane pane = new BorderPane();
+        pane.setCenter(terminalNode);
+        pane.setBottom(spacedActionRow(status, restart, stop));
+        BorderPane.setMargin(pane.getBottom(), new Insets(8, 0, 0, 0));
+        VBox terminalCard = card("Workspace Terminal", pane);
+        startTestPlanningTerminal(terminalNode, status);
+        return terminalCard;
+    }
+
+    private void startTestPlanningTerminal(SwingNode terminalNode, Label status) {
+        stopTestPlanningTerminal(null);
+        SwingUtilities.invokeLater(() -> {
+            try {
+                Path directory = configuredFolder("AIAgent", "TestPlanning");
+                if (directory == null) {
+                    Platform.runLater(() -> status.setText("Configure the VeyraAI workspace in Settings to start the terminal."));
+                    return;
+                }
+                WorkspaceTerminalMcpServer.TerminalLaunch launch = testPlanningTerminalMcpServer.launch(directory);
+                Map<String, String> environment = new HashMap<>(System.getenv());
+                environment.put("TERM", "xterm-256color");
+                PtyProcess process = new PtyProcessBuilder(launch.command().toArray(String[]::new))
+                        .setEnvironment(environment)
+                        .setDirectory(launch.directory().toString())
+                        .setInitialColumns(100)
+                        .setInitialRows(26)
+                        .setRedirectErrorStream(true)
+                        .setWindowsAnsiColorEnabled(true)
+                        .setUseWinConPty(true)
+                        .start();
+                JediTermWidget widget = new JediTermWidget(100, 26, new DefaultSettingsProvider());
+                widget.setTtyConnector(new EmbeddedPtyTtyConnector(
+                        process, StandardCharsets.UTF_8, launch.command()));
+                widget.start();
+                testPlanningTerminalProcess = process;
+                testPlanningTerminalWidget = widget;
+                terminalNode.setContent(widget.getComponent());
+                Platform.runLater(() -> status.setText("Terminal: " + launch.directory()));
+                process.onExit().thenRun(() -> Platform.runLater(() -> status.setText("Terminal stopped.")));
+            } catch (Exception exception) {
+                Platform.runLater(() -> status.setText("Terminal failed: " + exceptionMessage(exception)));
+            }
+        });
+    }
+
+    private void stopTestPlanningTerminal(Label status) {
+        JediTermWidget widget = testPlanningTerminalWidget;
+        testPlanningTerminalWidget = null;
+        if (widget != null) SwingUtilities.invokeLater(widget::close);
+        PtyProcess process = testPlanningTerminalProcess;
+        testPlanningTerminalProcess = null;
+        if (process != null && process.isAlive()) process.destroy();
+        if (status != null) status.setText("Terminal stopped.");
+    }
+
+    private void uploadTestPlanningFiles() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Upload Test Planning Knowledge");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(
+                "Supported Knowledge Files", "*.xlsx", "*.xls", "*.csv", "*.pdf", "*.docx", "*.pptx", "*.ppt", "*.json"));
+        List<File> selected = chooser.showOpenMultipleDialog(stage);
+        if (selected == null || selected.isEmpty()) return;
+        try {
+            Path uploadDirectory = configuredFolder("AIAgent", "TestPlanning", "Uploads");
+            if (uploadDirectory == null) {
+                showWarning("Test Planning Agent", "Configure the VeyraAI workspace in Settings before uploading files.");
+                return;
+            }
+            Files.createDirectories(uploadDirectory);
+            for (File file : selected) {
+                Path source = file.toPath().toAbsolutePath().normalize();
+                if (!testPlanningDocumentMcpServer.supports(source)) {
+                    appendTestPlanningLog("Skipped unsupported file: " + source.getFileName());
+                    continue;
+                }
+                String uniqueName = System.currentTimeMillis() + "-" + source.getFileName();
+                Path destination = uploadDirectory.resolve(uniqueName).normalize();
+                if (!destination.startsWith(uploadDirectory.toAbsolutePath().normalize())) {
+                    throw new IllegalArgumentException("Unsafe upload filename: " + source.getFileName());
+                }
+                Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
+                testPlanningUploads.add(destination);
+                appendTestPlanningLog("Uploaded: " + source.getFileName());
+            }
+        } catch (Exception exception) {
+            showError("Upload Test Planning Knowledge Failed", exception);
+        }
+    }
+
+    private void runTestPlanningGeneration() {
+        if (activeVeyraAIModelConfig == null || activeVeyraAIAgentSession == null) {
+            showWarning("Test Planning Agent",
+                    "Connect Agentic AI - API, DB, Web & Test Planning Agents in Settings first.");
+            return;
+        }
+        List<String> sources = testPlanningSourceArea == null ? List.of()
+                : testPlanningSourceArea.getText().lines().map(String::trim).filter(value -> !value.isBlank()).toList();
+        if (sources.isEmpty() && testPlanningUploads.isEmpty()) {
+            showWarning("Test Planning Agent", "Add at least one project, Jira, Swagger, documentation link, or upload.");
+            return;
+        }
+        Path planningRoot = configuredFolder("AIAgent", "TestPlanning");
+        Path outputDirectory = configuredFolder("TestCases");
+        if (planningRoot == null || outputDirectory == null) {
+            showWarning("Test Planning Agent", "Configure the VeyraAI workspace in Settings before generating a workbook.");
+            return;
+        }
+        setTestPlanningRunning(true);
+        testPlanningLogArea.clear();
+        List<Path> uploadSnapshot = List.copyOf(testPlanningUploads);
+        appendTestPlanningLog("Starting Test Planning Agent with " + (sources.size() + uploadSnapshot.size()) + " source(s).");
+        String sourceQuery = String.join(" ", sources) + " "
+                + uploadSnapshot.stream().map(Path::toString).reduce("", (a, b) -> a + " " + b);
+        JSONArray memory = testPlanningMemoryMcpServer.selectRelevant(
+                searchCustomAgentMemory("testDesign", "", 40, false), sourceQuery, 20);
+
+        Task<TestPlanningOrchestrator.RunResult> task = new Task<>() {
+            @Override
+            protected TestPlanningOrchestrator.RunResult call() throws Exception {
+                testPlanningRunThread = Thread.currentThread();
+                String timestamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                        .format(java.time.LocalDateTime.now());
+                Path output = outputDirectory.resolve("Test-Planning-" + timestamp + ".xlsx");
+                return testPlanningOrchestrator.run(
+                        sources, uploadSnapshot, planningRoot.resolve("Cache"), output, memory,
+                        "Generate one complete, executable, source-traceable test plan.",
+                        prompt -> {
+                            if (isCancelled() || Thread.currentThread().isInterrupted()) {
+                                throw new InterruptedException("Test Planning generation cancelled.");
+                            }
+                            saveVeyraAIMessage(activeVeyraAIAgentSession.sessionId(), "user",
+                                    "TestPlanGenerationSkill", prompt);
+                            String response = callVeyraAIModel(activeVeyraAIModelConfig, prompt);
+                            saveVeyraAIMessage(activeVeyraAIAgentSession.sessionId(), "assistant",
+                                    "TestPlanGenerationSkill", response);
+                            return response;
+                        },
+                        ApiValidatorFxApp.this::appendTestPlanningLog);
+            }
+        };
+        testPlanningActiveTask = task;
+        task.setOnSucceeded(e -> {
+            testPlanningRunThread = null;
+            testPlanningActiveTask = null;
+            TestPlanningOrchestrator.RunResult run = task.getValue();
+            lastTestPlanningWorkbook = run.workbookPath();
+            testPlanningWorkbookPathField.setText(run.workbookPath().toString());
+            saveTestPlanningKnowledge(run);
+            setTestPlanningRunning(false);
+            testPlanningStatusLabel.setText("Completed. Workbook and project knowledge were saved.");
+            appendTestPlanningLog("Test Planning Agent completed successfully.");
+            showInfo("Test Planning Agent", "Workbook generated: " + run.workbookPath().getFileName());
+        });
+        task.setOnFailed(e -> {
+            testPlanningRunThread = null;
+            testPlanningActiveTask = null;
+            setTestPlanningRunning(false);
+            Throwable failure = rootCause(task.getException());
+            testPlanningStatusLabel.setText("Generation failed: " + exceptionMessage(failure));
+            appendTestPlanningLog("FAILED: " + exceptionMessage(failure));
+            showError("Test Planning Agent Failed", failure);
+        });
+        task.setOnCancelled(e -> {
+            testPlanningRunThread = null;
+            testPlanningActiveTask = null;
+            setTestPlanningRunning(false);
+            testPlanningStatusLabel.setText("Generation cancelled.");
+            appendTestPlanningLog("Generation cancelled.");
+        });
+        start(task);
+    }
+
+    private void cancelTestPlanningGeneration() {
+        Task<?> task = testPlanningActiveTask;
+        if (task != null) task.cancel(true);
+        Thread thread = testPlanningRunThread;
+        if (thread != null) thread.interrupt();
+        setTestPlanningRunning(false);
+        if (testPlanningStatusLabel != null) testPlanningStatusLabel.setText("Cancellation requested...");
+    }
+
+    private void saveTestPlanningKnowledge(TestPlanningOrchestrator.RunResult run) {
+        JSONObject result = run.result();
+        String projectId = firstNonBlank(result.optString("projectName"), configCacheKey());
+        JSONArray sourceIds = new JSONArray();
+        JSONArray sourceRows = run.sourceContext().optJSONArray("sources");
+        if (sourceRows != null) {
+            for (int i = 0; i < sourceRows.length(); i++) {
+                sourceIds.put(sourceRows.getJSONObject(i).optString("sourceId"));
+            }
+        }
+        JSONArray knowledge = testPlanningMemoryMcpServer.knowledgeFrom(result);
+        for (int i = 0; i < knowledge.length(); i++) {
+            JSONObject item = knowledge.optJSONObject(i);
+            if (item == null || item.optString("summary").isBlank()) continue;
+            JSONObject record = testPlanningMemoryMcpServer.persistentRecord(item, projectId, sourceIds);
+            saveCustomAgentMemory("knowledgeBase", projectId, "testDesign",
+                    record.optString("type", "domainFact"), record,
+                    record.optString("summary"), record.optJSONArray("tags"),
+                    record.optDouble("confidence", 0.7), 4);
+        }
+        saveCustomAgentMemory("crossSession", projectId, "testDesign", "generatedTestPlan",
+                new JSONObject()
+                        .put("projectName", result.optString("projectName"))
+                        .put("analysisSummary", result.optString("analysisSummary"))
+                        .put("workbookPath", run.workbookPath().toString())
+                        .put("sourceIds", sourceIds),
+                "Generated test plan for " + projectId,
+                new JSONArray().put("test-plan").put(projectId), 0.85, 5);
+    }
+
+    private void setTestPlanningRunning(boolean running) {
+        Platform.runLater(() -> {
+            if (testPlanningGenerateButton != null) testPlanningGenerateButton.setDisable(running);
+            if (testPlanningCancelButton != null) testPlanningCancelButton.setDisable(!running);
+            if (testPlanningStatusLabel != null && running) {
+                testPlanningStatusLabel.setText("Analysing sources and generating workbook...");
+            }
+        });
+    }
+
+    private void appendTestPlanningLog(String message) {
+        if (testPlanningLogArea == null || message == null || message.isBlank()) return;
+        String line = "[" + LocalTime.now().withNano(0) + "] " + message + System.lineSeparator();
+        Platform.runLater(() -> testPlanningLogArea.appendText(line));
+    }
+
+    private void updateTestPlanningConnectionStatus() {
+        if (testPlanningConnectionLabel == null) return;
+        AgentSessionManager.AgentSession session = agenticAIConnectionManager.getActiveSession();
+        boolean connected = session != null && session.connectedAgents().contains("testPlanningAgent")
+                && activeVeyraAIModelConfig != null;
+        testPlanningConnectionLabel.setText(connected
+                ? "Test Planning Agent connected: " + activeVeyraAIModelConfig.provider()
+                + " / " + activeVeyraAIModelConfig.model()
+                : "Test Planning Agent: not connected");
     }
 
     private javafx.scene.Node createTestSuitePanel() {
@@ -803,11 +4763,8 @@ public class ApiValidatorFxApp extends Application {
         testSuiteParallelExecutionCheck = new CheckBox("Parallel Execution");
         testSuiteThreadCountField = new TextField("1");
         testSuiteThreadCountField.setMaxWidth(90);
-        githubOwnerField = new TextField();
-        githubRepoField = new TextField();
-        githubBranchField = new TextField("main");
-        githubStatusLabel = new Label("GitHub: not connected");
-        githubStatusLabel.getStyleClass().add("muted");
+        ensureGithubConfigurationFields();
+        loadGithubConfiguration();
         testSuiteStepsTable = createTestSuiteStepsTable();
         testSuiteRunnerStatusLabel = new Label("Import or create a Test Suite Runner workbook to view test steps.");
         testSuiteRunnerStatusLabel.getStyleClass().add("muted");
@@ -833,14 +4790,15 @@ public class ApiValidatorFxApp extends Application {
         checkAll.setOnAction(e -> setAllRowsSelected(testSuiteRows, testSuiteStepsTable, true));
         Button uncheckAll = secondary("Un-Check All");
         uncheckAll.setOnAction(e -> setAllRowsSelected(testSuiteRows, testSuiteStepsTable, false));
+        Button deleteSteps = secondary("Delete Selected / Checked");
+        deleteSteps.getStyleClass().add("danger-button");
+        deleteSteps.setOnAction(e -> deleteSelectedOrCheckedTestSuiteSteps());
         Button openReport = secondary("Open Report");
         openReport.setOnAction(e -> openTestSuiteReport());
         Button updateWorkbook = secondary("Update");
         updateWorkbook.setOnAction(e -> updateTestSuiteWorkbook());
         Button openWorkbook = secondary("Open");
         openWorkbook.setOnAction(e -> openImportedTestSuiteWorkbook());
-        Button connectGithub = primary("Connect GitHub");
-        connectGithub.setOnAction(e -> connectGithub());
         Button deployGithub = secondary("Deploy to GitHub Actions");
         deployGithub.setOnAction(e -> deployTestSuiteToGithubActions());
         Button runGithub = primary("Run in GitHub Actions");
@@ -854,22 +4812,28 @@ public class ApiValidatorFxApp extends Application {
 
         FlowPane controls = spacedActionRow(labeled("Test Suite", testSuiteNameField), labeled("Test Case", testCaseNameField),
                 create, importWorkbook, updateWorkbook, openWorkbook, addManual);
-        FlowPane runnerActions = spacedActionRow(testSuiteRunnerStatusLabel, checkAll, uncheckAll, openReport,
+        FlowPane runnerActions = spacedActionRow(testSuiteRunnerStatusLabel, checkAll, uncheckAll, deleteSteps, openReport,
                 testSuiteParallelExecutionCheck, labeled("Threads", testSuiteThreadCountField), run, stop, suiteBuilder,
                 testSuiteBuilderAddTypeBox, addBuilderItem);
-        FlowPane githubActions = spacedActionRow(githubStatusLabel, labeled("Owner", githubOwnerField),
-                labeled("Repository", githubRepoField), labeled("Branch", githubBranchField),
-                connectGithub, deployGithub, runGithub, openWorkflow);
+        FlowPane githubActions = spacedActionRow(deployGithub, runGithub, openWorkflow);
         VBox panel = new VBox(16, controls, labeled("Workbook Path", testSuiteWorkbookPathField),
                 runnerActions, card("GitHub Actions", githubActions), testSuiteStepsTable);
         VBox.setVgrow(testSuiteStepsTable, Priority.ALWAYS);
-        return padded(panel);
+        testSuiteStepsTable.setMinHeight(560);
+        panel.getStyleClass().add("db-workflow");
+        return paddedVertical(panel);
     }
 
     private javafx.scene.Node createVariablesPanel() {
         variableRows = FXCollections.observableArrayList();
         variablesTable = mapTable(variableRows,
                 "Name", "name", "Value", "value", "Type", "type", "JSON Path", "path");
+        configureVariableValueEditing();
+        variablesPathField = new TextField();
+        variablesPathField.setEditable(false);
+        variablesPathField.setPrefColumnCount(90);
+        variablesPathField.setPrefWidth(900);
+        variablesPathField.setMinWidth(520);
         Button create = primary("Create Variable");
         create.setOnAction(e -> createVariableDialog());
         Button remove = secondary("Remove Selected");
@@ -880,14 +4844,3118 @@ public class ApiValidatorFxApp extends Application {
         load.setOnAction(e -> importVariablesFromFile());
         FlowPane tools = actionRow(create, save, load, remove);
         BorderPane panel = new BorderPane(variablesTable);
-        panel.setTop(tools);
-        BorderPane.setMargin(tools, new Insets(0, 0, 12, 0));
+        VBox top = new VBox(12, labeled("Variables Path", variablesPathField), tools);
+        panel.setTop(top);
+        BorderPane.setMargin(top, new Insets(0, 0, 12, 0));
+        applyConfiguredPathsToFields();
+        refreshVariablesView();
         return padded(panel);
+    }
+
+    private javafx.scene.Node createConfigPanel() {
+        configBasePathField = new TextField();
+        configBasePathField.setPrefColumnCount(90);
+        configBasePathField.setPrefWidth(900);
+        configBasePathField.setMinWidth(520);
+        configStatusLabel = new Label("No config folder created yet.");
+        configStatusLabel.getStyleClass().add("muted");
+        configCacheKeyLabel = new Label("Cache key: " + configCacheKey());
+        configCacheKeyLabel.getStyleClass().add("muted");
+        configCacheDbLabel = new Label("SQLite Cache: enter a base path to see where the DB will be created.");
+        configCacheDbLabel.getStyleClass().add("muted");
+        configExecutionStorageToggle = new ToggleButton();
+        configExecutionStorageToggle.getStyleClass().add("storage-toggle");
+        installStorageToggleGraphic(configExecutionStorageToggle);
+        configExecutionStorageToggle.setSelected(true);
+        configExecutionStorageToggle.selectedProperty().addListener((observable, oldValue, newValue) -> {
+            updateExecutionStorageToggle();
+            persistExecutionStorageMode();
+            loadGithubConfiguration();
+            refreshDashboard();
+        });
+        configExecutionStorageLabel = new Label();
+        configExecutionStorageLabel.getStyleClass().add("muted");
+        updateExecutionStorageToggle();
+        apiAiAgentStorageToggle = new ToggleButton();
+        apiAiAgentStorageToggle.getStyleClass().add("storage-toggle");
+        installStorageToggleGraphic(apiAiAgentStorageToggle);
+        apiAiAgentStorageToggle.setSelected(false);
+        apiAiAgentStorageToggle.selectedProperty().addListener((observable, oldValue, newValue) -> updateApiAiAgentToggleLabels());
+        apiAiAgentStorageLabel = new Label();
+        apiAiAgentStorageLabel.getStyleClass().add("muted");
+        apiAiAgentProfileLabel = new Label();
+        apiAiAgentProfileLabel.getStyleClass().add("muted");
+        apiAiAgentProfileLabel.setText("Selected: Agentic AI - API, DB, Web and Test Planning Agents.");
+        apiAiAgentRuntimeToggle = new ToggleButton();
+        apiAiAgentRuntimeToggle.getStyleClass().add("storage-toggle");
+        installStorageToggleGraphic(apiAiAgentRuntimeToggle);
+        apiAiAgentRuntimeToggle.setSelected(true);
+        apiAiAgentRuntimeToggle.selectedProperty().addListener((observable, oldValue, newValue) -> {
+            updateApiAiAgentToggleLabels();
+            persistApiAiAgentProfile();
+        });
+        apiAiHermesSessionBox = new ComboBox<>();
+        apiAiHermesSessionBox.setEditable(false);
+        apiAiHermesSessionBox.setPrefWidth(420);
+        apiAiHermesSessionBox.setPromptText("Hermes session");
+        apiAiHermesConnectionLabel = new Label("Hermes: disconnected");
+        apiAiHermesConnectionLabel.getStyleClass().add("muted");
+        updateApiAiAgentToggleLabels();
+
+        veyraaiAgentProviderBox = combo(CUSTOM_AGENT_PROVIDER_DEEPSEEK, CUSTOM_AGENT_PROVIDER_CODEX);
+        veyraaiAgentProviderBox.setValue(CUSTOM_AGENT_PROVIDER_DEEPSEEK);
+        veyraaiAgentProviderBox.setPrefWidth(220);
+        veyraaiAgentAuthModeBox = combo("API Key", "OAuth Device Code");
+        veyraaiAgentAuthModeBox.setValue(defaultVeyraAIAuthMode(selectedVeyraAIProvider()));
+        veyraaiAgentAuthModeBox.setPrefWidth(180);
+        veyraaiAgentSessionBox = new ComboBox<>();
+        veyraaiAgentSessionBox.setEditable(false);
+        veyraaiAgentSessionBox.setPrefWidth(360);
+        veyraaiAgentSessionBox.setPromptText("Shared API, DB, Web and Test Planning agent session");
+        veyraaiAgentEndpointField = new TextField(defaultVeyraAIProviderEndpoint(selectedVeyraAIProvider()));
+        veyraaiAgentEndpointField.setPrefColumnCount(52);
+        veyraaiAgentModelField = new TextField(defaultVeyraAIProviderModel(selectedVeyraAIProvider()));
+        veyraaiAgentModelField.setPrefColumnCount(24);
+        veyraaiAgentApiKeyField = new PasswordField();
+        veyraaiAgentApiKeyField.setPromptText("DeepSeek API key");
+        veyraaiAgentApiKeyField.setPrefColumnCount(36);
+        veyraaiAgentClientIdField = new TextField();
+        veyraaiAgentClientIdField.setPromptText("Optional OAuth client/app id");
+        veyraaiAgentClientIdField.setPrefColumnCount(24);
+        testPlanningJiraEmailField = new TextField();
+        testPlanningJiraEmailField.setPromptText("Jira email; leave blank when using a bearer token");
+        testPlanningJiraEmailField.setPrefColumnCount(28);
+        testPlanningJiraTokenField = new PasswordField();
+        testPlanningJiraTokenField.setPromptText("Jira API or bearer token");
+        testPlanningJiraTokenField.setPrefColumnCount(28);
+        veyraaiAgentConnectionLabel = new Label("API, DB, Web & Test Planning Agents are not connected.");
+        veyraaiAgentConnectionLabel.getStyleClass().add("muted");
+        agenticAiConnectedAgentsLabel = new Label("Connected Agents: none");
+        agenticAiConnectedAgentsLabel.getStyleClass().add("muted");
+        veyraaiAgentCodexPathLabel = new Label();
+        veyraaiAgentCodexPathLabel.getStyleClass().add("muted");
+        veyraaiAgentProviderBox.valueProperty().addListener((observable, oldValue, newValue) -> {
+            String provider = selectedVeyraAIProvider();
+            veyraaiAgentAuthModeBox.setValue(defaultVeyraAIAuthMode(provider));
+            veyraaiAgentEndpointField.setText(defaultVeyraAIProviderEndpoint(provider));
+            veyraaiAgentModelField.setText(defaultVeyraAIProviderModel(provider));
+            updateCustomAgentProviderFields();
+            loadVeyraAIProviderConfigIntoFields(provider);
+        });
+        configBasePathField.textProperty().addListener((observable, oldValue, newValue) -> {
+            updateConfigCachePathLabel();
+            applyConfiguredPathsToFields();
+            refreshDashboard();
+            refreshVeyraAIAgentSessionOptions();
+            refreshApiAiHermesSessionOptions();
+        });
+
+        Button browse = secondary("Browse");
+        browse.setOnAction(e -> browseConfigBasePath());
+        Button create = primary("Create VeyraAI Workspace");
+        create.setOnAction(e -> createVeyraAIConfigFolders());
+        Button loadConfig = secondary("Load Settings Path");
+        loadConfig.setOnAction(e -> loadConfigPathFromExistingFolder());
+        Button truncate = secondary("Clear Settings Cache");
+        truncate.setOnAction(e -> truncateConfigCacheTable());
+        Button clearCloudDb = secondary("Clear Firebase Cloud DB");
+        clearCloudDb.getStyleClass().add("danger-button");
+        clearCloudDb.setOnAction(e -> clearFirebaseCloudDb());
+        Button customAgentClearSessions = secondary("Clear Sessions");
+        customAgentClearSessions.setOnAction(e -> clearVeyraAIAgentSessions());
+        Button clearCustomKnowledge = secondary("Clear Knowledge Base");
+        clearCustomKnowledge.setOnAction(e -> confirmAndClearCustomAgentMemory("knowledgeBase"));
+        Button customAgentConnect = primary("Connect");
+        customAgentConnect.setOnAction(e -> connectVeyraAICustomAgent());
+        Button customAgentLogin = secondary("OAuth Login Setup");
+        customAgentLogin.setOnAction(e -> openVeyraAIProviderLogin());
+        Button customAgentDisconnect = secondary("Disconnect");
+        customAgentDisconnect.setOnAction(e -> disconnectVeyraAICustomAgent());
+        Button saveTestPlanningConnectors = secondary("Save Jira Access");
+        saveTestPlanningConnectors.setOnAction(e -> saveTestPlanningConnectorConfig());
+        veyraaiAgentDeepSeekConfigRow = actionRow(new Label("Endpoint:"), veyraaiAgentEndpointField,
+                new Label("Model:"), veyraaiAgentModelField,
+                new Label("API Key:"), veyraaiAgentApiKeyField);
+        veyraaiAgentCodexConfigRow = actionRow(new Label("Bundled CLI:"), veyraaiAgentCodexPathLabel,
+                new Label("OAuth:"), new Label("Device code via bundled Codex CLI"));
+        veyraaiAgentCodexClientRow = actionRow(new Label("Client/App ID:"), veyraaiAgentClientIdField);
+        webAgentDiagnosticsLabel = new Label("Web Agent: Not connected");
+        webAgentDiagnosticsLabel.getStyleClass().add("muted");
+        veyraaiAgentRuntimePane = new VBox(10,
+                actionRow(new Label("Provider:"), veyraaiAgentProviderBox,
+                        new Label("Auth:"), veyraaiAgentAuthModeBox,
+                        veyraaiAgentConnectionLabel),
+                veyraaiAgentDeepSeekConfigRow,
+                veyraaiAgentCodexConfigRow,
+                veyraaiAgentCodexClientRow,
+                actionRow(new Label("Session:"), veyraaiAgentSessionBox, customAgentClearSessions, clearCustomKnowledge),
+                actionRow(new Label("Connected Agents:"), new Label("API Analysis Agent"), new Label("DB Analysis Agent"),
+                        new Label("Web Healing Agent"), new Label("Test Planning Agent"),
+                        agenticAiConnectedAgentsLabel),
+                actionRow(webAgentDiagnosticsLabel),
+                actionRow(customAgentConnect, customAgentLogin, customAgentDisconnect));
+        VBox jiraAccessPane = new VBox(10,
+                actionRow(new Label("Jira Email:"), testPlanningJiraEmailField,
+                        new Label("Jira Token:"), testPlanningJiraTokenField, saveTestPlanningConnectors));
+        javafx.scene.Node githubActionsConfigurationPane = createGithubActionsConfigurationPane();
+        updateCustomAgentProviderFields();
+        updateApiAiAgentToggleLabels();
+
+        configHermesLogArea = editor("");
+        configHermesLogArea.setEditable(false);
+        configHermesLogArea.setWrapText(true);
+        configHermesLogArea.setMinHeight(280);
+
+        autoLoadCachedConfigRootPath();
+        refreshVeyraAIAgentSessionOptions();
+        loadTestPlanningConnectorConfig();
+        loadGithubConfiguration();
+
+        GridPane form = grid();
+        javafx.scene.Node basePathControl = labeled("Base Path", wrapTextFieldWithActions(configBasePathField, browse));
+        form.add(basePathControl, 0, 0);
+        GridPane.setHgrow(basePathControl, Priority.ALWAYS);
+        form.setMaxWidth(1100);
+
+        VBox panel = new VBox(16,
+                sectionTitle("Settings"),
+                form,
+                actionRow(new Label("Execution Logs:"), new Label(CONFIG_STORAGE_LOCAL), configExecutionStorageToggle,
+                        new Label(CONFIG_STORAGE_CLOUD), configExecutionStorageLabel),
+                card("Agentic AI - API, DB, Web & Test Planning Agents", veyraaiAgentRuntimePane),
+                card("Jira Access", jiraAccessPane),
+                card("GitHub Actions Configuration", githubActionsConfigurationPane),
+                actionRow(create, loadConfig, truncate, clearCloudDb),
+                configStatusLabel,
+                configCacheKeyLabel,
+                configCacheDbLabel);
+        panel.setMinWidth(0);
+        return padded(panel);
+    }
+
+    private javafx.scene.Node createGithubActionsConfigurationPane() {
+        String owner = githubOwnerField == null ? "" : nullToBlank(githubOwnerField.getText());
+        String repository = githubRepoField == null ? "" : nullToBlank(githubRepoField.getText());
+        String branch = githubBranchField == null ? "main" : firstNonBlank(githubBranchField.getText(), "main");
+        githubOwnerField = new TextField(owner);
+        githubRepoField = new TextField(repository);
+        githubBranchField = new TextField(branch);
+        githubStatusLabel = new Label(githubAccessToken == null || githubAccessToken.isBlank()
+                ? "GitHub: saved configuration not loaded"
+                : "GitHub: configuration loaded - click Connect");
+        githubStatusLabel.getStyleClass().add("muted");
+        Button connectGithub = primary("Connect GitHub");
+        connectGithub.setOnAction(e -> connectGithub());
+        Button updateGithub = secondary("Update Configuration");
+        updateGithub.setOnAction(e -> updateGithubConfiguration());
+        Button saveGithub = secondary("Save GitHub Configuration");
+        saveGithub.setOnAction(e -> saveGithubConfiguration(true));
+        Label storageHint = new Label("Storage follows the Local / Cloud toggle above (SQLite or Firebase Cloud).");
+        storageHint.getStyleClass().add("muted");
+        return new VBox(10,
+                actionRow(labeled("Owner", githubOwnerField), labeled("Repository", githubRepoField),
+                        labeled("Branch", githubBranchField)),
+                actionRow(githubStatusLabel, connectGithub, updateGithub, saveGithub),
+                storageHint);
+    }
+
+    private void ensureGithubConfigurationFields() {
+        if (githubOwnerField == null) githubOwnerField = new TextField();
+        if (githubRepoField == null) githubRepoField = new TextField();
+        if (githubBranchField == null) githubBranchField = new TextField("main");
+        if (githubStatusLabel == null) {
+            githubStatusLabel = new Label("GitHub: not connected");
+            githubStatusLabel.getStyleClass().add("muted");
+        }
+    }
+
+    private void browseConfigBasePath() {
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Choose VeyraAI Config Base Path");
+        File selected = chooser.showDialog(stage);
+        if (selected != null) {
+            configBasePathField.setText(selected.getAbsolutePath());
+        }
+    }
+
+    private void loadConfigPathFromExistingFolder() {
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Choose Existing VeyraAI Config Base Path");
+        File selected = chooser.showDialog(stage);
+        if (selected == null) {
+            return;
+        }
+        try {
+            Path selectedPath = selected.toPath().toAbsolutePath().normalize();
+            Path configRoot = resolveVeyraAIConfigRoot(selectedPath);
+            Path sqliteDbPath = configRoot.resolve(CONFIG_CACHE_DB_NAME).toAbsolutePath().normalize();
+            if (!Files.exists(sqliteDbPath)) {
+                Files.createDirectories(configRoot);
+                initializeConfigStorage(sqliteDbPath);
+                saveConfigRootPath(configRoot, sqliteDbPath);
+                saveConfigRootPath(configRoot, bootstrapConfigCacheDatabasePath());
+            }
+            initializeConfigStorage(sqliteDbPath);
+
+            String cachedPath = cachedConfigRootPath(sqliteDbPath);
+            Path pathToLoad = cachedPath.isBlank()
+                    ? configRoot
+                    : Path.of(cachedPath).toAbsolutePath().normalize();
+            configBasePathField.setText(pathToLoad.toString());
+            saveConfigRootPath(pathToLoad, sqliteDbPath);
+            saveConfigRootPath(pathToLoad, bootstrapConfigCacheDatabasePath());
+            loadExecutionStorageMode(sqliteDbPath);
+            loadApiAiAgentProfile(sqliteDbPath);
+            updateConfigCachePathLabel();
+            applyConfiguredPathsToFields();
+            refreshHermesSessionOptions();
+            refreshDashboard();
+            configStatusLabel.setText("Loaded cached settings path: " + pathToLoad);
+            showInfo("Settings", "Loaded cached settings path: " + pathToLoad);
+        } catch (Exception e) {
+            showError("Load Settings Path Failed", e);
+        }
+    }
+
+    private void createVeyraAIConfigFolders() {
+        String basePathText = configBasePathField == null ? "" : configBasePathField.getText().trim();
+        if (basePathText.isBlank()) {
+            showWarning("Settings", "Enter a base path before creating folders.");
+            return;
+        }
+        try {
+            Path basePath = Path.of(basePathText).toAbsolutePath().normalize();
+            if (Files.exists(basePath) && !Files.isDirectory(basePath)) {
+                showWarning("Settings", "The selected base path is a file. Choose a folder path.");
+                return;
+            }
+            Path configRoot = resolveVeyraAIConfigRoot(basePath);
+            Files.createDirectories(configRoot);
+            for (String folder : TESTWEAVE_CONFIG_FOLDERS) {
+                Files.createDirectories(configRoot.resolve(folder));
+            }
+            Files.createDirectories(basePath.resolve("Reports").resolve("TestSuite_Reports"));
+            Files.createDirectories(basePath.resolve("Reports").resolve("Perfomance_Reports"));
+            Files.createDirectories(basePath.resolve("Reports").resolve("APIValidation_Reports"));
+            Files.createDirectories(basePath.resolve("Reports").resolve("DBValidator_Reports"));
+            Files.createDirectories(basePath.resolve("Reports").resolve("WebTesting_Reports"));
+            Path sqliteDbPath = configCacheDatabasePath(basePath);
+            boolean cacheAlreadyExists = Files.exists(sqliteDbPath);
+            saveConfigRootPath(configRoot, sqliteDbPath);
+            saveConfigRootPath(configRoot, bootstrapConfigCacheDatabasePath());
+            initializeConfigStorage(sqliteDbPath);
+            persistExecutionStorageMode(sqliteDbPath);
+            persistApiAiAgentProfile(sqliteDbPath);
+            updateConfigCachePathLabel();
+            applyConfiguredPathsToFields();
+            refreshHermesSessionOptions();
+            String message = "Created VeyraAIConfig folders at " + configRoot
+                    + ". SQLite cache " + (cacheAlreadyExists ? "reused" : "created") + " at " + sqliteDbPath;
+            configStatusLabel.setText(message);
+            showInfo("Settings", message);
+        } catch (Exception e) {
+            showError("Create Settings Folders Failed", e);
+        }
+    }
+
+    private Path resolveVeyraAIConfigRoot(Path basePath) {
+        Path fileName = basePath.getFileName();
+        if (fileName != null && (CONFIG_ROOT_FOLDER.equalsIgnoreCase(fileName.toString())
+                || LEGACY_CONFIG_ROOT_FOLDER.equalsIgnoreCase(fileName.toString()))) {
+            return basePath;
+        }
+        return basePath.resolve(CONFIG_ROOT_FOLDER);
+    }
+
+    private void autoLoadCachedConfigRootPath() {
+        if (configBasePathField == null || !configBasePathField.getText().trim().isBlank()) {
+            return;
+        }
+        try {
+            Path bootstrapDbPath = bootstrapConfigCacheDatabasePath();
+            if (!Files.exists(bootstrapDbPath)) {
+                return;
+            }
+            initializeConfigCacheTable(bootstrapDbPath);
+            String cachedPath = cachedConfigRootPath(bootstrapDbPath);
+            if (cachedPath.isBlank()) {
+                return;
+            }
+            Path configRoot = resolveVeyraAIConfigRoot(Path.of(cachedPath).toAbsolutePath().normalize());
+            Path projectDbPath = configRoot.resolve(CONFIG_CACHE_DB_NAME).toAbsolutePath().normalize();
+            if (Files.exists(projectDbPath)) {
+                initializeConfigStorage(projectDbPath);
+                String projectCachedPath = cachedConfigRootPath(projectDbPath);
+                if (!projectCachedPath.isBlank()) {
+                    configRoot = resolveVeyraAIConfigRoot(Path.of(projectCachedPath).toAbsolutePath().normalize());
+                    projectDbPath = configRoot.resolve(CONFIG_CACHE_DB_NAME).toAbsolutePath().normalize();
+                }
+                loadExecutionStorageMode(projectDbPath);
+                loadApiAiAgentProfile(projectDbPath);
+            }
+            configBasePathField.setText(configRoot.toString());
+            updateConfigCachePathLabel();
+            applyConfiguredPathsToFields();
+            refreshApiAiHermesSessionOptions();
+            configStatusLabel.setText("Auto-loaded cached VeyraAIConfig root path: " + configRoot);
+        } catch (Exception e) {
+            configStatusLabel.setText("Could not auto-load cached settings path: " + exceptionMessage(e));
+        }
+    }
+
+    private void loadCachedConfigRootPath(Path sqliteDbPath) {
+        try {
+            initializeConfigCacheTable(sqliteDbPath);
+            String cachedPath = cachedConfigRootPath(sqliteDbPath);
+            if (!cachedPath.isBlank()) {
+                configBasePathField.setText(cachedPath);
+                configStatusLabel.setText("Loaded cached VeyraAIConfig root path: " + cachedPath);
+            }
+        } catch (Exception e) {
+            configStatusLabel.setText("Settings cache unavailable: " + e.getMessage());
+        }
+    }
+
+    private void saveConfigRootPath(Path configRoot, Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        String sql = "INSERT INTO " + CONFIG_CACHE_TABLE
+                + " (system_user_key, root_path, updated_at, execution_storage_mode, api_ai_agent_profile) VALUES (?, ?, ?, ?, ?) "
+                + "ON CONFLICT(system_user_key) DO UPDATE SET root_path = excluded.root_path, updated_at = excluded.updated_at";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            statement.setString(2, configRoot.toAbsolutePath().normalize().toString());
+            statement.setString(3, Instant.now().toString());
+            statement.setString(4, selectedDashboardStorageMode().name());
+            statement.setString(5, selectedApiAiAgentProfile());
+            statement.executeUpdate();
+        }
+    }
+
+    private String cachedConfigRootPath(Path sqliteDbPath) throws Exception {
+        String sql = "SELECT root_path FROM " + CONFIG_CACHE_TABLE + " WHERE system_user_key = ?";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getString("root_path") : "";
+            }
+        }
+    }
+
+    private void truncateConfigCacheTable() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.initOwner(stage);
+        confirm.setTitle("Clear Settings Cache");
+        confirm.setHeaderText("Clear settings cache and local execution metrics?");
+        confirm.setContentText("This clears cached settings paths, saved execution storage mode, local SQLite execution metrics, "
+                + "and API AI Agent memory. You will lose local dashboard metrics and API memory stored in this DB. "
+                + "It does not delete folders from disk.");
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return;
+        }
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (!Files.exists(sqliteDbPath)) {
+                showWarning("Settings", "No SQLite cache DB exists at " + sqliteDbPath);
+                return;
+            }
+            initializeConfigCacheTable(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 Statement statement = connection.createStatement()) {
+                statement.executeUpdate("DELETE FROM " + CONFIG_CACHE_TABLE);
+            }
+            dashboardExecutionService.clearSqlite(sqliteDbPath);
+            clearApiAiMemorySqlite(sqliteDbPath);
+            refreshDashboard();
+            configStatusLabel.setText("Settings cache, local execution metrics, and API AI memory cleared.");
+            showInfo("Settings", "Settings cache, local execution metrics, and API AI memory cleared.");
+        } catch (Exception e) {
+            showError("Clear Settings Cache Failed", e);
+        }
+    }
+
+    private void initializeConfigCacheTable(Path sqliteDbPath) throws Exception {
+        Path parent = sqliteDbPath.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + CONFIG_CACHE_TABLE + " ("
+                    + "system_user_key TEXT PRIMARY KEY,"
+                    + "root_path TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL"
+                    + ")");
+            addColumnIfMissing(connection, CONFIG_CACHE_TABLE, "execution_storage_mode", "TEXT NOT NULL DEFAULT 'CLOUD'");
+            addColumnIfMissing(connection, CONFIG_CACHE_TABLE, "api_ai_agent_profile", "TEXT NOT NULL DEFAULT 'HERMES'");
+        }
+    }
+
+    private void initializeConfigStorage(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        initializeHermesSessionTable(sqliteDbPath);
+        initializeApiAiMemoryTable(sqliteDbPath);
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        dashboardExecutionService.initializeSqlite(sqliteDbPath);
+    }
+
+    private void initializeVeyraAIAgentTables(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + VEYRAAI_AGENT_SESSION_TABLE + " ("
+                    + "system_user_key TEXT NOT NULL,"
+                    + "session_name TEXT NOT NULL,"
+                    + "session_id TEXT NOT NULL,"
+                    + "title TEXT NOT NULL,"
+                    + "provider TEXT NOT NULL,"
+                    + "model TEXT NOT NULL,"
+                    + "created_at TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL,"
+                    + "PRIMARY KEY(system_user_key, session_name)"
+                    + ")");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + VEYRAAI_AGENT_MESSAGE_TABLE + " ("
+                    + "id TEXT PRIMARY KEY,"
+                    + "system_user_key TEXT NOT NULL,"
+                    + "session_id TEXT NOT NULL,"
+                    + "role TEXT NOT NULL,"
+                    + "skill TEXT NOT NULL,"
+                    + "content TEXT NOT NULL,"
+                    + "created_at TEXT NOT NULL"
+                    + ")");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + CUSTOM_AGENT_MEMORY_TABLE + " ("
+                    + "id TEXT PRIMARY KEY,"
+                    + "system_user_key TEXT NOT NULL,"
+                    + "level TEXT NOT NULL,"
+                    + "scope_id TEXT NOT NULL,"
+                    + "source TEXT NOT NULL,"
+                    + "type TEXT NOT NULL,"
+                    + "content_json TEXT NOT NULL,"
+                    + "summary TEXT NOT NULL,"
+                    + "tags_json TEXT NOT NULL,"
+                    + "confidence REAL NOT NULL DEFAULT 0,"
+                    + "importance INTEGER NOT NULL DEFAULT 1,"
+                    + "created_at TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL,"
+                    + "last_used_at TEXT NOT NULL"
+                    + ")");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + VEYRAAI_MODEL_PROVIDER_TABLE + " ("
+                    + "system_user_key TEXT NOT NULL,"
+                    + "provider TEXT NOT NULL,"
+                    + "endpoint TEXT NOT NULL,"
+                    + "model TEXT NOT NULL,"
+                    + "api_key TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL,"
+                    + "PRIMARY KEY(system_user_key, provider)"
+                    + ")");
+            addColumnIfMissing(connection, VEYRAAI_MODEL_PROVIDER_TABLE, "auth_mode", "TEXT NOT NULL DEFAULT 'API Key'");
+            addColumnIfMissing(connection, VEYRAAI_MODEL_PROVIDER_TABLE, "client_id", "TEXT");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + VEYRAAI_PROVIDER_AUTH_TABLE + " ("
+                    + "system_user_key TEXT NOT NULL,"
+                    + "provider TEXT NOT NULL,"
+                    + "auth_mode TEXT NOT NULL,"
+                    + "credential_json TEXT NOT NULL,"
+                    + "storage_mode TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL,"
+                    + "PRIMARY KEY(system_user_key, provider)"
+                    + ")");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + TEST_PLANNING_CONNECTOR_TABLE + " ("
+                    + "system_user_key TEXT PRIMARY KEY,"
+                    + "jira_email TEXT NOT NULL,"
+                    + "jira_token TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL"
+                    + ")");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + GITHUB_ACTIONS_CONFIG_TABLE + " ("
+                    + "system_user_key TEXT PRIMARY KEY,"
+                    + "owner TEXT NOT NULL,"
+                    + "repository TEXT NOT NULL,"
+                    + "branch TEXT NOT NULL,"
+                    + "access_token TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL"
+                    + ")");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS project_memory (id TEXT PRIMARY KEY, memory_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS db_memory (id TEXT PRIMARY KEY, memory_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS ui_memory (id TEXT PRIMARY KEY, memory_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS workflow_memory (id TEXT PRIMARY KEY, memory_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS execution_memory (id TEXT PRIMARY KEY, memory_json TEXT NOT NULL, updated_at TEXT NOT NULL)");
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + VEYRAAI_RELEASE_HEALTH_TABLE + " ("
+                    + "id TEXT PRIMARY KEY,"
+                    + "summary TEXT NOT NULL,"
+                    + "release_health_json TEXT NOT NULL,"
+                    + "insights_json TEXT NOT NULL,"
+                    + "created_at TEXT NOT NULL"
+                    + ")");
+        }
+    }
+
+    private void initializeApiAiMemoryTable(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + API_AI_MEMORY_TABLE + " ("
+                    + "id TEXT PRIMARY KEY,"
+                    + "endpoint TEXT NOT NULL,"
+                    + "method TEXT NOT NULL,"
+                    + "response_json TEXT NOT NULL,"
+                    + "variables_json TEXT NOT NULL,"
+                    + "validations_json TEXT NOT NULL,"
+                    + "db_mappings_json TEXT NOT NULL,"
+                    + "created_at TEXT NOT NULL"
+                    + ")");
+            addColumnIfMissing(connection, API_AI_MEMORY_TABLE, "action_name", "TEXT");
+            addColumnIfMissing(connection, API_AI_MEMORY_TABLE, "provider", "TEXT");
+            addColumnIfMissing(connection, API_AI_MEMORY_TABLE, "hermes_session_id", "TEXT");
+        }
+    }
+
+    private void clearApiAiMemorySqlite(Path sqliteDbPath) throws Exception {
+        initializeApiAiMemoryTable(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("DELETE FROM " + API_AI_MEMORY_TABLE);
+        }
+    }
+
+    private void initializeHermesSessionTable(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + HERMES_SESSION_TABLE + " ("
+                    + "system_user_key TEXT NOT NULL,"
+                    + "session_name TEXT NOT NULL,"
+                    + "transcript TEXT NOT NULL,"
+                    + "updated_at TEXT NOT NULL,"
+                    + "PRIMARY KEY(system_user_key, session_name)"
+                    + ")");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "session_id", "TEXT");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "title", "TEXT");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "resume_command", "TEXT");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "transcript_path", "TEXT");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "ai_agent_path", "TEXT");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "container_name", "TEXT");
+            addColumnIfMissing(connection, HERMES_SESSION_TABLE, "created_at", "TEXT");
+        }
+    }
+
+    private void addColumnIfMissing(Connection connection, String tableName, String columnName, String columnDefinition) throws Exception {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+            while (resultSet.next()) {
+                if (columnName.equalsIgnoreCase(resultSet.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnDefinition);
+        }
+    }
+
+    private void refreshHermesSessionOptions() {
+        if (hermesSessionBox == null) {
+            return;
+        }
+        String selected = hermesSessionBox.getValue();
+        List<String> sessions = new ArrayList<>();
+        hermesSessionRecords.clear();
+        sessions.add(HERMES_NEW_SESSION);
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (Files.exists(sqliteDbPath)) {
+                initializeHermesSessionTable(sqliteDbPath);
+                try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                     PreparedStatement statement = connection.prepareStatement("SELECT session_name, session_id, title, resume_command, transcript_path, ai_agent_path, container_name FROM "
+                             + HERMES_SESSION_TABLE + " WHERE system_user_key = ? ORDER BY updated_at DESC")) {
+                    statement.setString(1, configCacheKey());
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        while (resultSet.next()) {
+                            HermesSessionRecord record = new HermesSessionRecord(
+                                    resultSet.getString("session_name"),
+                                    resultSet.getString("session_id"),
+                                    resultSet.getString("title"),
+                                    resultSet.getString("resume_command"),
+                                    resultSet.getString("transcript_path"),
+                                    resultSet.getString("ai_agent_path"),
+                                    resultSet.getString("container_name"));
+                            String display = hermesSessionDisplayName(record);
+                            sessions.add(display);
+                            hermesSessionRecords.put(display, record);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Settings may not be loaded yet; keep only New Session.
+        }
+        hermesSessionBox.setItems(FXCollections.observableArrayList(sessions));
+        hermesSessionBox.setValue(selected != null && sessions.contains(selected) ? selected : HERMES_NEW_SESSION);
+    }
+
+    private String hermesSessionDisplayName(HermesSessionRecord record) {
+        String title = firstNonBlank(record.title(), record.sessionName(), "Hermes Session");
+        String sessionId = nullToBlank(record.sessionId());
+        if (!sessionId.isBlank() && (title.equals(sessionId) || "Hermes Session".equalsIgnoreCase(title))) {
+            return sessionId;
+        }
+        return sessionId.isBlank() ? title : title + " (" + sessionId + ")";
+    }
+
+    private void saveManualHermesSessionId() {
+        String sessionId = hermesManualSessionIdField == null ? "" : hermesManualSessionIdField.getText().trim();
+        if (sessionId.isBlank()) {
+            showWarning("Save Hermes Session", "Enter a Hermes session id first.");
+            return;
+        }
+        if (sessionId.contains(" ")) {
+            showWarning("Save Hermes Session", "Session id should not contain spaces.");
+            return;
+        }
+        try {
+            Path aiAgentPath = hermesDataDirectory();
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeHermesSessionTable(sqliteDbPath);
+            String now = Instant.now().toString();
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + HERMES_SESSION_TABLE
+                         + " (system_user_key, session_name, transcript, updated_at, session_id, title, resume_command, transcript_path, ai_agent_path, container_name, created_at) "
+                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                         + "ON CONFLICT(system_user_key, session_name) DO UPDATE SET "
+                         + "transcript = excluded.transcript, updated_at = excluded.updated_at, session_id = excluded.session_id, "
+                         + "title = excluded.title, resume_command = excluded.resume_command, transcript_path = excluded.transcript_path, "
+                         + "ai_agent_path = excluded.ai_agent_path, container_name = excluded.container_name")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, sessionId);
+                statement.setString(3, "");
+                statement.setString(4, now);
+                statement.setString(5, sessionId);
+                statement.setString(6, sessionId);
+                statement.setString(7, "hermes --resume " + sessionId);
+                statement.setString(8, "");
+                statement.setString(9, aiAgentPath.toString());
+                statement.setString(10, hermesContainerName());
+                statement.setString(11, now);
+                statement.executeUpdate();
+            }
+            refreshHermesSessionOptions();
+            if (hermesSessionBox != null) {
+                hermesSessionBox.setValue(sessionId);
+            }
+            appendHermesLog("Saved Hermes session id to SQLite cache: " + sessionId);
+            showInfo("Hermes Session Saved", "Saved session id: " + sessionId);
+        } catch (Exception e) {
+            showError("Save Hermes Session Failed", e);
+        }
+    }
+
+    private String loadHermesSessionTranscript(String sessionName) {
+        if (sessionName == null || sessionName.isBlank() || HERMES_NEW_SESSION.equals(sessionName)) {
+            return "";
+        }
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeHermesSessionTable(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("SELECT transcript FROM "
+                         + HERMES_SESSION_TABLE + " WHERE system_user_key = ? AND session_name = ?")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, sessionName);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    return resultSet.next() ? resultSet.getString("transcript") : "";
+                }
+            }
+        } catch (Exception e) {
+            return "[Could not load saved session: " + exceptionMessage(e) + "]" + System.lineSeparator();
+        }
+    }
+
+    private Connection openConfigCacheConnection(Path sqliteDbPath) throws Exception {
+        return DriverManager.getConnection("jdbc:sqlite:" + sqliteDbPath.toAbsolutePath().normalize());
+    }
+
+    private Path configCacheDatabasePathFromField() {
+        String basePathText = configBasePathField == null ? "" : configBasePathField.getText().trim();
+        if (basePathText.isBlank()) {
+            throw new IllegalArgumentException("Enter a base path first.");
+        }
+        return configCacheDatabasePath(Path.of(basePathText).toAbsolutePath().normalize());
+    }
+
+    private Path configCacheDatabasePath(Path basePath) {
+        return resolveVeyraAIConfigRoot(basePath).resolve(CONFIG_CACHE_DB_NAME).toAbsolutePath().normalize();
+    }
+
+    private Path bootstrapConfigCacheDatabasePath() {
+        return Path.of(System.getProperty("user.home"), ".testweave", CONFIG_CACHE_DB_NAME)
+                .toAbsolutePath()
+                .normalize();
+    }
+
+    private void updateConfigCachePathLabel() {
+        if (configCacheDbLabel == null || configBasePathField == null) {
+            return;
+        }
+        String basePathText = configBasePathField.getText() == null ? "" : configBasePathField.getText().trim();
+        if (basePathText.isBlank()) {
+            configCacheDbLabel.setText("SQLite Cache: enter a base path to see where the DB will be created.");
+            return;
+        }
+        Path sqliteDbPath = configCacheDatabasePath(Path.of(basePathText).toAbsolutePath().normalize());
+        configCacheDbLabel.setText("SQLite Cache: " + sqliteDbPath);
+    }
+
+    private StorageMode selectedDashboardStorageMode() {
+        return configExecutionStorageToggle != null && !configExecutionStorageToggle.isSelected() ? StorageMode.LOCAL : StorageMode.CLOUD;
+    }
+
+    private void updateExecutionStorageToggle() {
+        if (configExecutionStorageToggle == null) {
+            return;
+        }
+        boolean cloud = configExecutionStorageToggle.isSelected();
+        configExecutionStorageToggle.setText("");
+        updateStorageToggleGraphic(configExecutionStorageToggle, cloud);
+        configExecutionStorageToggle.setAccessibleText("Execution logs storage mode: " + (cloud ? "Cloud Firebase" : "Local SQLite"));
+        if (configExecutionStorageLabel != null) {
+            configExecutionStorageLabel.setText(cloud
+                    ? "Selected: Cloud - execution logs upload to Firebase."
+                    : "Selected: Local - execution logs save to SQLite cache DB.");
+        }
+    }
+
+    private void updateApiAiAgentToggleLabels() {
+        if (apiAiAgentRuntimeToggle != null) {
+            boolean hermes = isHermesRuntimeSelected();
+            apiAiAgentRuntimeToggle.setText("");
+            updateStorageToggleGraphic(apiAiAgentRuntimeToggle, !hermes);
+            apiAiAgentRuntimeToggle.setAccessibleText("AI Analysis agent runtime: "
+                    + (hermes ? "Hermes Agent" : "Agentic AI API, DB, Web and Test Planning Agents"));
+            setVisibleManaged(hermesAgentRuntimePane, hermes);
+        }
+        if (apiAiAgentStorageToggle != null) {
+            boolean cloud = apiAiAgentStorageToggle.isSelected();
+            apiAiAgentStorageToggle.setText("");
+            updateStorageToggleGraphic(apiAiAgentStorageToggle, cloud);
+            if (apiAiAgentStorageLabel != null) {
+                apiAiAgentStorageLabel.setText(cloud
+                        ? "Selected: Cloud - agent sessions and AI memory save to Firebase."
+                        : "Selected: Local - agent sessions and AI memory save to SQLite cache DB.");
+            }
+        }
+        if (apiAiAgentProfileLabel != null) {
+            apiAiAgentProfileLabel.setText(isHermesRuntimeSelected()
+                    ? "Selected: Hermes Agent - AI Analysis uses the active Hermes session."
+                    : "Selected: Agentic AI - API, DB, Web and Test Planning Agents share the configured model and selected session.");
+        }
+        refreshVeyraAIAgentSessionOptions();
+        refreshApiAiHermesSessionOptions();
+        updateApiAiConnectionLabels();
+    }
+
+    private boolean isHermesRuntimeSelected() {
+        return false;
+    }
+
+    private boolean isVeyraAIRuntimeSelected() {
+        return !isHermesRuntimeSelected();
+    }
+
+    private void setVisibleManaged(javafx.scene.Node node, boolean visible) {
+        if (node == null) {
+            return;
+        }
+        node.setVisible(visible);
+        node.setManaged(visible);
+    }
+
+    private String selectedVeyraAIProvider() {
+        return veyraaiAgentProviderBox == null ? "OpenAI" : firstNonBlank(veyraaiAgentProviderBox.getValue(), "OpenAI");
+    }
+
+    private String defaultVeyraAIProviderEndpoint(String provider) {
+        return switch (firstNonBlank(provider, "OpenAI")) {
+            case "DeepSeek" -> "https://api.deepseek.com/chat/completions";
+            case "Google Gemini" -> "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
+            case "Gemini CLI" -> "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
+            case "Anthropic Claude" -> "https://api.anthropic.com/v1/messages";
+            case "Claude Code" -> "https://api.anthropic.com/v1/messages";
+            case "GitHub Copilot" -> "https://api.githubcopilot.com/chat/completions";
+            case "Amazon Q Developer" -> "https://qdeveloper.amazonaws.com";
+            case "Groq" -> "https://api.groq.com/openai/v1/chat/completions";
+            case "OpenRouter" -> "https://openrouter.ai/api/v1/chat/completions";
+            case "Mistral" -> "https://api.mistral.ai/v1/chat/completions";
+            case "Azure OpenAI / Azure AI Foundry" -> "https://{resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-10-21";
+            case "Ollama Local" -> "http://localhost:11434/v1/chat/completions";
+            case "LM Studio Local" -> "http://localhost:1234/v1/chat/completions";
+            case "Custom OpenAI-Compatible Endpoint" -> "http://localhost:8000/v1/chat/completions";
+            case "OpenAI Codex", "OpenAI Codex CLI" -> "codex://bundled-cli";
+            default -> "https://api.openai.com/v1/chat/completions";
+        };
+    }
+
+    private String defaultVeyraAIProviderModel(String provider) {
+        return switch (firstNonBlank(provider, "OpenAI")) {
+            case "DeepSeek" -> "deepseek-chat";
+            case "Google Gemini" -> "gemini-2.5-pro";
+            case "Gemini CLI" -> "gemini-2.5-pro";
+            case "Anthropic Claude" -> "claude-sonnet-4-5";
+            case "Claude Code" -> "claude-sonnet-4-5";
+            case "GitHub Copilot" -> "gpt-5";
+            case "Amazon Q Developer" -> "amazon-q-developer";
+            case "Groq" -> "llama-3.3-70b-versatile";
+            case "OpenRouter" -> "openai/gpt-5.5";
+            case "Mistral" -> "mistral-large-latest";
+            case "Azure OpenAI / Azure AI Foundry" -> "gpt-5.5";
+            case "Ollama Local" -> "llama3.1";
+            case "LM Studio Local" -> "local-model";
+            case "Custom OpenAI-Compatible Endpoint" -> "custom-model";
+            case "OpenAI Codex", "OpenAI Codex CLI" -> "gpt-5";
+            default -> "gpt-5.5";
+        };
+    }
+
+    private String defaultVeyraAIAuthMode(String provider) {
+        return switch (firstNonBlank(provider, "OpenAI")) {
+            case "OpenAI Codex", "OpenAI Codex CLI", "Claude Code", "Google Gemini", "Gemini CLI", "GitHub Copilot",
+                    "Amazon Q Developer", "Azure OpenAI / Azure AI Foundry" -> "OAuth Device Code";
+            case "OpenRouter" -> "OAuth PKCE";
+            case "Ollama Local", "LM Studio Local" -> "Local Model";
+            default -> "API Key";
+        };
+    }
+
+    private void updateCustomAgentProviderFields() {
+        if (veyraaiAgentProviderBox == null) {
+            return;
+        }
+        String provider = selectedVeyraAIProvider();
+        boolean codex = isOpenAiCodexProvider(provider);
+        setVisibleManaged(veyraaiAgentDeepSeekConfigRow, !codex);
+        setVisibleManaged(veyraaiAgentCodexConfigRow, codex);
+        setVisibleManaged(veyraaiAgentCodexClientRow, codex);
+        if (veyraaiAgentAuthModeBox != null) {
+            veyraaiAgentAuthModeBox.setValue(defaultVeyraAIAuthMode(provider));
+            veyraaiAgentAuthModeBox.setDisable(codex);
+        }
+        if (veyraaiAgentEndpointField != null) {
+            veyraaiAgentEndpointField.setDisable(codex);
+            veyraaiAgentEndpointField.setText(defaultVeyraAIProviderEndpoint(provider));
+        }
+        if (veyraaiAgentApiKeyField != null) {
+            veyraaiAgentApiKeyField.setDisable(codex);
+            veyraaiAgentApiKeyField.setPromptText(codex ? "Managed by bundled Codex CLI OAuth" : "DeepSeek API key");
+            if (codex) {
+                veyraaiAgentApiKeyField.clear();
+            }
+        }
+        if (veyraaiAgentClientIdField != null) {
+            veyraaiAgentClientIdField.setDisable(!codex);
+        }
+        if (veyraaiAgentCodexPathLabel != null) {
+            Path bundledCodex = findBundledCodexCliExecutable();
+            veyraaiAgentCodexPathLabel.setText(Files.isRegularFile(bundledCodex)
+                    ? bundledCodex.toString()
+                    : "Missing: " + expectedBundledCodexCliPath());
+        }
+        if (veyraaiAgentConnectionLabel != null) {
+            Path bundledCodex = findBundledCodexCliExecutable();
+            if (codex) {
+                veyraaiAgentConnectionLabel.setText(Files.isRegularFile(bundledCodex)
+                        ? "Agentic AI: bundled Codex CLI ready for API, DB and Web Agents"
+                        : "Agentic AI: bundled Codex CLI missing");
+            } else {
+                veyraaiAgentConnectionLabel.setText("Agentic AI: DeepSeek API key required for API, DB and Web Agents");
+            }
+        }
+    }
+
+    private boolean isOpenAiCodexProvider(String provider) {
+        return "OpenAI Codex".equals(provider) || CUSTOM_AGENT_PROVIDER_CODEX.equals(provider);
+    }
+
+    private void refreshVeyraAIAgentSessionOptions() {
+        if (veyraaiAgentSessionBox == null) {
+            return;
+        }
+        String selected = veyraaiAgentSessionBox.getValue();
+        List<String> sessions = new ArrayList<>();
+        veyraaiAgentSessionRecords.clear();
+        sessions.add(VEYRAAI_NEW_SESSION);
+        try {
+            if (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL) {
+                addLocalVeyraAISessionsToList(sessions);
+            } else {
+                addCloudVeyraAISessionsToList(sessions);
+            }
+        } catch (Exception ignored) {
+            // Settings may not be loaded yet; keep only New Session.
+        }
+        veyraaiAgentSessionBox.setItems(FXCollections.observableArrayList(sessions));
+        veyraaiAgentSessionBox.setValue(selected != null && sessions.contains(selected) ? selected : VEYRAAI_NEW_SESSION);
+    }
+
+    private void clearVeyraAIAgentSessions() {
+        try {
+            if (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL) {
+                clearLocalVeyraAIAgentSessions();
+            } else {
+                clearCloudVeyraAIAgentSessions();
+            }
+            if (activeVeyraAIAgentSession != null) {
+                activeVeyraAIAgentSession = null;
+                activeVeyraAIModelConfig = null;
+                apiAiConnectedModel = selectedApiAiAgentName();
+                updateApiAiConnectionLabels();
+            }
+            refreshVeyraAIAgentSessionOptions();
+            if (veyraaiAgentSessionBox != null) {
+                veyraaiAgentSessionBox.setValue(VEYRAAI_NEW_SESSION);
+            }
+            if (veyraaiAgentConnectionLabel != null) {
+                veyraaiAgentConnectionLabel.setText("Agentic AI: shared API, DB, Web and Test Planning Agent sessions cleared");
+            }
+            showInfo("Agentic AI Sessions", "Cleared saved shared API, DB, Web and Test Planning Agent sessions from the current storage mode.");
+        } catch (Exception e) {
+            showError("Clear Agentic AI Sessions Failed", e);
+        }
+    }
+
+    private void confirmAndClearCustomAgentMemory(String level) {
+        String label = "all".equals(level) ? "Agentic AI Memory Repository" : customAgentMemoryLevelLabel(level);
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Clear " + label);
+        confirm.setHeaderText("Clear " + label + "?");
+        confirm.setContentText("This clears saved knowledge for the API, DB, Web and Test Planning Agents.");
+        confirm.showAndWait().filter(ButtonType.OK::equals).ifPresent(button -> {
+            try {
+                clearCustomAgentMemory(level);
+                showInfo("Agentic AI Memory", "Cleared " + label + ".");
+            } catch (Exception e) {
+                showError("Clear Agentic AI Memory Failed", e);
+            }
+        });
+    }
+
+    private void confirmAndClearWebAgentMemory(String level) {
+        String label = "knowledgeBase".equals(level) ? "Web Agent Healing Knowledge"
+                : "Web Agent " + customAgentMemoryLevelLabel(level).replace("Agentic AI ", "");
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Clear " + label);
+        confirm.setHeaderText("Clear " + label + "?");
+        confirm.setContentText("knowledgeBase".equals(level)
+                ? "Previously approved locator, variable and expected-value corrections will no longer be available for instant reuse. API and DB knowledge is not changed."
+                : "This clears only UI Studio/Web Agent memory at this level. API, DB and Hermes data is not changed.");
+        confirm.showAndWait().filter(ButtonType.OK::equals).ifPresent(button -> {
+            try {
+                clearWebAgentMemory(level);
+                refreshWebAgentDiagnostics();
+                showInfo("Web Agent Memory", "Cleared " + label + ".");
+            } catch (Exception exception) {
+                showError("Clear Web Agent Memory Failed", exception);
+            }
+        });
+    }
+
+    private void confirmAndClearTestPlanningMemory() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Clear Test Planning Memory");
+        confirm.setHeaderText("Clear Test Planning Agent memory?");
+        confirm.setContentText("Generated workbooks remain on disk, but saved test-planning context and reusable knowledge will be removed.");
+        confirm.showAndWait().filter(ButtonType.OK::equals).ifPresent(button -> {
+            try {
+                Path sqliteDbPath = configCacheDatabasePathFromField();
+                initializeVeyraAIAgentTables(sqliteDbPath);
+                try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                     PreparedStatement statement = connection.prepareStatement("DELETE FROM " + CUSTOM_AGENT_MEMORY_TABLE
+                             + " WHERE system_user_key = ? AND source = 'testDesign'")) {
+                    statement.setString(1, configCacheKey());
+                    statement.executeUpdate();
+                }
+                synchronized (customAgentSessionMemory) {
+                    customAgentSessionMemory.removeIf(entry -> "testDesign".equals(entry.source()));
+                }
+                showInfo("Test Planning Memory", "Cleared Test Planning Agent memory.");
+            } catch (Exception exception) {
+                showError("Clear Test Planning Memory Failed", exception);
+            }
+        });
+    }
+
+    private void clearWebAgentMemory(String level) throws Exception {
+        if ("session".equals(level)) {
+            synchronized (customAgentSessionMemory) {
+                customAgentSessionMemory.removeIf(entry -> "uiStudio".equals(entry.source()));
+            }
+            return;
+        }
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement("DELETE FROM " + CUSTOM_AGENT_MEMORY_TABLE
+                     + " WHERE system_user_key = ? AND source = 'uiStudio' AND level = ?")) {
+            statement.setString(1, configCacheKey());
+            statement.setString(2, level);
+            statement.executeUpdate();
+        }
+    }
+
+    private String customAgentMemoryLevelLabel(String level) {
+        return switch (level) {
+            case "session" -> "Agentic AI Session Memory";
+            case "context" -> "Agentic AI Context Memory";
+            case "suggestion" -> "Agentic AI Suggestion Memory";
+            case "crossSession" -> "Agentic AI Cross-Session Memory";
+            case "knowledgeBase" -> "Agentic AI Knowledge Base";
+            default -> "Agentic AI Memory";
+        };
+    }
+
+    private void clearCustomAgentMemory(String level) throws Exception {
+        if ("session".equals(level) || "all".equals(level)) {
+            customAgentSessionMemory.clear();
+        }
+        if (!"session".equals(level)) {
+            clearPersistentCustomAgentMemory(level);
+        }
+    }
+
+    private void clearPersistentCustomAgentMemory(String level) throws Exception {
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        String sql = "all".equals(level)
+                ? "DELETE FROM " + CUSTOM_AGENT_MEMORY_TABLE + " WHERE system_user_key = ?"
+                : "DELETE FROM " + CUSTOM_AGENT_MEMORY_TABLE + " WHERE system_user_key = ? AND level = ?";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            if (!"all".equals(level)) {
+                statement.setString(2, level);
+            }
+            statement.executeUpdate();
+        }
+    }
+
+    private void saveCustomAgentMemory(String level, String scopeId, String source, String type,
+                                       JSONObject content, String summary, JSONArray tags,
+                                       double confidence, int importance) {
+        String now = Instant.now().toString();
+        CustomAgentMemoryEntry entry = new CustomAgentMemoryEntry(
+                "cam-" + System.currentTimeMillis() + "-" + UUID.randomUUID(),
+                level,
+                firstNonBlank(scopeId, configCacheKey()),
+                source,
+                type,
+                content == null ? new JSONObject() : content,
+                firstNonBlank(summary, type),
+                tags == null ? new JSONArray() : tags,
+                confidence,
+                importance,
+                now,
+                now,
+                now);
+        if ("session".equals(level)) {
+            customAgentSessionMemory.add(entry);
+            return;
+        }
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + CUSTOM_AGENT_MEMORY_TABLE
+                         + " (id, system_user_key, level, scope_id, source, type, content_json, summary, tags_json, confidence, importance, created_at, updated_at, last_used_at) "
+                         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                statement.setString(1, entry.id());
+                statement.setString(2, configCacheKey());
+                statement.setString(3, entry.level());
+                statement.setString(4, entry.scopeId());
+                statement.setString(5, entry.source());
+                statement.setString(6, entry.type());
+                statement.setString(7, entry.content().toString());
+                statement.setString(8, entry.summary());
+                statement.setString(9, entry.tags().toString());
+                statement.setDouble(10, entry.confidence());
+                statement.setInt(11, entry.importance());
+                statement.setString(12, entry.createdAt());
+                statement.setString(13, entry.updatedAt());
+                statement.setString(14, entry.lastUsedAt());
+                statement.executeUpdate();
+            }
+        } catch (Exception e) {
+            logApiAiConsole("Could not save Custom Agent memory", e);
+        }
+    }
+
+    private JSONArray searchCustomAgentMemory(String source, String action, int limit, boolean knowledgeOnly) {
+        JSONArray items = new JSONArray();
+        synchronized (customAgentSessionMemory) {
+            customAgentSessionMemory.stream()
+                    .filter(entry -> !knowledgeOnly)
+                    .filter(entry -> source.isBlank() || source.equals(entry.source()))
+                    .limit(Math.max(0, limit))
+                    .forEach(entry -> items.put(customAgentMemoryEntryJson(entry)));
+        }
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (!Files.exists(sqliteDbPath)) {
+                return items;
+            }
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            String sql = "SELECT id, level, scope_id, source, type, content_json, summary, tags_json, confidence, importance, created_at, updated_at, last_used_at "
+                    + "FROM " + CUSTOM_AGENT_MEMORY_TABLE + " WHERE system_user_key = ? "
+                    + (source.isBlank() ? "" : "AND source = ? ")
+                    + (knowledgeOnly ? "AND level = 'knowledgeBase' " : "")
+                    + "ORDER BY importance DESC, updated_at DESC LIMIT ?";
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement(sql)) {
+                int index = 1;
+                statement.setString(index++, configCacheKey());
+                if (!source.isBlank()) {
+                    statement.setString(index++, source);
+                }
+                statement.setInt(index, Math.max(1, limit));
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        items.put(new JSONObject()
+                                .put("id", resultSet.getString("id"))
+                                .put("level", resultSet.getString("level"))
+                                .put("scopeId", resultSet.getString("scope_id"))
+                                .put("source", resultSet.getString("source"))
+                                .put("type", resultSet.getString("type"))
+                                .put("summary", resultSet.getString("summary"))
+                                .put("tags", new JSONArray(firstNonBlank(resultSet.getString("tags_json"), "[]")))
+                                .put("confidence", resultSet.getDouble("confidence"))
+                                .put("importance", resultSet.getInt("importance"))
+                                .put("content", safeJsonObject(firstNonBlank(resultSet.getString("content_json"), "{}"))));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logApiAiConsole("Could not search Custom Agent memory", e);
+        }
+        return items;
+    }
+
+    private JSONObject customAgentMemoryEntryJson(CustomAgentMemoryEntry entry) {
+        return new JSONObject()
+                .put("id", entry.id())
+                .put("level", entry.level())
+                .put("scopeId", entry.scopeId())
+                .put("source", entry.source())
+                .put("type", entry.type())
+                .put("summary", entry.summary())
+                .put("tags", entry.tags())
+                .put("confidence", entry.confidence())
+                .put("importance", entry.importance())
+                .put("content", entry.content());
+    }
+
+    private void clearLocalVeyraAIAgentSessions() throws Exception {
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath)) {
+            try (PreparedStatement statement = connection.prepareStatement("DELETE FROM " + VEYRAAI_AGENT_MESSAGE_TABLE
+                    + " WHERE system_user_key = ?")) {
+                statement.setString(1, configCacheKey());
+                statement.executeUpdate();
+            }
+            try (PreparedStatement statement = connection.prepareStatement("DELETE FROM " + VEYRAAI_AGENT_SESSION_TABLE
+                    + " WHERE system_user_key = ?")) {
+                statement.setString(1, configCacheKey());
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    private void clearCloudVeyraAIAgentSessions() throws Exception {
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpClient client = HttpClient.newHttpClient();
+        HttpResponse<String> sessionsResponse = client.send(apiAiFirebaseRequest(API_AI_VEYRAAI_SESSION_FIREBASE_PATH
+                        + "/" + key + ".json")
+                        .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        requireSuccessfulFirebaseDelete(sessionsResponse, "Firebase VeyraAI sessions clear");
+        HttpResponse<String> messagesResponse = client.send(apiAiFirebaseRequest(API_AI_VEYRAAI_MESSAGE_FIREBASE_PATH
+                        + "/" + key + ".json")
+                        .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        requireSuccessfulFirebaseDelete(messagesResponse, "Firebase VeyraAI session messages clear");
+    }
+
+    private void requireSuccessfulFirebaseDelete(HttpResponse<String> response, String operation) {
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException(operation + " failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private void addLocalVeyraAISessionsToList(List<String> sessions) throws Exception {
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        if (!Files.exists(sqliteDbPath)) {
+            return;
+        }
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement("SELECT session_name, session_id, title, provider, model, created_at FROM "
+                     + VEYRAAI_AGENT_SESSION_TABLE + " WHERE system_user_key = ? ORDER BY updated_at DESC")) {
+            statement.setString(1, configCacheKey());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    addVeyraAISessionOption(sessions, new VeyraAIAgentSession(resultSet.getString("session_name"),
+                            resultSet.getString("session_id"), resultSet.getString("title"),
+                            resultSet.getString("provider"), resultSet.getString("model"),
+                            resultSet.getString("created_at")));
+                }
+            }
+        }
+    }
+
+    private void addCloudVeyraAISessionsToList(List<String> sessions) throws Exception {
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_VEYRAAI_SESSION_FIREBASE_PATH
+                        + "/" + key + ".json").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 || response.body() == null || response.body().isBlank() || "null".equals(response.body())) {
+            return;
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase VeyraAI sessions load failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+        JSONObject root = new JSONObject(response.body());
+        for (String id : root.keySet()) {
+            JSONObject item = root.optJSONObject(id);
+            if (item == null) continue;
+            addVeyraAISessionOption(sessions, new VeyraAIAgentSession(
+                    item.optString("sessionName"),
+                    item.optString("sessionId", id),
+                    item.optString("title"),
+                    item.optString("provider"),
+                    item.optString("model"),
+                    item.optString("createdAt")));
+        }
+    }
+
+    private void addVeyraAISessionOption(List<String> sessions, VeyraAIAgentSession session) {
+        String display = veyraaiSessionDisplayName(session);
+        sessions.add(display);
+        veyraaiAgentSessionRecords.put(display, session);
+    }
+
+    private String veyraaiSessionDisplayName(VeyraAIAgentSession session) {
+        String title = firstNonBlank(session.title(), "VeyraAI Session");
+        String id = nullToBlank(session.sessionId());
+        return id.isBlank() ? title : title + " (" + id + ")";
+    }
+
+    private void loadVeyraAIProviderConfigIntoFields(String provider) {
+        if (veyraaiAgentEndpointField == null || veyraaiAgentModelField == null || veyraaiAgentApiKeyField == null) {
+            return;
+        }
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (!Files.exists(sqliteDbPath)) {
+                return;
+            }
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("SELECT endpoint, model, api_key, auth_mode, client_id FROM "
+                         + VEYRAAI_MODEL_PROVIDER_TABLE + " WHERE system_user_key = ? AND provider = ?")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, provider);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    if (resultSet.next()) {
+                        veyraaiAgentEndpointField.setText(firstNonBlank(resultSet.getString("endpoint"), defaultVeyraAIProviderEndpoint(provider)));
+                        veyraaiAgentModelField.setText(firstNonBlank(resultSet.getString("model"), defaultVeyraAIProviderModel(provider)));
+                        veyraaiAgentApiKeyField.setText(nullToBlank(resultSet.getString("api_key")));
+                        if (veyraaiAgentAuthModeBox != null) {
+                            veyraaiAgentAuthModeBox.setValue(firstNonBlank(resultSet.getString("auth_mode"), defaultVeyraAIAuthMode(provider)));
+                        }
+                        if (veyraaiAgentClientIdField != null) {
+                            veyraaiAgentClientIdField.setText(nullToBlank(resultSet.getString("client_id")));
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // The user can still enter provider settings manually.
+        }
+    }
+
+    private void saveVeyraAIProviderConfig(VeyraAIModelConfig config, Path sqliteDbPath) throws Exception {
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        String sql = "INSERT INTO " + VEYRAAI_MODEL_PROVIDER_TABLE
+                + " (system_user_key, provider, endpoint, model, api_key, auth_mode, client_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                + "ON CONFLICT(system_user_key, provider) DO UPDATE SET endpoint = excluded.endpoint, "
+                + "model = excluded.model, api_key = excluded.api_key, auth_mode = excluded.auth_mode, "
+                + "client_id = excluded.client_id, updated_at = excluded.updated_at";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            statement.setString(2, config.provider());
+            statement.setString(3, config.endpoint());
+            statement.setString(4, config.model());
+            statement.setString(5, config.apiKey());
+            statement.setString(6, config.authMode());
+            statement.setString(7, config.clientId());
+            statement.setString(8, Instant.now().toString());
+            statement.executeUpdate();
+        }
+    }
+
+    private void saveTestPlanningConnectorConfig() {
+        try {
+            String email = testPlanningJiraEmailField == null ? "" : nullToBlank(testPlanningJiraEmailField.getText()).trim();
+            String token = testPlanningJiraTokenField == null ? "" : nullToBlank(testPlanningJiraTokenField.getText()).trim();
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + TEST_PLANNING_CONNECTOR_TABLE
+                         + " (system_user_key, jira_email, jira_token, updated_at) VALUES (?, ?, ?, ?) "
+                         + "ON CONFLICT(system_user_key) DO UPDATE SET jira_email = excluded.jira_email, "
+                         + "jira_token = excluded.jira_token, updated_at = excluded.updated_at")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, email);
+                statement.setString(3, token);
+                statement.setString(4, Instant.now().toString());
+                statement.executeUpdate();
+            }
+            testPlanningJiraMcpServer.configure(email, token);
+            showInfo("Test Planning Connectors", token.isBlank()
+                    ? "Jira access cleared; public Jira links remain available."
+                    : "Jira access saved for the Test Planning Agent.");
+        } catch (Exception exception) {
+            showError("Save Test Planning Connectors Failed", exception);
+        }
+    }
+
+    private void loadTestPlanningConnectorConfig() {
+        if (testPlanningJiraEmailField == null || testPlanningJiraTokenField == null) return;
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (!Files.isRegularFile(sqliteDbPath)) return;
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("SELECT jira_email, jira_token FROM "
+                         + TEST_PLANNING_CONNECTOR_TABLE + " WHERE system_user_key = ?")) {
+                statement.setString(1, configCacheKey());
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) return;
+                    String email = nullToBlank(result.getString("jira_email"));
+                    String token = nullToBlank(result.getString("jira_token"));
+                    testPlanningJiraEmailField.setText(email);
+                    testPlanningJiraTokenField.setText(token);
+                    testPlanningJiraMcpServer.configure(email, token);
+                }
+            }
+        } catch (Exception ignored) {
+            // Connector fields remain editable when the workspace has not been initialized.
+        }
+    }
+
+    private List<Path> githubConfigurationDatabasePaths() {
+        LinkedHashSet<Path> paths = new LinkedHashSet<>();
+        String configuredBase = configBasePathField == null ? "" : nullToBlank(configBasePathField.getText()).trim();
+        if (!configuredBase.isBlank()) {
+            paths.add(configCacheDatabasePath(Path.of(configuredBase).toAbsolutePath().normalize()));
+        } else {
+            Path bootstrap = bootstrapConfigCacheDatabasePath();
+            if (Files.isRegularFile(bootstrap)) {
+                try {
+                    String cachedRoot = cachedConfigRootPath(bootstrap);
+                    if (!cachedRoot.isBlank()) {
+                        paths.add(configCacheDatabasePath(Path.of(cachedRoot).toAbsolutePath().normalize()));
+                    }
+                } catch (Exception ignored) {
+                    // The bootstrap cache remains a valid fallback.
+                }
+            }
+        }
+        paths.add(bootstrapConfigCacheDatabasePath());
+        return new ArrayList<>(paths);
+    }
+
+    private void saveGithubConfiguration(boolean notifyUser) {
+        ensureGithubConfigurationFields();
+        if (!githubConnectionValidated || githubAccessToken == null || githubAccessToken.isBlank()) {
+            if (notifyUser) {
+                showWarning("GitHub Actions Configuration", "Connect successfully before saving the GitHub configuration.");
+            }
+            return;
+        }
+        normalizeGithubRepositoryFields();
+        String owner = nullToBlank(githubOwnerField.getText()).trim();
+        String repository = nullToBlank(githubRepoField.getText()).trim();
+        String branch = firstNonBlank(githubBranchField.getText(), "main").trim();
+        String token = nullToBlank(githubAccessToken);
+        try {
+            StorageMode storageMode = githubConfigurationStorageMode();
+            JSONObject configuration = new JSONObject()
+                    .put("owner", owner)
+                    .put("repository", repository)
+                    .put("branch", branch)
+                    .put("accessToken", token)
+                    .put("updatedAt", Instant.now().toString());
+            if (storageMode == StorageMode.CLOUD) saveGithubCloudConfiguration(configuration);
+            else saveGithubLocalConfiguration(configuration);
+            githubBranchField.setText(branch);
+            githubStatusLabel.setText("GitHub: connected - configuration saved to "
+                    + (storageMode == StorageMode.CLOUD ? "Firebase Cloud" : "local SQLite"));
+            if (notifyUser) {
+                showInfo("GitHub Actions Configuration", "The validated GitHub configuration was saved to "
+                        + (storageMode == StorageMode.CLOUD ? "Firebase Cloud" : "local SQLite")
+                        + " and will auto-load on the next launch.");
+            }
+        } catch (Exception exception) {
+            if (notifyUser) showError("Save GitHub Configuration Failed", exception);
+        }
+    }
+
+    private void loadGithubConfiguration() {
+        ensureGithubConfigurationFields();
+        githubConnectionValidated = false;
+        JSONObject localConfiguration = loadGithubLocalConfiguration();
+        if (localConfiguration != null) {
+            applyGithubConfiguration(localConfiguration, "local SQLite");
+        } else {
+            githubStatusLabel.setText("GitHub: no saved configuration");
+        }
+        if (githubConfigurationStorageMode() == StorageMode.CLOUD) {
+            if (localConfiguration == null) githubStatusLabel.setText("GitHub: loading saved configuration from Firebase Cloud...");
+            loadGithubCloudConfigurationAsync();
+        }
+    }
+
+    private StorageMode githubConfigurationStorageMode() {
+        if (configExecutionStorageToggle != null) return selectedDashboardStorageMode();
+        for (Path sqliteDbPath : githubConfigurationDatabasePaths()) {
+            if (!Files.isRegularFile(sqliteDbPath)) continue;
+            try {
+                initializeConfigCacheTable(sqliteDbPath);
+                try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                     PreparedStatement statement = connection.prepareStatement("SELECT execution_storage_mode FROM "
+                             + CONFIG_CACHE_TABLE + " WHERE system_user_key = ?")) {
+                    statement.setString(1, configCacheKey());
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (result.next() && StorageMode.LOCAL.name().equalsIgnoreCase(result.getString("execution_storage_mode"))) {
+                            return StorageMode.LOCAL;
+                        }
+                    }
+                }
+            } catch (Exception ignored) { }
+        }
+        return StorageMode.CLOUD;
+    }
+
+    private void saveGithubLocalConfiguration(JSONObject configuration) throws Exception {
+        for (Path sqliteDbPath : githubConfigurationDatabasePaths()) {
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + GITHUB_ACTIONS_CONFIG_TABLE
+                         + " (system_user_key, owner, repository, branch, access_token, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                         + "ON CONFLICT(system_user_key) DO UPDATE SET owner = excluded.owner, "
+                         + "repository = excluded.repository, branch = excluded.branch, "
+                         + "access_token = excluded.access_token, updated_at = excluded.updated_at")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, configuration.optString("owner"));
+                statement.setString(3, configuration.optString("repository"));
+                statement.setString(4, configuration.optString("branch", "main"));
+                statement.setString(5, configuration.optString("accessToken"));
+                statement.setString(6, configuration.optString("updatedAt", Instant.now().toString()));
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    private JSONObject loadGithubLocalConfiguration() {
+        for (Path sqliteDbPath : githubConfigurationDatabasePaths()) {
+            if (!Files.isRegularFile(sqliteDbPath)) continue;
+            try {
+                initializeVeyraAIAgentTables(sqliteDbPath);
+                try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                     PreparedStatement statement = connection.prepareStatement("SELECT owner, repository, branch, access_token FROM "
+                             + GITHUB_ACTIONS_CONFIG_TABLE + " WHERE system_user_key = ?")) {
+                    statement.setString(1, configCacheKey());
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (!result.next()) continue;
+                        return new JSONObject()
+                                .put("owner", nullToBlank(result.getString("owner")))
+                                .put("repository", nullToBlank(result.getString("repository")))
+                                .put("branch", firstNonBlank(result.getString("branch"), "main"))
+                                .put("accessToken", nullToBlank(result.getString("access_token")));
+                    }
+                }
+            } catch (Exception ignored) { }
+        }
+        return null;
+    }
+
+    private void saveGithubCloudConfiguration(JSONObject configuration) throws Exception {
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(
+                apiAiFirebaseRequest(GITHUB_CONFIG_FIREBASE_PATH + "/" + key + ".json")
+                        .PUT(HttpRequest.BodyPublishers.ofString(configuration.toString(), StandardCharsets.UTF_8))
+                        .header("Content-Type", "application/json")
+                        .build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase GitHub configuration save failed: HTTP "
+                    + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private void loadGithubCloudConfigurationAsync() {
+        if (!githubCloudConfigLoadActive.compareAndSet(false, true)) return;
+        Thread loader = new Thread(() -> {
+            try {
+                String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+                HttpResponse<String> response = HttpClient.newHttpClient().send(
+                        apiAiFirebaseRequest(GITHUB_CONFIG_FIREBASE_PATH + "/" + key + ".json").GET().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() >= 200 && response.statusCode() < 300
+                        && !response.body().isBlank() && !"null".equals(response.body())) {
+                    JSONObject configuration = new JSONObject(response.body());
+                    Platform.runLater(() -> applyGithubConfiguration(configuration, "Firebase Cloud"));
+                } else if (githubAccessToken == null || githubAccessToken.isBlank()) {
+                    Platform.runLater(() -> githubStatusLabel.setText("GitHub: no saved cloud configuration"));
+                }
+            } catch (Exception ignored) {
+                if (githubAccessToken == null || githubAccessToken.isBlank()) {
+                    Platform.runLater(() -> githubStatusLabel.setText(
+                            "GitHub: cloud configuration unavailable - click Update Configuration"));
+                }
+            } finally {
+                githubCloudConfigLoadActive.set(false);
+            }
+        }, "veyraai-github-config-load");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    private void applyGithubConfiguration(JSONObject configuration, String source) {
+        ensureGithubConfigurationFields();
+        githubOwnerField.setText(configuration.optString("owner", ""));
+        githubRepoField.setText(configuration.optString("repository", ""));
+        githubBranchField.setText(configuration.optString("branch", "main"));
+        githubAccessToken = configuration.optString("accessToken", "");
+        githubConnectionValidated = false;
+        githubStatusLabel.setText(githubAccessToken.isBlank()
+                ? "GitHub: configuration loaded from " + source + " - token required"
+                : "GitHub: configuration loaded from " + source + " - click Connect");
+    }
+
+    private void connectVeyraAICustomAgent() {
+        String provider = selectedVeyraAIProvider();
+        VeyraAIModelConfig config = new VeyraAIModelConfig(provider,
+                firstNonBlank(veyraaiAgentEndpointField == null ? "" : veyraaiAgentEndpointField.getText(), defaultVeyraAIProviderEndpoint(provider)),
+                firstNonBlank(veyraaiAgentModelField == null ? "" : veyraaiAgentModelField.getText(), defaultVeyraAIProviderModel(provider)),
+                veyraaiAgentApiKeyField == null ? "" : nullToBlank(veyraaiAgentApiKeyField.getText()),
+                veyraaiAgentAuthModeBox == null ? defaultVeyraAIAuthMode(provider) : firstNonBlank(veyraaiAgentAuthModeBox.getValue(), defaultVeyraAIAuthMode(provider)),
+                veyraaiAgentClientIdField == null ? "" : nullToBlank(veyraaiAgentClientIdField.getText()));
+        if (isOpenAiCodexProvider(config.provider())) {
+            if (veyraaiAgentConnectionLabel != null) {
+                veyraaiAgentConnectionLabel.setText("Agentic AI: checking saved Codex OAuth for API, DB and Web Agents...");
+            }
+            if (connectExistingOpenAiCodexOAuth(config.provider(), "OAuth Device Code")) {
+                return;
+            }
+            openOpenAiCodexDeviceLoginTerminal(config.provider(), "OAuth Device Code");
+            return;
+        }
+        if (requiresVeyraAICredential(config) && config.apiKey().isBlank()) {
+            showWarning("VeyraAI Agent Connect", "Run OAuth Login Setup or enter a credential for " + config.provider() + " before connecting.");
+            return;
+        }
+        if (veyraaiAgentConnectionLabel != null) {
+            veyraaiAgentConnectionLabel.setText("Agentic AI: connecting API, DB and Web Agents...");
+        }
+        VeyraAIAgentSession selectedSession = selectedVeyraAISessionRecord();
+        String sessionSelection = selectedSession == null ? "new session" : "existing session";
+        Task<VeyraAIAgentSession> task = new Task<>() {
+            @Override protected VeyraAIAgentSession call() throws Exception {
+                Path sqliteDbPath = configCacheDatabasePathFromField();
+                initializeVeyraAIAgentTables(sqliteDbPath);
+                saveVeyraAIProviderConfig(config, sqliteDbPath);
+                saveVeyraAIProviderAuth(config);
+                VeyraAIAgentSession session = selectedSession == null
+                        ? createVeyraAISession(config, sqliteDbPath)
+                        : resumeVeyraAISession(selectedSession, config, sqliteDbPath);
+                testVeyraAIProviderConnection(config);
+                return session;
+            }
+        };
+        task.setOnSucceeded(e -> {
+            activeVeyraAIAgentSession = task.getValue();
+            activeVeyraAIModelConfig = config;
+            apiAiConnectedModel = "VeyraAI Agentic AI (" + config.provider() + " / " + config.model() + ")";
+            AgenticAIConnectionManager.ConnectionResult connection = "new session".equals(sessionSelection)
+                    ? agenticAIConnectionManager.connectNewSession(config.provider(), activeVeyraAIAgentSession.sessionId())
+                    : agenticAIConnectionManager.connectExistingSession(config.provider(), activeVeyraAIAgentSession.sessionId());
+            refreshVeyraAIAgentSessionOptions();
+            selectVeyraAIAgentSession(activeVeyraAIAgentSession);
+            if (!connection.fullyConnected()) {
+                showAgenticAiPartialConnection(connection);
+                updateApiAiConnectionLabels(connection.registration().failures().containsKey("webAgent")
+                        ? "Session connected, but Web Agent initialization failed. API and DB Agents remain available."
+                        : "Session connected, but one or more Agentic AI roles failed initialization. Review diagnostics.");
+                return;
+            }
+            showVeyraAIAgentConnectedStatus(config, activeVeyraAIAgentSession, sessionSelection);
+            updateApiAiConnectionLabels();
+            showInfo("VeyraAI Agentic AI Connected", "API, DB and Web Agents connected to " + sessionSelection + " "
+                    + activeVeyraAIAgentSession.sessionId() + " via " + config.provider() + ".");
+        });
+        task.setOnFailed(e -> {
+            activeVeyraAIAgentSession = null;
+            activeVeyraAIModelConfig = null;
+            if (veyraaiAgentConnectionLabel != null) {
+                veyraaiAgentConnectionLabel.setText("API, DB and Web Agents are not connected.");
+            }
+            updateApiAiConnectionLabels();
+            showError("VeyraAI Agent Connect Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private boolean requiresVeyraAIApiKey(String provider) {
+        return !isOpenAiCodexProvider(provider) && !"Ollama Local".equals(provider) && !"LM Studio Local".equals(provider);
+    }
+
+    private boolean requiresVeyraAICredential(VeyraAIModelConfig config) {
+        return requiresVeyraAIApiKey(config.provider()) && !"Import Local Credentials".equals(config.authMode());
+    }
+
+    private VeyraAIAgentSession selectedVeyraAISessionRecord() {
+        String selected = veyraaiAgentSessionBox == null ? "" : nullToBlank(veyraaiAgentSessionBox.getValue());
+        if (selected.isBlank() || VEYRAAI_NEW_SESSION.equals(selected)) {
+            return null;
+        }
+        return veyraaiAgentSessionRecords.get(selected);
+    }
+
+    private void selectVeyraAIAgentSession(VeyraAIAgentSession session) {
+        if (veyraaiAgentSessionBox == null || session == null) {
+            return;
+        }
+        String display = veyraaiSessionDisplayName(session);
+        if (veyraaiAgentSessionBox.getItems().contains(display)) {
+            veyraaiAgentSessionBox.setValue(display);
+        }
+    }
+
+    private void showVeyraAIAgentConnectedStatus(VeyraAIModelConfig config, VeyraAIAgentSession session,
+                                                  String sessionSelection) {
+        if (veyraaiAgentConnectionLabel == null || session == null) {
+            return;
+        }
+        String mode = firstNonBlank(sessionSelection, "session").replace(" session", "");
+        veyraaiAgentConnectionLabel.setText("API, DB, Web & Test Planning Agents connected to " + mode
+                + " session: " + session.sessionId());
+        if (agenticAiConnectedAgentsLabel != null) {
+            agenticAiConnectedAgentsLabel.setText("Connected via " + config.provider()
+                    + ": API Analysis Agent, DB Analysis Agent, Web Healing Agent, Test Planning Agent");
+        }
+        refreshWebAgentDiagnostics();
+        updateTestPlanningConnectionStatus();
+    }
+
+    private void showAgenticAiPartialConnection(AgenticAIConnectionManager.ConnectionResult connection) {
+        boolean webFailed = connection.registration().failures().containsKey("webAgent");
+        if (veyraaiAgentConnectionLabel != null) {
+            veyraaiAgentConnectionLabel.setText(webFailed
+                    ? "Session connected, but Web Agent initialization failed."
+                    : "Session connected, but an Agentic AI role initialization failed.");
+        }
+        if (agenticAiConnectedAgentsLabel != null) {
+            agenticAiConnectedAgentsLabel.setText("Connected: "
+                    + String.join(", ", connection.registration().connectedAgents()));
+        }
+        showWarning("Agentic AI Partial Connection",
+                (webFailed ? "Session connected, but Web Agent initialization failed.\nAPI and DB Agents remain available."
+                        : "Session connected, but not all API, DB, Web and Test Planning Agents initialized.\nConnected roles remain available.")
+                        + "\nReview Agentic AI diagnostics before retrying.");
+        refreshWebAgentDiagnostics();
+        updateTestPlanningConnectionStatus();
+    }
+
+    private void refreshWebAgentDiagnostics() {
+        if (webAgentDiagnosticsLabel == null) return;
+        boolean ready = agenticAIConnectionManager.getConnectedAgents().contains("webAgent");
+        int knowledge = 0;
+        int memory = 0;
+        try {
+            JSONArray entries = searchCustomAgentMemory("uiStudio", "", 500, false);
+            for (int i = 0; i < entries.length(); i++) {
+                JSONObject entry = entries.optJSONObject(i);
+                if (entry == null) continue;
+                memory++;
+                if ("knowledgeBase".equals(entry.optString("level"))) knowledge++;
+            }
+        } catch (Exception ignored) {
+            // Diagnostics must not affect agent connectivity.
+        }
+        webAgentDiagnosticsLabel.setText("Web Agent: " + (ready ? "Ready" : "Not connected")
+                + " | Known fixes indexed: " + knowledge
+                + " | UI healing memory entries: " + memory
+                + " | Last analysis: " + diagnosticInstant(webAgentLastAnalysis)
+                + " | Last model call: " + diagnosticInstant(webAgentLastModelCall)
+                + " | Last known-fix resolution: " + diagnosticInstant(webAgentLastKnownFixResolution));
+    }
+
+    private String diagnosticInstant(Instant value) {
+        return value == null || Instant.EPOCH.equals(value) ? "--" : value.toString();
+    }
+
+    private VeyraAIAgentSession createVeyraAISession(VeyraAIModelConfig config, Path sqliteDbPath) throws Exception {
+        String id = "veyraai-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8);
+        String title = "VeyraAI " + config.provider() + " Session";
+        VeyraAIAgentSession session = new VeyraAIAgentSession(title + " (" + id + ")", id, title,
+                config.provider(), config.model(), Instant.now().toString());
+        saveVeyraAISession(session, sqliteDbPath);
+        return session;
+    }
+
+    private VeyraAIAgentSession resumeVeyraAISession(VeyraAIAgentSession selected, VeyraAIModelConfig config, Path sqliteDbPath) throws Exception {
+        VeyraAIAgentSession session = new VeyraAIAgentSession(selected.sessionName(), selected.sessionId(),
+                firstNonBlank(selected.title(), "VeyraAI " + config.provider() + " Session"),
+                config.provider(), config.model(), firstNonBlank(selected.createdAt(), Instant.now().toString()));
+        saveVeyraAISession(session, sqliteDbPath);
+        return session;
+    }
+
+    private void saveVeyraAISession(VeyraAIAgentSession session, Path sqliteDbPath) throws Exception {
+        if (apiAiAgentMemoryStorageMode() == StorageMode.CLOUD) {
+            saveVeyraAISessionToFirebase(session);
+            return;
+        }
+        saveVeyraAISessionToSqlite(session, sqliteDbPath);
+    }
+
+    private void saveVeyraAISessionToSqlite(VeyraAIAgentSession session, Path sqliteDbPath) throws Exception {
+        initializeVeyraAIAgentTables(sqliteDbPath);
+        String sql = "INSERT INTO " + VEYRAAI_AGENT_SESSION_TABLE
+                + " (system_user_key, session_name, session_id, title, provider, model, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                + "ON CONFLICT(system_user_key, session_name) DO UPDATE SET provider = excluded.provider, "
+                + "model = excluded.model, updated_at = excluded.updated_at";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            statement.setString(2, session.sessionName());
+            statement.setString(3, session.sessionId());
+            statement.setString(4, session.title());
+            statement.setString(5, session.provider());
+            statement.setString(6, session.model());
+            statement.setString(7, session.createdAt());
+            statement.setString(8, Instant.now().toString());
+            statement.executeUpdate();
+        }
+    }
+
+    private void saveVeyraAISessionToFirebase(VeyraAIAgentSession session) throws Exception {
+        JSONObject payload = new JSONObject()
+                .put("systemUserKey", configCacheKey())
+                .put("sessionName", session.sessionName())
+                .put("sessionId", session.sessionId())
+                .put("title", session.title())
+                .put("provider", session.provider())
+                .put("model", session.model())
+                .put("createdAt", session.createdAt())
+                .put("updatedAt", Instant.now().toString());
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        String id = URLEncoder.encode(session.sessionId(), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_VEYRAAI_SESSION_FIREBASE_PATH
+                        + "/" + key + "/" + id + ".json")
+                        .PUT(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
+                        .header("Content-Type", "application/json")
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase VeyraAI session save failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private void testVeyraAIProviderConnection(VeyraAIModelConfig config) throws Exception {
+        if (List.of("GitHub Copilot", "Amazon Q Developer").contains(config.provider())) {
+            return;
+        }
+        String probe = buildVeyraAIPrompt("ModelConnectionSkill",
+                "Reply with a compact JSON object only: {\"status\":\"OK\",\"provider\":\"" + config.provider() + "\"}");
+        String response = callVeyraAIModel(config, probe);
+        if (nullToBlank(response).isBlank()) {
+            throw new IllegalStateException("The provider returned an empty response.");
+        }
+    }
+
+    private void disconnectVeyraAICustomAgent() {
+        String sessionId = activeVeyraAIAgentSession == null ? "" : activeVeyraAIAgentSession.sessionId();
+        activeVeyraAIAgentSession = null;
+        activeVeyraAIModelConfig = null;
+        agenticAIConnectionManager.disconnectSession();
+        apiAiConnectedModel = selectedApiAiAgentName();
+        if (veyraaiAgentConnectionLabel != null) {
+            veyraaiAgentConnectionLabel.setText("API, DB and Web Agents are not connected.");
+        }
+        if (agenticAiConnectedAgentsLabel != null) {
+            agenticAiConnectedAgentsLabel.setText("Connected Agents: none");
+        }
+        updateApiAiConnectionLabels();
+        logApiAiConsole("VeyraAI API, DB and Web Agents disconnected" + (sessionId.isBlank() ? "." : ": " + sessionId));
+    }
+
+    private void saveVeyraAIProviderAuth(VeyraAIModelConfig config) throws Exception {
+        JSONObject credential = new JSONObject()
+                .put("provider", config.provider())
+                .put("authMode", config.authMode())
+                .put("endpoint", config.endpoint())
+                .put("model", config.model())
+                .put("clientId", config.clientId())
+                .put("token", config.apiKey())
+                .put("updatedAt", Instant.now().toString());
+        if (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL) {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + VEYRAAI_PROVIDER_AUTH_TABLE
+                         + " (system_user_key, provider, auth_mode, credential_json, storage_mode, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                         + "ON CONFLICT(system_user_key, provider) DO UPDATE SET auth_mode = excluded.auth_mode, "
+                         + "credential_json = excluded.credential_json, storage_mode = excluded.storage_mode, updated_at = excluded.updated_at")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, config.provider());
+                statement.setString(3, config.authMode());
+                statement.setString(4, credential.toString());
+                statement.setString(5, CONFIG_STORAGE_LOCAL.toUpperCase());
+                statement.setString(6, Instant.now().toString());
+                statement.executeUpdate();
+            }
+        } else {
+            String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+            String provider = URLEncoder.encode(config.provider(), StandardCharsets.UTF_8).replace("+", "%20");
+            HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_PROVIDER_AUTH_FIREBASE_PATH
+                            + "/" + key + "/" + provider + ".json")
+                            .PUT(HttpRequest.BodyPublishers.ofString(credential.toString(), StandardCharsets.UTF_8))
+                            .header("Content-Type", "application/json")
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("Firebase provider auth save failed: HTTP " + response.statusCode() + " " + response.body());
+            }
+        }
+    }
+
+    private void openVeyraAIProviderLogin() {
+        String provider = selectedVeyraAIProvider();
+        String authMode = veyraaiAgentAuthModeBox == null ? defaultVeyraAIAuthMode(provider)
+                : firstNonBlank(veyraaiAgentAuthModeBox.getValue(), defaultVeyraAIAuthMode(provider));
+        if ("Import Local Credentials".equals(authMode)) {
+            importLocalProviderCredentials(provider);
+            return;
+        }
+        if ("Local Model".equals(authMode)) {
+            showInfo("OAuth Login Setup", provider + " uses the local endpoint. No remote login is required.");
+            return;
+        }
+        if (isOpenAiCodexProvider(provider) && "OAuth Device Code".equals(authMode)) {
+            openOpenAiCodexDeviceLoginTerminal(provider, authMode);
+            return;
+        }
+        Stage terminalStage = new Stage();
+        terminalStage.setTitle(APP_NAME + " - OAuth Login Setup");
+        loadApplicationIcon(terminalStage);
+
+        String verifier = generatePkceVerifier();
+        String challenge = pkceS256Challenge(verifier);
+        String oneTimeCode = generateDeviceCode(provider);
+        String loginUrl = providerLoginUrl(provider, authMode, challenge);
+        String tokenUrl = providerTokenExchangeUrl(provider);
+
+        TextArea terminal = editor("");
+        terminal.setEditable(false);
+        terminal.setWrapText(true);
+        terminal.setMinHeight(420);
+        terminal.appendText("VeyraAI OAuth Login Setup" + System.lineSeparator());
+        terminal.appendText("----------------------------------------" + System.lineSeparator());
+        terminal.appendText("Provider: " + provider + System.lineSeparator());
+        terminal.appendText("Auth mode: " + authMode + System.lineSeparator());
+        terminal.appendText("Storage: " + (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL ? "Local SQLite" : "Firebase Cloud") + System.lineSeparator());
+        terminal.appendText("OAuth URL: " + loginUrl + System.lineSeparator());
+        terminal.appendText("One-time code: " + oneTimeCode + System.lineSeparator());
+        if (!tokenUrl.isBlank()) {
+            terminal.appendText("Token/exchange URL: " + tokenUrl + System.lineSeparator());
+        }
+        if ("OAuth PKCE".equals(authMode)) {
+            terminal.appendText("PKCE verifier: " + verifier + System.lineSeparator());
+            terminal.appendText("PKCE challenge method: S256" + System.lineSeparator());
+        }
+        terminal.appendText(System.lineSeparator());
+        terminal.appendText("Open the OAuth URL, complete sign-in, then paste the returned token, code, or provider result below." + System.lineSeparator());
+
+        TextField terminalInput = new TextField();
+        terminalInput.setPromptText("Paste returned OAuth code/token, then press Enter or Save Login");
+        Button openBrowser = primary("Open OAuth URL");
+        openBrowser.setOnAction(e -> getHostServices().showDocument(loginUrl));
+        Button save = primary("Save Login");
+        Runnable saveLogin = () -> {
+            String token = nullToBlank(terminalInput.getText()).trim();
+            if (token.isBlank()) {
+                terminal.appendText("ERROR: Enter the returned OAuth code/token before saving." + System.lineSeparator());
+                return;
+            }
+            if (veyraaiAgentApiKeyField != null) {
+                veyraaiAgentApiKeyField.setText(token);
+            }
+            try {
+                VeyraAIModelConfig config = currentVeyraAIModelConfig(provider, authMode, token);
+                saveVeyraAIProviderConfig(config, configCacheDatabasePathFromField());
+                saveVeyraAIProviderAuth(config);
+                loadVeyraAIProviderConfigIntoFields(provider);
+                terminal.appendText("SUCCESS: OAuth login saved for " + provider + "." + System.lineSeparator());
+                terminal.appendText("VeyraAI Agentic AI: API, DB and Web Agent login successful" + System.lineSeparator());
+                if (veyraaiAgentConnectionLabel != null) {
+                    veyraaiAgentConnectionLabel.setText("Agentic AI: API, DB and Web Agent login successful");
+                }
+            } catch (Exception ex) {
+                terminal.appendText("ERROR: Save failed - " + exceptionMessage(ex) + System.lineSeparator());
+                showError("OAuth Login Save Failed", ex);
+            }
+        };
+        terminalInput.setOnAction(e -> saveLogin.run());
+        save.setOnAction(e -> saveLogin.run());
+        Button close = secondary("Close");
+        close.setOnAction(e -> terminalStage.close());
+        VBox content = new VBox(12, terminal, actionRow(openBrowser, terminalInput, save, close));
+        content.setPadding(new Insets(16));
+        Scene scene = new Scene(content, 960, 620);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        terminalStage.setScene(scene);
+        terminalStage.show();
+        terminalStage.toFront();
+    }
+
+    private void openOpenAiCodexDeviceLoginTerminal(String provider, String authMode) {
+        Stage terminalStage = new Stage();
+        terminalStage.setTitle(APP_NAME + " - OpenAI Codex Device Login");
+        loadApplicationIcon(terminalStage);
+
+        Path bundledCodex = findBundledCodexCliExecutable();
+        Path codexHome = codexCliHomeDirectory();
+
+        SwingNode terminalNode = new SwingNode();
+        AtomicReference<PtyProcess> processRef = new AtomicReference<>();
+        AtomicReference<JediTermWidget> widgetRef = new AtomicReference<>();
+        StringBuffer terminalOutput = new StringBuffer();
+        Label status = new Label("Starting bundled Codex OAuth terminal...");
+        status.getStyleClass().add("muted");
+        if (Instant.now().isBefore(codexDeviceAuthCooldownUntil)) {
+            status.setText("Codex device-code login is cooling down. Retry after " + codexDeviceAuthCooldownUntil + ".");
+        }
+        Button cancelSession = secondary("Cancel Login");
+        cancelSession.setDisable(true);
+        cancelSession.setOnAction(e -> {
+            PtyProcess process = processRef.get();
+            if (process == null || !process.isAlive()) {
+                status.setText("No Codex OAuth login is currently running.");
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    process.getOutputStream().write(3);
+                    process.getOutputStream().flush();
+                    Platform.runLater(() -> status.setText("Cancel signal sent to Codex OAuth login."));
+                } catch (Exception ex) {
+                    process.destroy();
+                    Platform.runLater(() -> status.setText("Closed Codex OAuth login: " + exceptionMessage(ex)));
+                }
+            });
+        });
+        Button close = secondary("Close");
+        close.setOnAction(e -> terminalStage.close());
+        VBox instructions = new VBox(6,
+                new Label("Provider: " + provider),
+                new Label("Bundled CLI: " + bundledCodex),
+                new Label("Codex home: " + codexHome),
+                new Label("Complete the device-code sign-in shown in the embedded terminal."));
+        BorderPane content = new BorderPane();
+        content.setTop(instructions);
+        content.setCenter(terminalNode);
+        content.setBottom(actionRow(status, cancelSession, close));
+        BorderPane.setMargin(content.getTop(), new Insets(0, 0, 10, 0));
+        BorderPane.setMargin(content.getBottom(), new Insets(10, 0, 0, 0));
+        content.setPadding(new Insets(16));
+        Scene scene = new Scene(content, 1120, 720);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        terminalStage.setScene(scene);
+        terminalStage.show();
+        terminalStage.toFront();
+
+        terminalStage.setOnCloseRequest(event -> {
+            JediTermWidget widget = widgetRef.get();
+            if (widget != null) {
+                SwingUtilities.invokeLater(widget::close);
+            }
+            PtyProcess process = processRef.get();
+            if (process != null && process.isAlive()) {
+                process.destroy();
+            }
+        });
+
+        SwingUtilities.invokeLater(() -> {
+            try {
+                if (Instant.now().isBefore(codexDeviceAuthCooldownUntil)) {
+                    return;
+                }
+                prepareCodexCliHome();
+                List<String> command = codexDeviceAuthCommand();
+                Map<String, String> environment = codexCliProcessEnvironment();
+                PtyProcess process = new PtyProcessBuilder(command.toArray(String[]::new))
+                        .setEnvironment(environment)
+                        .setDirectory(appInstallRoot().toString())
+                        .setInitialColumns(120)
+                        .setInitialRows(32)
+                        .setRedirectErrorStream(true)
+                        .setWindowsAnsiColorEnabled(true)
+                        .setUseWinConPty(true)
+                        .start();
+                processRef.set(process);
+
+                JediTermWidget widget = new JediTermWidget(120, 32, new DefaultSettingsProvider());
+                widget.setTtyConnector(new EmbeddedPtyTtyConnector(process, StandardCharsets.UTF_8, command,
+                        terminalOutput::append));
+                widget.start();
+                widgetRef.set(widget);
+                terminalNode.setContent(widget.getComponent());
+                Platform.runLater(() -> {
+                    status.setText("Bundled Codex OAuth login running. Complete the device-code flow in the terminal.");
+                    cancelSession.setDisable(false);
+                });
+                process.onExit().thenRun(() -> {
+                    int exitCode;
+                    try {
+                        exitCode = process.exitValue();
+                    } catch (Exception ignored) {
+                        exitCode = -1;
+                    }
+                    handleEmbeddedCodexLoginExit(provider, authMode, exitCode, terminalOutput.toString(), status, cancelSession);
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    status.setText("Codex OAuth terminal failed: " + exceptionMessage(ex));
+                    cancelSession.setDisable(true);
+                    if (veyraaiAgentConnectionLabel != null) {
+                        veyraaiAgentConnectionLabel.setText("Agentic AI: API, DB and Web Agent login failed");
+                    }
+                    showError("Codex OAuth Terminal Failed", ex);
+                });
+            }
+        });
+    }
+
+    private Process startCodexDeviceAuthProcess() throws Exception {
+        if (Instant.now().isBefore(codexDeviceAuthCooldownUntil)) {
+            throw new IllegalStateException("OpenAI Codex device-code login is cooling down after HTTP 429. Retry after "
+                    + codexDeviceAuthCooldownUntil + ".");
+        }
+        Path bundledCodex = findBundledCodexCliExecutable();
+        if (!Files.isRegularFile(bundledCodex)) {
+            throw new IllegalStateException("Bundled Codex CLI was not found at " + expectedBundledCodexCliPath()
+                    + ". This flow intentionally does not read codex from PATH.");
+        }
+        prepareCodexCliHome();
+        ProcessBuilder builder = new ProcessBuilder(bundledCodex.toString(), "login", "--device-auth");
+        builder.redirectErrorStream(true);
+        builder.directory(appInstallRoot().toFile());
+        builder.environment().put(CODEX_HOME_ENV, codexCliHomeDirectory().toString());
+        return builder.start();
+    }
+
+    private List<String> codexDeviceAuthCommand() throws Exception {
+        Path bundledCodex = findBundledCodexCliExecutable();
+        if (!Files.isRegularFile(bundledCodex)) {
+            throw new IllegalStateException("Bundled Codex CLI was not found at " + expectedBundledCodexCliPath()
+                    + ". This flow intentionally does not read codex from PATH.");
+        }
+        return List.of(bundledCodex.toString(), "login", "--device-auth");
+    }
+
+    private Map<String, String> codexCliProcessEnvironment() {
+        Map<String, String> environment = new HashMap<>(System.getenv());
+        environment.put("TERM", "xterm-256color");
+        environment.put(CODEX_HOME_ENV, codexCliHomeDirectory().toString());
+        return environment;
+    }
+
+    private void handleEmbeddedCodexLoginExit(String provider, String authMode, int exitCode, String output,
+                                             Label status, Button cancelSession) {
+        try {
+            if (exitCode == 0 && Files.isRegularFile(codexCliAuthJsonPath())) {
+                saveOpenAiCodexOAuthLoginSuccess(provider, authMode);
+                Platform.runLater(() -> {
+                    connectExistingOpenAiCodexOAuth(provider, authMode);
+                    cancelSession.setDisable(true);
+                    status.setText("OpenAI Codex OAuth login successful. Returning users can click Connect directly.");
+                });
+                return;
+            }
+            if (isCodexDeviceAuthRateLimited(output)) {
+                codexDeviceAuthCooldownUntil = Instant.now().plus(Duration.ofMinutes(5));
+                Platform.runLater(() -> {
+                    cancelSession.setDisable(true);
+                    status.setText("OpenAI Codex device-code login is rate limited. Wait at least 5 minutes, then click Connect once.");
+                    if (veyraaiAgentConnectionLabel != null) {
+                        veyraaiAgentConnectionLabel.setText("Agentic AI: API, DB and Web Agent Codex auth rate limited");
+                    }
+                });
+                return;
+            }
+            Platform.runLater(() -> {
+                cancelSession.setDisable(true);
+                status.setText("Codex OAuth login ended with exit code " + exitCode + ". Review the terminal output.");
+                if (veyraaiAgentConnectionLabel != null) {
+                    veyraaiAgentConnectionLabel.setText("Agentic AI: API, DB and Web Agent login failed");
+                }
+            });
+        } catch (Exception ex) {
+            Platform.runLater(() -> {
+                cancelSession.setDisable(true);
+                status.setText("Could not save Codex OAuth login: " + exceptionMessage(ex));
+                if (veyraaiAgentConnectionLabel != null) {
+                    veyraaiAgentConnectionLabel.setText("Agentic AI: API, DB and Web Agent login save failed");
+                }
+            });
+        }
+    }
+
+    private boolean connectExistingOpenAiCodexOAuth(String provider, String authMode) {
+        try {
+            if (!hasOpenAiCodexOAuthLoginSuccess(provider)) {
+                return false;
+            }
+            VeyraAIModelConfig config = currentVeyraAIModelConfig(provider, authMode, "codex-oauth:" + codexCliAuthJsonPath());
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            saveVeyraAIProviderConfig(config, sqliteDbPath);
+            saveVeyraAIProviderAuth(config);
+            VeyraAIAgentSession selected = selectedVeyraAISessionRecord();
+            String sessionSelection = selected == null ? "new session" : "existing session";
+            activeVeyraAIAgentSession = selected == null
+                    ? createVeyraAISession(config, sqliteDbPath)
+                    : resumeVeyraAISession(selected, config, sqliteDbPath);
+            activeVeyraAIModelConfig = config;
+            apiAiConnectedModel = "VeyraAI Agentic AI (" + config.provider() + " / bundled Codex CLI)";
+            AgenticAIConnectionManager.ConnectionResult connection = selected == null
+                    ? agenticAIConnectionManager.connectNewSession(config.provider(), activeVeyraAIAgentSession.sessionId())
+                    : agenticAIConnectionManager.connectExistingSession(config.provider(), activeVeyraAIAgentSession.sessionId());
+            refreshVeyraAIAgentSessionOptions();
+            selectVeyraAIAgentSession(activeVeyraAIAgentSession);
+            updateApiAiConnectionLabels();
+            if (!connection.fullyConnected()) {
+                showAgenticAiPartialConnection(connection);
+                return true;
+            }
+            showVeyraAIAgentConnectedStatus(config, activeVeyraAIAgentSession, sessionSelection);
+            return true;
+        } catch (Exception e) {
+            if (veyraaiAgentConnectionLabel != null) {
+                veyraaiAgentConnectionLabel.setText("Agentic AI: saved Codex login unavailable for API, DB and Web Agents");
+            }
+            return false;
+        }
+    }
+
+    private void saveOpenAiCodexOAuthLoginSuccess(String provider, String authMode) throws Exception {
+        JSONObject marker = new JSONObject()
+                .put("systemUserKey", configCacheKey())
+                .put("machineName", systemName())
+                .put("systemUser", System.getProperty("user.name", "unknown"))
+                .put("provider", provider)
+                .put("authMode", authMode)
+                .put("codexHome", codexCliHomeDirectory().toString())
+                .put("authPath", codexCliAuthJsonPath().toString())
+                .put("authenticatedAt", Instant.now().toString());
+        Files.createDirectories(codexCliHomeDirectory());
+        Files.writeString(codexOAuthSuccessMarkerPath(), marker.toString(2), StandardCharsets.UTF_8);
+        try {
+            VeyraAIModelConfig config = currentVeyraAIModelConfig(provider, authMode, "codex-oauth:" + codexCliAuthJsonPath());
+            saveVeyraAIProviderConfig(config, configCacheDatabasePathFromField());
+            saveVeyraAIProviderAuth(config);
+        } catch (Exception ignored) {
+            // The app-owned Codex marker is enough to reconnect; SQLite may not be initialized yet.
+        }
+    }
+
+    private boolean hasOpenAiCodexOAuthLoginSuccess(String provider) {
+        try {
+            if (!Files.isRegularFile(codexCliAuthJsonPath()) || !Files.isRegularFile(codexOAuthSuccessMarkerPath())) {
+                return false;
+            }
+            JSONObject marker = safeJsonObject(Files.readString(codexOAuthSuccessMarkerPath(), StandardCharsets.UTF_8));
+            return configCacheKey().equals(marker.optString("systemUserKey"))
+                    && isOpenAiCodexProvider(marker.optString("provider", provider))
+                    && codexCliAuthJsonPath().toString().equals(marker.optString("authPath"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isCodexDeviceAuthRateLimited(String text) {
+        String normalized = nullToBlank(text).toLowerCase();
+        return normalized.contains("429")
+                || normalized.contains("too many requests")
+                || normalized.contains("rate limit")
+                || normalized.contains("rate-limit");
+    }
+
+    private String importOpenAiCodexAuthAfterDeviceLogin(String provider, String authMode) throws Exception {
+        Path authPath = codexCliAuthJsonPath();
+        if (!Files.isRegularFile(authPath)) {
+            throw new IllegalStateException("Codex login completed, but " + authPath + " was not found.");
+        }
+        String text = Files.readString(authPath, StandardCharsets.UTF_8);
+        JSONObject root = safeJsonObject(text);
+        String token = firstNonBlank(root.optString("access_token"), root.optString("refresh_token"),
+                root.optString("token"), text);
+        if (veyraaiAgentApiKeyField != null) {
+            Platform.runLater(() -> veyraaiAgentApiKeyField.setText(token));
+        }
+        VeyraAIModelConfig config = currentVeyraAIModelConfig(provider, authMode, token);
+        saveVeyraAIProviderConfig(config, configCacheDatabasePathFromField());
+        saveVeyraAIProviderAuth(config);
+        Platform.runLater(() -> loadVeyraAIProviderConfigIntoFields(provider));
+        return token;
+    }
+
+    private void prepareCodexCliHome() throws IOException {
+        Path home = codexCliHomeDirectory();
+        Files.createDirectories(home);
+        Path config = home.resolve("config.toml");
+        if (!Files.exists(config)) {
+            Files.writeString(config, "cli_auth_credentials_store = \"file\"" + System.lineSeparator(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private Path codexCliHomeDirectory() {
+        String appData = nullToBlank(System.getenv("APPDATA"));
+        Path base = appData.isBlank()
+                ? Path.of(System.getProperty("user.home"), ".veyraai")
+                : Path.of(appData, "VeyraAI");
+        return base.resolve("codex-home").toAbsolutePath().normalize();
+    }
+
+    private Path codexCliAuthJsonPath() {
+        return codexCliHomeDirectory().resolve("auth.json").toAbsolutePath().normalize();
+    }
+
+    private Path codexOAuthSuccessMarkerPath() {
+        return codexCliHomeDirectory().resolve("veyraai-codex-oauth-success.json").toAbsolutePath().normalize();
+    }
+
+    private Path expectedBundledCodexCliPath() {
+        return appInstallRoot().resolve("tools").resolve("codex-cli").resolve("bin").resolve(windowsHost() ? "codex.exe" : "codex")
+                .toAbsolutePath().normalize();
+    }
+
+    private Path extractedBundledCodexCliRoot() {
+        String appData = nullToBlank(System.getenv("APPDATA"));
+        Path base = appData.isBlank()
+                ? Path.of(System.getProperty("user.home"), ".veyraai")
+                : Path.of(appData, "VeyraAI");
+        return base.resolve("bundled-tools").resolve("codex-cli").toAbsolutePath().normalize();
+    }
+
+    private Path extractedBundledCodexCliPath() {
+        return extractedBundledCodexCliRoot().resolve("bin").resolve(windowsHost() ? "codex.exe" : "codex")
+                .toAbsolutePath().normalize();
+    }
+
+    private Path extractBundledCodexCliFromJar() {
+        if (!windowsHost()) {
+            return extractedBundledCodexCliPath();
+        }
+        ClassLoader classLoader = ApiValidatorFxApp.class.getClassLoader();
+        if (classLoader.getResource(BUNDLED_CODEX_RESOURCE_ROOT + "/bin/codex.exe") == null) {
+            return extractedBundledCodexCliPath();
+        }
+        Path root = extractedBundledCodexCliRoot();
+        try {
+            for (String relativeName : BUNDLED_CODEX_RESOURCE_FILES) {
+                Path target = root.resolve(relativeName.replace("/", File.separator)).toAbsolutePath().normalize();
+                Files.createDirectories(target.getParent());
+                try (InputStream input = classLoader.getResourceAsStream(BUNDLED_CODEX_RESOURCE_ROOT + "/" + relativeName)) {
+                    if (input == null) {
+                        throw new IOException("Missing bundled Codex resource: " + relativeName);
+                    }
+                    Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to extract bundled Codex CLI from the JAR to " + root, ex);
+        }
+        return extractedBundledCodexCliPath();
+    }
+
+    private Path findBundledCodexCliExecutable() {
+        Path fileName = Path.of(windowsHost() ? "codex.exe" : "codex");
+        List<Path> candidates = List.of(
+                appInstallRoot().resolve("tools").resolve("codex-cli").resolve("bin").resolve(fileName),
+                appInstallRoot().resolve("tools").resolve("codex-cli").resolve(fileName),
+                appInstallRoot().resolve("codex-cli").resolve("bin").resolve(fileName),
+                appInstallRoot().resolve("codex-cli").resolve(fileName),
+                Path.of(System.getProperty("user.dir")).resolve("tools").resolve("codex-cli").resolve("bin").resolve(fileName),
+                Path.of(System.getProperty("user.dir")).resolve("tools").resolve("codex-cli").resolve(fileName),
+                Path.of(System.getProperty("user.dir")).resolve("codex-cli").resolve("bin").resolve(fileName),
+                Path.of(System.getProperty("user.dir")).resolve("codex-cli").resolve(fileName));
+        for (Path candidate : candidates) {
+            Path normalized = candidate.toAbsolutePath().normalize();
+            if (Files.isRegularFile(normalized)) {
+                return normalized;
+            }
+        }
+        Path extracted = extractedBundledCodexCliPath();
+        if (Files.isRegularFile(extracted)) {
+            return extracted;
+        }
+        extracted = extractBundledCodexCliFromJar();
+        if (Files.isRegularFile(extracted)) {
+            return extracted;
+        }
+        return expectedBundledCodexCliPath();
+    }
+
+    private Path appInstallRoot() {
+        try {
+            Path location = Path.of(ApiValidatorFxApp.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                    .toAbsolutePath().normalize();
+            Path directory = Files.isRegularFile(location) ? location.getParent() : location;
+            if (directory != null && directory.getFileName() != null && "classes".equalsIgnoreCase(directory.getFileName().toString())) {
+                Path target = directory.getParent();
+                if (target != null && target.getParent() != null) {
+                    return target.getParent().toAbsolutePath().normalize();
+                }
+            }
+            return directory == null ? Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize() : directory;
+        } catch (Exception e) {
+            return Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        }
+    }
+
+    private boolean windowsHost() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private VeyraAIModelConfig currentVeyraAIModelConfig(String provider, String authMode, String token) {
+        return new VeyraAIModelConfig(provider,
+                firstNonBlank(veyraaiAgentEndpointField == null ? "" : veyraaiAgentEndpointField.getText(), defaultVeyraAIProviderEndpoint(provider)),
+                firstNonBlank(veyraaiAgentModelField == null ? "" : veyraaiAgentModelField.getText(), defaultVeyraAIProviderModel(provider)),
+                token,
+                authMode,
+                veyraaiAgentClientIdField == null ? "" : nullToBlank(veyraaiAgentClientIdField.getText()));
+    }
+
+    private String providerLoginInstructions(String provider, String authMode) {
+        String storage = apiAiAgentMemoryStorageMode() == StorageMode.LOCAL ? "local SQLite cache" : "Firebase cloud";
+        return "VeyraAI will store this " + provider + " provider credential in " + storage + ".\n\n"
+                + "Auth mode: " + authMode + "\n"
+                + "Complete the provider sign-in in your browser, then paste the returned access token, refresh token, or provider credential here.\n\n"
+                + "Device-code and PKCE providers require the provider/workspace to allow this auth method. If policy blocks it, switch Auth Mode to API Key.";
+    }
+
+    private String providerLoginUrl(String provider, String authMode, String codeChallenge) {
+        String clientId = veyraaiAgentClientIdField == null ? "" : nullToBlank(veyraaiAgentClientIdField.getText());
+        String encodedClient = URLEncoder.encode(clientId, StandardCharsets.UTF_8);
+        String state = URLEncoder.encode(UUID.randomUUID().toString(), StandardCharsets.UTF_8);
+        if ("OpenRouter".equals(provider)) {
+            return "https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost%3A8787%2Fcallback&code_challenge="
+                    + URLEncoder.encode(codeChallenge, StandardCharsets.UTF_8) + "&code_challenge_method=S256&state=" + state;
+        }
+        if ("GitHub Copilot".equals(provider)) {
+            return "https://github.com/login/device";
+        }
+        if ("Azure OpenAI / Azure AI Foundry".equals(provider)) {
+            return "https://microsoft.com/devicelogin";
+        }
+        if ("Google Gemini".equals(provider) || "Gemini CLI".equals(provider)) {
+            return "https://www.google.com/device";
+        }
+        if ("Amazon Q Developer".equals(provider)) {
+            return "https://device.sso.amazonaws.com/";
+        }
+        if ("Claude Code".equals(provider)) {
+            return "https://console.anthropic.com/settings/keys";
+        }
+        if ("Gemini CLI".equals(provider)) {
+            return "https://aistudio.google.com/app/apikey";
+        }
+        if (isOpenAiCodexProvider(provider)) {
+            return "https://auth.openai.com/codex/device";
+        }
+        return "https://platform.openai.com/api-keys";
+    }
+
+    private String providerTokenExchangeUrl(String provider) {
+        return switch (firstNonBlank(provider, "")) {
+            case "OpenRouter" -> "https://openrouter.ai/api/v1/auth/keys";
+            case "GitHub Copilot" -> "https://github.com/login/oauth/access_token";
+            case "Azure OpenAI / Azure AI Foundry" -> "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token";
+            case "Google Gemini", "Gemini CLI" -> "https://oauth2.googleapis.com/token";
+            case "OpenAI Codex", "OpenAI Codex CLI" -> "Provider-managed by bundled Codex CLI";
+            default -> "";
+        };
+    }
+
+    private String pkceS256Challenge(String verifier) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(digest.digest(nullToBlank(verifier).getBytes(StandardCharsets.US_ASCII)));
+        } catch (Exception e) {
+            return verifier;
+        }
+    }
+
+    private String generateDeviceCode(String provider) {
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        SecureRandom random = new SecureRandom();
+        StringBuilder code = new StringBuilder();
+        int codeLength = isOpenAiCodexProvider(provider) ? 9 : 8;
+        for (int i = 0; i < codeLength; i++) {
+            if (i == 4) {
+                code.append("-");
+            }
+            code.append(alphabet.charAt(random.nextInt(alphabet.length())));
+        }
+        return code.toString();
+    }
+
+    private String generatePkceVerifier() {
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private void importLocalProviderCredentials(String provider) {
+        List<Path> candidates = switch (provider) {
+            case "OpenAI Codex", "OpenAI Codex CLI" -> List.of(codexCliAuthJsonPath());
+            case "Claude Code" -> List.of(Path.of(System.getProperty("user.home"), ".claude", ".credentials.json"),
+                    Path.of(System.getProperty("user.home"), ".claude", "auth.json"));
+            case "Gemini CLI" -> List.of(Path.of(System.getProperty("user.home"), ".gemini", "oauth_creds.json"),
+                    Path.of(System.getProperty("user.home"), ".config", "gemini", "oauth_creds.json"));
+            default -> List.of();
+        };
+        try {
+            for (Path candidate : candidates) {
+                if (Files.isRegularFile(candidate)) {
+                    String text = Files.readString(candidate, StandardCharsets.UTF_8);
+                    JSONObject root = safeJsonObject(text);
+                    String token = firstNonBlank(root.optString("access_token"), root.optString("refresh_token"),
+                            root.optString("token"), text);
+                    if (veyraaiAgentApiKeyField != null) {
+                        veyraaiAgentApiKeyField.setText(token);
+                    }
+                    VeyraAIModelConfig config = currentVeyraAIModelConfig(provider, "Import Local Credentials", token);
+                    saveVeyraAIProviderConfig(config, configCacheDatabasePathFromField());
+                    saveVeyraAIProviderAuth(config);
+                    showInfo("Provider Credentials Imported", "Imported " + provider + " credentials from " + candidate);
+                    return;
+                }
+            }
+            showWarning("Import Local Credentials", "No supported local credential file was found for " + provider + ".");
+        } catch (Exception e) {
+            showError("Import Local Credentials Failed", e);
+        }
+    }
+
+    private void openVeyraAICodexAppIntegration() {
+        Stage loginStage = new Stage();
+        loginStage.setTitle(APP_NAME + " - Codex App Integration");
+        loadApplicationIcon(loginStage);
+        TextArea instructions = editor("""
+                VeyraAI Codex App Integration
+
+                VeyraAI now handles Codex as a provider login, not as a Docker-hosted Codex CLI dependency.
+
+                1. Choose OpenAI Codex in Settings.
+                2. Choose OAuth Device Code, API Key, or Import Local Credentials.
+                3. Click OAuth Login Setup.
+                4. Save the returned credential locally or in cloud according to the Memory switch.
+
+                The separate Codex CLI tab remains available only for legacy standalone CLI workflows.
+                """);
+        instructions.setEditable(false);
+        instructions.setWrapText(true);
+        Button startLogin = primary("OAuth Login Setup");
+        startLogin.setOnAction(e -> openVeyraAIProviderLogin());
+        Button close = secondary("Close");
+        close.setOnAction(e -> loginStage.close());
+        VBox content = new VBox(12, card("App Integration Code", instructions), actionRow(startLogin, close));
+        content.setPadding(new Insets(16));
+        Scene scene = new Scene(content, 720, 430);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        loginStage.setScene(scene);
+        loginStage.show();
+        loginStage.toFront();
+    }
+
+    private void startNativeCodexLogin() {
+        if (veyraaiAgentConnectionLabel != null) {
+            veyraaiAgentConnectionLabel.setText("Preparing Codex CLI Docker container...");
+        }
+        Task<String> task = new Task<>() {
+            @Override protected String call() throws Exception {
+                return ensureCodexCliContainerReady();
+            }
+        };
+        task.setOnSucceeded(e -> {
+            String containerName = task.getValue();
+            if (veyraaiAgentConnectionLabel != null) {
+                veyraaiAgentConnectionLabel.setText("Codex CLI container ready: " + containerName);
+            }
+            launchCodexLoginTerminal(containerName);
+        });
+        task.setOnFailed(e -> {
+            if (veyraaiAgentConnectionLabel != null) {
+                veyraaiAgentConnectionLabel.setText("Codex CLI Docker setup failed");
+            }
+            showError("Start Codex Login Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private String ensureCodexCliContainerReady() throws Exception {
+        String image = codexDockerImage();
+        String containerName = codexContainerName();
+        requireDocker();
+        if (!dockerImageExists(image)) {
+            runDockerCommandWithLogs(List.of("pull", image));
+        }
+        if (!dockerContainerExists(containerName)) {
+            runCodexCliContainer(image, containerName);
+        } else if (!dockerContainerRunning(containerName)) {
+            runDockerCommand(List.of("start", containerName));
+        }
+        ProcessResult version = runDockerCommand(List.of("exec", containerName, "codex", "--version"));
+        if (!version.success()) {
+            throw new IllegalStateException("Codex CLI verification failed: " + version.output);
+        }
+        return containerName;
+    }
+
+    private void launchCodexLoginTerminal(String containerName) {
+        try {
+            String command = "docker exec -it " + containerName + " codex login --device-auth";
+            new ProcessBuilder("cmd", "/c", "start", "VeyraAI Codex Login", "cmd", "/k", command)
+                    .directory(Path.of(System.getProperty("user.dir")).toFile())
+                    .start();
+            showInfo("Codex Login Started", "Opened Docker Codex login terminal for container: " + containerName);
+        } catch (Exception e) {
+            showError("Open Codex Login Terminal Failed", e);
+        }
+    }
+
+    private void stopVeyraAICustomAgentService() {
+        activeVeyraAIAgentSession = null;
+        activeVeyraAIModelConfig = null;
+        agenticAIConnectionManager.disconnectSession();
+        apiAiConnectedModel = selectedApiAiAgentName();
+        if (veyraaiAgentConnectionLabel != null) {
+            veyraaiAgentConnectionLabel.setText("API, DB, Web & Test Planning Agents are not connected.");
+        }
+        updateApiAiConnectionLabels();
+        updateTestPlanningConnectionStatus();
+        showInfo("Agentic AI", "Cleared the shared API, DB, Web and Test Planning Agent connection. Provider credentials remain saved in the selected storage mode.");
+    }
+
+    private void installStorageToggleGraphic(ToggleButton toggle) {
+        StackPane track = new StackPane();
+        track.getStyleClass().add("storage-switch-track");
+        Region knob = new Region();
+        knob.getStyleClass().add("storage-switch-knob");
+        track.getChildren().add(knob);
+        StackPane.setAlignment(knob, Pos.CENTER_LEFT);
+        toggle.setGraphic(track);
+        toggle.setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY);
+        toggle.setFocusTraversable(true);
+        toggle.getProperties().put("storageSwitchTrack", track);
+        toggle.getProperties().put("storageSwitchKnob", knob);
+        updateStorageToggleGraphic(toggle, toggle.isSelected());
+    }
+
+    private void updateStorageToggleGraphic(ToggleButton toggle, boolean cloud) {
+        Object trackObject = toggle.getProperties().get("storageSwitchTrack");
+        Object knobObject = toggle.getProperties().get("storageSwitchKnob");
+        if (trackObject instanceof StackPane track) {
+            track.getStyleClass().remove("storage-switch-cloud");
+            if (cloud) {
+                track.getStyleClass().add("storage-switch-cloud");
+            }
+        }
+        if (knobObject instanceof Region knob) {
+            knob.setTranslateX(cloud ? 28 : 0);
+        }
+    }
+
+    private void updateApiAiConnectionLabels() {
+        String agentName = selectedApiAiAgentName();
+        String text;
+        if (isVeyraAIRuntimeSelected() && activeVeyraAIAgentSession != null) {
+            text = "API, DB, Web & Test Planning Agents connected to shared session: " + activeVeyraAIAgentSession.sessionId();
+        } else if (isHermesRuntimeSelected() && activeApiAiHermesSession != null) {
+            text = "Hermes Agent connected via session: " + activeApiAiHermesSession.sessionId();
+        } else {
+            text = agentName + ": not connected";
+        }
+        updateApiAiConnectionLabels(text);
+    }
+
+    private void updateApiAiConnectionLabels(String text) {
+        Platform.runLater(() -> {
+            if (apiAiTesterConnectionLabel != null) {
+                apiAiTesterConnectionLabel.setText(text);
+            }
+            if (apiAiValidationConnectionLabel != null) {
+                apiAiValidationConnectionLabel.setText(text);
+            }
+            updateTestPlanningConnectionStatus();
+        });
+    }
+
+    private void connectApiAiHermesAgent() {
+        if (apiAiHermesConnectionLabel != null) {
+            apiAiHermesConnectionLabel.setText(selectedApiAiAgentName() + ": connecting...");
+        }
+        Task<HermesSessionCapture> task = new Task<>() {
+            @Override
+            protected HermesSessionCapture call() throws Exception {
+                HermesSessionRecord selectedRecord = selectedApiAiHermesSessionRecord();
+                if (selectedRecord != null && !nullToBlank(selectedRecord.sessionId()).isBlank()) {
+                    ensureSelectedHermesSessionReachable(selectedRecord);
+                    return new HermesSessionCapture(selectedRecord.sessionId(), selectedRecord.title(), selectedRecord.resumeCommand(),
+                            selectedRecord.transcriptPath(), selectedRecord.aiAgentPath(), selectedRecord.containerName(), "");
+                }
+                return establishApiAiHermesSession();
+            }
+        };
+        task.setOnSucceeded(e -> {
+            HermesSessionCapture capture = task.getValue();
+            if (capture == null || nullToBlank(capture.sessionId()).isBlank()) {
+                apiAiHermesConnectionLabel.setText(selectedApiAiAgentName() + ": connection failed - no session id returned");
+                showWarning(selectedApiAiAgentName() + " Connect", "The agent connected, but no session id was returned.");
+                return;
+            }
+            activeApiAiHermesSession = new HermesSessionRecord(
+                    firstNonBlank(capture.title(), "API AI Hermes Session") + " (" + capture.sessionId() + ")",
+                    capture.sessionId(),
+                    firstNonBlank(capture.title(), "API AI Hermes Session"),
+                    capture.resumeCommand(),
+                    capture.transcriptPath(),
+                    capture.aiAgentPath(),
+                    capture.containerName());
+            apiAiConnectedModel = selectedApiAiAgentName() + " (" + capture.sessionId() + ")";
+            updateApiAiConnectionLabels(selectedApiAiAgentName() + " connected via Hermes session: " + capture.sessionId());
+            refreshApiAiHermesSessionOptions();
+            selectApiAiHermesSession(capture.sessionId());
+            apiAiHermesConnectionLabel.setText(selectedApiAiAgentName() + " connected: " + capture.sessionId());
+            showInfo(selectedApiAiAgentName() + " Connected", "Connected session: " + capture.sessionId());
+        });
+        task.setOnFailed(e -> {
+            activeApiAiHermesSession = null;
+            apiAiHermesConnectionLabel.setText(selectedApiAiAgentName() + ": disconnected");
+            updateApiAiConnectionLabels();
+            Throwable cause = rootCause(task.getException());
+            if (isHermesAuthFailure(exceptionMessage(cause))) {
+                showWarning("Hermes Re-Authentication Required", exceptionMessage(cause));
+            } else {
+                showError(selectedApiAiAgentName() + " Connect Failed", task.getException());
+            }
+        });
+        start(task);
+    }
+
+    private HermesSessionRecord selectedApiAiHermesSessionRecord() {
+        String selected = apiAiHermesSessionBox == null ? "" : nullToBlank(apiAiHermesSessionBox.getValue());
+        if (selected.isBlank() || HERMES_NEW_SESSION.equals(selected)) {
+            return null;
+        }
+        return apiAiHermesSessionRecords.get(selected);
+    }
+
+    private void ensureSelectedHermesSessionReachable(HermesSessionRecord record) throws Exception {
+        String image = hermesDockerImage();
+        String containerName = firstNonBlank(record.containerName(), hermesContainerName());
+        requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+        ensureHermesContainerRunning(image, containerName, true);
+        startHermesDashboard(containerName);
+        waitForHermesDashboard();
+        activeApiAiHermesDashboardUrl = discoverHermesDashboardUrl();
+        verifyHermesAgent(containerName);
+    }
+
+    private HermesSessionCapture establishApiAiHermesSession() throws Exception {
+        String dashboardUrl = discoverHermesDashboardUrl();
+        String image = hermesDockerImage();
+        String containerName = hermesContainerName();
+        requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+        ensureHermesContainerRunning(image, containerName, true);
+        startHermesDashboard(containerName);
+        waitForHermesDashboard();
+        activeApiAiHermesDashboardUrl = firstNonBlank(dashboardUrl, HERMES_DASHBOARD_URL);
+        verifyHermesAgent(containerName);
+
+        Path aiAgentPath = hermesDataDirectory();
+        Files.createDirectories(aiAgentPath);
+        Path sessionDirectory = aiAgentPath.resolve("Sessions");
+        Files.createDirectories(sessionDirectory);
+        String timestamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(java.time.LocalDateTime.now());
+        Path transcriptPath = sessionDirectory.resolve("api-ai-hermes-connect-" + timestamp + ".log");
+        String prompt = """
+                Start a new VeyraAI API AI Agent session.
+                Reply briefly and include the active Hermes session id if your CLI exposes one.
+                """;
+        List<String> command = List.of("docker", "exec",
+                "-w", "/opt/data",
+                "-e", "AI_AGENT_PATH=/opt/data",
+                "-e", "TESTWEAVE_AI_AGENT_PATH=/opt/data",
+                containerName, "hermes",
+                "chat",
+                "-q", prompt,
+                "-Q",
+                "--pass-session-id",
+                "--source", "tool");
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        boolean completed = process.waitFor(120, java.util.concurrent.TimeUnit.SECONDS);
+        if (!completed) {
+            process.destroyForcibly();
+            throw new IllegalStateException("Hermes session creation timed out after 120 seconds.");
+        }
+        String transcript = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        Files.writeString(transcriptPath, transcript, StandardCharsets.UTF_8);
+        HermesSessionCapture capture = parseHermesSessionTranscript(transcriptPath, containerName, aiAgentPath);
+        if (nullToBlank(capture.sessionId()).isBlank()) {
+            throw new IllegalStateException("Hermes connected but did not return a session id. Transcript: "
+                    + shorten(transcript, 1000));
+        }
+        if (process.exitValue() != 0) {
+            if (isHermesAuthFailure(transcript)) {
+                openHermesOpenAiCodexReauth(containerName);
+                throw new IllegalStateException(selectedApiAiAgentName() + " created session " + capture.sessionId()
+                        + ", but its OpenAI Codex authentication token is invalidated. "
+                        + "A Hermes re-authentication terminal was opened. Complete sign-in there, then click Connect again.");
+            }
+            throw new IllegalStateException(selectedApiAiAgentName() + " created session " + capture.sessionId()
+                    + " but the model/provider returned an error. " + shorten(transcript, 1000));
+        }
+        saveApiAiHermesSession(capture);
+        appendHermesLog(selectedApiAiAgentName() + " session connected at " + activeApiAiHermesDashboardUrl + ": " + capture.sessionId());
+        return capture;
+    }
+
+    private boolean isHermesAuthFailure(String text) {
+        String value = nullToBlank(text).toLowerCase();
+        return value.contains("token_invalidated")
+                || value.contains("authentication token has been invalidated")
+                || value.contains("error code: 401")
+                || value.contains("status': 401")
+                || value.contains("\"status\":401");
+    }
+
+    private void openHermesOpenAiCodexReauth(String containerName) {
+        appendHermesLog("Hermes OpenAI Codex token is invalidated. Opening re-authentication terminal.");
+        try {
+            try {
+                runDockerCommand(List.of("exec", containerName, "hermes", "auth", "logout", "openai-codex"));
+                appendHermesLog("Cleared invalid Hermes OpenAI Codex auth state.");
+            } catch (Exception e) {
+                appendHermesLog("Could not clear old Hermes auth state: " + exceptionMessage(e));
+            }
+            launchHermesCli(containerName, "auth add openai-codex --type oauth");
+        } catch (Exception e) {
+            appendHermesLog("Could not open Hermes re-authentication terminal: " + exceptionMessage(e));
+        }
+    }
+
+    private void disconnectApiAiHermesAgent() {
+        String sessionId = activeApiAiHermesSession == null ? "" : nullToBlank(activeApiAiHermesSession.sessionId());
+        activeApiAiHermesSession = null;
+        activeApiAiHermesDashboardUrl = "";
+        apiAiConnectedModel = selectedApiAiAgentName();
+        if (apiAiHermesConnectionLabel != null) {
+            apiAiHermesConnectionLabel.setText("Hermes: disconnected");
+        }
+        updateApiAiConnectionLabels();
+        appendHermesLog("API AI agent disconnected" + (sessionId.isBlank() ? "." : ": " + sessionId));
+    }
+
+    private void disconnectApiAiHermesAgentOnExit() {
+        activeApiAiHermesSession = null;
+        activeApiAiHermesDashboardUrl = "";
+    }
+
+    private String discoverHermesDashboardUrl() {
+        if (isUrlReachable(HERMES_DASHBOARD_URL)) {
+            return HERMES_DASHBOARD_URL;
+        }
+        try {
+            ProcessResult port = runCommand(List.of("docker", "port", hermesContainerName(), "9119/tcp"));
+            String output = firstOutputLine(port.output);
+            Matcher matcher = Pattern.compile("(?:0\\.0\\.0\\.0|127\\.0\\.0\\.1|localhost|\\[::\\]|::):([0-9]+)").matcher(output);
+            if (matcher.find()) {
+                String discovered = "http://127.0.0.1:" + matcher.group(1);
+                if (isUrlReachable(discovered)) {
+                    return discovered;
+                }
+            }
+        } catch (Exception ignored) {
+            // Fall back to the default local Hermes dashboard URL.
+        }
+        return HERMES_DASHBOARD_URL;
+    }
+
+    private boolean isUrlReachable(String url) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() > 0 && response.statusCode() < 500;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private Path dashboardExecutionSqlitePath(StorageMode storageMode) {
+        if (storageMode != StorageMode.LOCAL) {
+            return null;
+        }
+        return configCacheDatabasePathFromField();
+    }
+
+    private void persistExecutionStorageMode() {
+        if (configBasePathField == null || configBasePathField.getText() == null || configBasePathField.getText().trim().isBlank()) {
+            return;
+        }
+        try {
+            persistExecutionStorageMode(configCacheDatabasePathFromField());
+        } catch (Exception e) {
+            configStatusLabel.setText("Could not save execution log storage mode: " + exceptionMessage(e));
+        }
+    }
+
+    private void persistExecutionStorageMode(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        String sql = "UPDATE " + CONFIG_CACHE_TABLE + " SET execution_storage_mode = ?, updated_at = ? WHERE system_user_key = ?";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, selectedDashboardStorageMode().name());
+            statement.setString(2, Instant.now().toString());
+            statement.setString(3, configCacheKey());
+            statement.executeUpdate();
+        }
+    }
+
+    private void loadExecutionStorageMode(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        String sql = "SELECT execution_storage_mode FROM " + CONFIG_CACHE_TABLE + " WHERE system_user_key = ?";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                String mode = resultSet.next() ? resultSet.getString("execution_storage_mode") : StorageMode.CLOUD.name();
+                boolean cloud = !StorageMode.LOCAL.name().equalsIgnoreCase(mode);
+                if (configExecutionStorageToggle != null) {
+                    configExecutionStorageToggle.setSelected(cloud);
+                    updateExecutionStorageToggle();
+                }
+            }
+        }
+    }
+
+    private void persistApiAiAgentProfile() {
+        if (configBasePathField == null || configBasePathField.getText() == null || configBasePathField.getText().trim().isBlank()) {
+            return;
+        }
+        try {
+            persistApiAiAgentProfile(configCacheDatabasePathFromField());
+        } catch (Exception e) {
+            if (configStatusLabel != null) {
+                configStatusLabel.setText("Could not save AI agent selection: " + exceptionMessage(e));
+            }
+        }
+    }
+
+    private void persistApiAiAgentProfile(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        String sql = "UPDATE " + CONFIG_CACHE_TABLE + " SET api_ai_agent_profile = ?, updated_at = ? WHERE system_user_key = ?";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, selectedApiAiAgentProfile());
+            statement.setString(2, Instant.now().toString());
+            statement.setString(3, configCacheKey());
+            statement.executeUpdate();
+        }
+    }
+
+    private void loadApiAiAgentProfile(Path sqliteDbPath) throws Exception {
+        initializeConfigCacheTable(sqliteDbPath);
+        String sql = "SELECT api_ai_agent_profile FROM " + CONFIG_CACHE_TABLE + " WHERE system_user_key = ?";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, configCacheKey());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    String profile = resultSet.getString("api_ai_agent_profile");
+                    if (apiAiAgentRuntimeToggle != null) {
+                        apiAiAgentRuntimeToggle.setSelected("CUSTOM".equalsIgnoreCase(nullToBlank(profile)));
+                    }
+                } else if (apiAiAgentRuntimeToggle != null) {
+                    apiAiAgentRuntimeToggle.setSelected(false);
+                }
+                updateApiAiAgentToggleLabels();
+            }
+        }
+    }
+
+    private void clearFirebaseCloudDb() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.initOwner(stage);
+        confirm.setTitle("Clear Firebase Cloud DB");
+        confirm.setHeaderText("Clear all cloud execution metrics?");
+        confirm.setContentText("This permanently deletes all dashboard execution logs from Firebase under testweave-dashboard/executions.");
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return;
+        }
+        Task<Void> task = new Task<>() {
+            @Override protected Void call() throws Exception {
+                dashboardExecutionService.clearFirebase();
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> {
+            configStatusLabel.setText("Firebase cloud dashboard execution logs cleared.");
+            if (selectedDashboardStorageMode() == StorageMode.CLOUD) {
+                refreshDashboard();
+            }
+            showInfo("Firebase Cloud DB", "Firebase cloud dashboard execution logs cleared.");
+        });
+        task.setOnFailed(e -> showError("Clear Firebase Cloud DB Failed", task.getException()));
+        start(task);
+    }
+
+    private void applyConfiguredPathsToFields() {
+        Path expectedResponseDir = configuredFolder("API", "ExpectedResponse");
+        if (expectedResponseDir != null && expectedJsonPathField != null && isBlankOrDirectory(expectedJsonPathField.getText())) {
+            expectedJsonPathField.setText(expectedResponseDir.toString());
+        }
+        Path variablesDir = configuredFolder("Variables");
+        if (variablesDir != null && variablesPathField != null && isBlankOrDirectory(variablesPathField.getText())) {
+            variablesPathField.setText(variablesDir.toString());
+        }
+        updateHermesAiAgentPathField();
+    }
+
+    private void updateHermesAiAgentPathField() {
+        if (hermesAiAgentPathField == null) {
+            return;
+        }
+        Path aiAgentDir = configuredAiAgentDirectory();
+        hermesAiAgentPathField.setText(aiAgentDir == null ? "" : aiAgentDir.toString());
+    }
+
+    private Path configuredAiAgentDirectory() {
+        return configuredFolder("AIAgent");
+    }
+
+    private boolean isBlankOrDirectory(String text) {
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        try {
+            return Files.isDirectory(Path.of(text));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private Path configuredFolder(String first, String... more) {
+        Path root = configuredRootPath();
+        if (root == null) {
+            return null;
+        }
+        Path path = root.resolve(first);
+        for (String part : more) {
+            path = path.resolve(part);
+        }
+        return path.toAbsolutePath().normalize();
+    }
+
+    private Path legacyConfiguredFolder(String first, String... more) {
+        Path root = legacyConfiguredRootPath();
+        if (root == null) {
+            return null;
+        }
+        Path path = root.resolve(first);
+        for (String part : more) {
+            path = path.resolve(part);
+        }
+        return path.toAbsolutePath().normalize();
+    }
+
+    private Path configuredRootPath() {
+        if (configBasePathField == null || configBasePathField.getText() == null || configBasePathField.getText().trim().isBlank()) {
+            return null;
+        }
+        return resolveVeyraAIConfigRoot(Path.of(configBasePathField.getText().trim()).toAbsolutePath().normalize())
+                .toAbsolutePath()
+                .normalize();
+    }
+
+    private Path legacyConfiguredRootPath() {
+        if (configBasePathField == null || configBasePathField.getText() == null || configBasePathField.getText().trim().isBlank()) {
+            return null;
+        }
+        Path basePath = Path.of(configBasePathField.getText().trim()).toAbsolutePath().normalize();
+        Path legacyRoot = firstPathSegmentRoot(basePath, LEGACY_CONFIG_ROOT_FOLDER);
+        if (legacyRoot != null) {
+            return legacyRoot;
+        }
+        Path fileName = basePath.getFileName();
+        if (fileName != null && CONFIG_ROOT_FOLDER.equalsIgnoreCase(fileName.toString()) && basePath.getParent() != null) {
+            return basePath.getParent().resolve(LEGACY_CONFIG_ROOT_FOLDER).toAbsolutePath().normalize();
+        }
+        return basePath.resolve(LEGACY_CONFIG_ROOT_FOLDER).toAbsolutePath().normalize();
+    }
+
+    private Path firstPathSegmentRoot(Path path, String segmentName) {
+        if (path == null || segmentName == null || segmentName.isBlank()) {
+            return null;
+        }
+        Path root = path.getRoot();
+        Path current = root;
+        for (Path segment : path) {
+            current = current == null ? segment : current.resolve(segment);
+            if (segmentName.equalsIgnoreCase(segment.toString())) {
+                return current.toAbsolutePath().normalize();
+            }
+        }
+        return null;
+    }
+
+    private String configCacheKey() {
+        return systemName() + "_" + System.getProperty("user.name", "unknown");
+    }
+
+    private String systemName() {
+        String computerName = System.getenv("COMPUTERNAME");
+        if (computerName == null || computerName.isBlank()) {
+            computerName = System.getenv("HOSTNAME");
+        }
+        return computerName == null || computerName.isBlank() ? "unknown-system" : computerName.trim();
     }
 
     private TableView<Map<String, String>> createTestSuiteStepsTable() {
         TableView<Map<String, String>> table = new TableView<>(testSuiteRows);
         table.setEditable(true);
+        table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
 
         TableColumn<Map<String, String>, Boolean> runColumn = new TableColumn<>("Run");
@@ -921,6 +7989,48 @@ public class ApiValidatorFxApp extends Application {
         table.getColumns().add(stringColumn("Details", "details"));
         table.getColumns().add(stringColumn("Status", "status"));
         return table;
+    }
+
+    private void deleteSelectedOrCheckedTestSuiteSteps() {
+        List<Map<String, String>> rowsToDelete = testSuiteStepsTable == null
+                ? new ArrayList<>()
+                : new ArrayList<>(testSuiteStepsTable.getSelectionModel().getSelectedItems());
+        if (rowsToDelete.isEmpty()) {
+            rowsToDelete = testSuiteRows.stream().filter(this::isSelected).toList();
+        }
+        if (rowsToDelete.isEmpty()) {
+            showWarning("Delete Test Steps", "Check one or more Run boxes or select one or more table rows first.");
+            return;
+        }
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.initOwner(stage);
+        confirm.setTitle("Delete Test Steps");
+        confirm.setHeaderText("Delete " + rowsToDelete.size() + " test step(s)?");
+        confirm.setContentText("The selected steps will be removed from the table"
+                + (selectedWorkbookPath() == null ? "." : " and the imported workbook."));
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return;
+        }
+
+        List<Map<String, String>> previousRows = new ArrayList<>(testSuiteRows);
+        testSuiteRows.removeAll(rowsToDelete);
+        try {
+            Path workbookPath = selectedWorkbookPath();
+            if (workbookPath != null) {
+                writeTestSuiteRowsToWorkbook(workbookPath);
+            }
+            if (testSuiteStepsTable != null) {
+                testSuiteStepsTable.getSelectionModel().clearSelection();
+                testSuiteStepsTable.refresh();
+            }
+            if (testSuiteRunnerStatusLabel != null) {
+                testSuiteRunnerStatusLabel.setText("Deleted " + rowsToDelete.size() + " test step(s). "
+                        + testSuiteRows.size() + " step(s) remain.");
+            }
+        } catch (Exception exception) {
+            testSuiteRows.setAll(previousRows);
+            showError("Delete Test Steps Failed", exception);
+        }
     }
 
     private void addSelectedTestSuiteBuilderItem() {
@@ -1239,13 +8349,14 @@ public class ApiValidatorFxApp extends Application {
         BorderPane root = new BorderPane(builderContent);
         root.setTop(toolbar);
         BorderPane.setMargin(toolbar, new Insets(12));
-        root.setStyle("-fx-background-color: #f5f7fb;");
+        root.setStyle("-fx-background-color: " + APP_BACKGROUND + ";");
 
         suiteBuilderStage = new Stage();
         suiteBuilderStage.setTitle(APP_NAME + " - Test Suite Builder");
         suiteBuilderStage.initOwner(stage);
         Scene scene = new Scene(root, 1180, 720);
         scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
         suiteBuilderStage.setScene(scene);
         loadApplicationIcon(suiteBuilderStage);
         deleteNode.setOnAction(e -> deleteSelectedSuiteBuilderCanvasNode());
@@ -1452,13 +8563,13 @@ public class ApiValidatorFxApp extends Application {
     private void saveSuiteBuilderFlowTemplate() {
         FileChooser chooser = new FileChooser();
         chooser.setInitialFileName("testweave-suite-builder-flow.json");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("TestWeave Flow Template", "*.json"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("VeyraAI Flow Template", "*.json"));
         File file = chooser.showSaveDialog(suiteBuilderStage == null ? stage : suiteBuilderStage);
         if (file == null) {
             return;
         }
         JSONObject template = new JSONObject()
-                .put("format", "TestWeave Suite Builder Flow")
+                .put("format", "VeyraAI Suite Builder Flow")
                 .put("version", 1)
                 .put("testSuite", testSuiteNameField == null ? "" : testSuiteNameField.getText())
                 .put("testCase", currentTestCaseName())
@@ -1475,7 +8586,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void importSuiteBuilderFlowTemplate() {
-        File file = chooseOpenFile("TestWeave Flow Template", "*.json");
+        File file = chooseOpenFile("VeyraAI Flow Template", "*.json");
         if (file == null) {
             return;
         }
@@ -1568,11 +8679,11 @@ public class ApiValidatorFxApp extends Application {
                 }
                 ensureGithubRepositoryReady();
                 writeRowsToWorkbook(workbookPath, executionRows);
-                syncTestWeaveRunnerSourceToGithub();
+                syncVeyraAIRunnerSourceToGithub();
                 githubPutFile(".github/workflows/testweave-runner.yml", githubActionsWorkflowYaml(),
-                        "Deploy TestWeave canvas flow workflow");
+                        "Deploy VeyraAI canvas flow workflow");
                 githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
-                        "Update TestWeave canvas flow workbook");
+                        "Update VeyraAI canvas flow workbook");
                 return null;
             }
         };
@@ -1908,18 +9019,18 @@ public class ApiValidatorFxApp extends Application {
     private String builderStatusColor(Map<String, String> row) {
         String status = row.getOrDefault("flowStatus", row.getOrDefault("status", "Ready"));
         if (status.startsWith("Running")) {
-            return "#fff4bf";
+            return "#fff7d1";
         }
         if (status.startsWith("Passed")) {
-            return "#e6f6e6";
+            return "#d9fff6";
         }
         if (status.startsWith("Failed")) {
-            return "#fde2e2";
+            return "#ffe3eb";
         }
         if (status.startsWith("Stopped")) {
-            return "#f3f4f6";
+            return "#e9efff";
         }
-        return "white";
+        return "#f8fbff";
     }
 
     private double canvasCoordinate(String value, double fallback) {
@@ -1953,11 +9064,11 @@ public class ApiValidatorFxApp extends Application {
 
     private String builderNodeColor(String type) {
         return switch (type) {
-            case "Web Test" -> "#2f855a";
-            case "Performance Test" -> "#b7791f";
-            case "JSON Compare" -> "#805ad5";
-            case "DB Validation" -> "#2b6cb0";
-            case "Field Validation" -> "#d53f8c";
+            case "Web Test" -> CYAN;
+            case "Performance Test" -> "#ff9f43";
+            case "JSON Compare" -> VIOLET;
+            case "DB Validation" -> PRIMARY;
+            case "Field Validation" -> "#ff4fc3";
             default -> PRIMARY;
         };
     }
@@ -2090,10 +9201,8 @@ public class ApiValidatorFxApp extends Application {
             showWarning("Test Suite Runner", "Enter both Test Suite and Test Case before creating the workbook.");
             return;
         }
-        FileChooser chooser = new FileChooser();
-        chooser.setInitialFileName(testSuiteNameField.getText().trim() + ".xlsx");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel Workbook", "*.xlsx"));
-        File file = chooser.showSaveDialog(stage);
+        File file = chooseSaveFile("Excel Workbook", "*.xlsx",
+                testSuiteNameField.getText().trim() + ".xlsx", configuredFolder("TestSuite"));
         if (file == null) {
             return;
         }
@@ -2110,7 +9219,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void importTestSuiteWorkbook() {
-        File file = chooseOpenFile("Excel Workbook", "*.xlsx");
+        File file = chooseOpenFile("Excel Workbook", "*.xlsx", configuredFolder("TestSuite"));
         if (file == null) {
             return;
         }
@@ -2153,16 +9262,18 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void connectGithub() {
+        ensureGithubConfigurationFields();
+        if (githubAccessToken != null && !githubAccessToken.isBlank()) {
+            validateGithubConnectionAsync();
+            return;
+        }
+        if (githubCloudConfigLoadActive.get()) {
+            githubStatusLabel.setText("GitHub: loading saved cloud configuration; click Connect again when loading completes");
+            return;
+        }
         String clientId = System.getenv("TESTWEAVE_GITHUB_CLIENT_ID");
         if (clientId == null || clientId.isBlank()) {
-            getHostServices().showDocument("https://github.com/login");
-            TextInputDialog dialog = new TextInputDialog();
-            dialog.setTitle("Connect GitHub");
-            dialog.setHeaderText("Paste a GitHub token with repo and workflow access.");
-            dialog.showAndWait().ifPresent(token -> {
-                githubAccessToken = token.trim();
-                githubStatusLabel.setText(githubAccessToken.isBlank() ? "GitHub: not connected" : "GitHub: connected");
-            });
+            promptForGithubToken("Connect GitHub");
             return;
         }
         Task<String> task = new Task<>() {
@@ -2173,9 +9284,73 @@ public class ApiValidatorFxApp extends Application {
         };
         task.setOnSucceeded(e -> {
             githubAccessToken = task.getValue();
-            githubStatusLabel.setText("GitHub: connected");
+            githubConnectionValidated = true;
+            githubStatusLabel.setText("GitHub: connected through OAuth device login - click Save GitHub Configuration");
         });
-        task.setOnFailed(e -> showError("GitHub Connect Failed", task.getException()));
+        task.setOnFailed(e -> {
+            githubConnectionValidated = false;
+            githubStatusLabel.setText("GitHub: connection failed - use Update Configuration");
+            showError("GitHub Connect Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void updateGithubConfiguration() {
+        promptForGithubToken("Update GitHub Configuration");
+    }
+
+    private void promptForGithubToken(String title) {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.initOwner(stage);
+        dialog.setTitle(title);
+        dialog.setHeaderText("Paste a GitHub token with repo and workflow access.");
+        dialog.showAndWait().ifPresent(token -> {
+            String updatedToken = token.trim();
+            if (updatedToken.isBlank()) {
+                githubStatusLabel.setText("GitHub: token was not updated");
+                return;
+            }
+            githubAccessToken = updatedToken;
+            githubConnectionValidated = false;
+            validateGithubConnectionAsync();
+        });
+    }
+
+    private void validateGithubConnectionAsync() {
+        String token = nullToBlank(githubAccessToken);
+        if (token.isBlank()) {
+            promptForGithubToken("Connect GitHub");
+            return;
+        }
+        githubStatusLabel.setText("GitHub: validating connection...");
+        Task<String> task = new Task<>() {
+            @Override
+            protected String call() throws Exception {
+                HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.github.com/user"))
+                        .timeout(Duration.ofSeconds(15))
+                        .header("Accept", "application/vnd.github+json")
+                        .header("Authorization", "Bearer " + token)
+                        .header("X-GitHub-Api-Version", "2022-11-28")
+                        .GET()
+                        .build();
+                HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IllegalStateException("GitHub rejected the saved token (HTTP " + response.statusCode() + ").");
+                }
+                return new JSONObject(response.body()).optString("login", "authenticated user");
+            }
+        };
+        task.setOnSucceeded(event -> {
+            if (!Objects.equals(token, githubAccessToken)) return;
+            githubConnectionValidated = true;
+            githubStatusLabel.setText("GitHub: connected as " + task.getValue() + " - configuration ready to save");
+        });
+        task.setOnFailed(event -> {
+            if (!Objects.equals(token, githubAccessToken)) return;
+            githubConnectionValidated = false;
+            githubStatusLabel.setText("GitHub: connection failed - click Update Configuration");
+            showError("GitHub Connect Failed", task.getException());
+        });
         start(task);
     }
 
@@ -2233,17 +9408,17 @@ public class ApiValidatorFxApp extends Application {
                 }
                 ensureGithubRepositoryReady();
                 writeTestSuiteRowsToWorkbook(workbookPath);
-                syncTestWeaveRunnerSourceToGithub();
+                syncVeyraAIRunnerSourceToGithub();
                 githubPutFile(".github/workflows/testweave-runner.yml", githubActionsWorkflowYaml(),
-                        "Deploy TestWeave GitHub Actions workflow");
+                        "Deploy VeyraAI GitHub Actions workflow");
                 githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
-                        "Update TestWeave test suite workbook");
+                        "Update VeyraAI test suite workbook");
                 return null;
             }
         };
         task.setOnSucceeded(e -> {
             githubStatusLabel.setText("GitHub: workflow deployed");
-            showInfo("GitHub Actions", "TestWeave runner deployed to GitHub Actions.");
+            showInfo("GitHub Actions", "VeyraAI runner deployed to GitHub Actions.");
         });
         task.setOnFailed(e -> showError("Deploy to GitHub Actions Failed", task.getException()));
         start(task);
@@ -2260,11 +9435,11 @@ public class ApiValidatorFxApp extends Application {
                 }
                 ensureGithubRepositoryReady();
                 writeTestSuiteRowsToWorkbook(workbookPath);
-                syncTestWeaveRunnerSourceToGithub();
+                syncVeyraAIRunnerSourceToGithub();
                 githubPutFile(".github/workflows/testweave-runner.yml", githubActionsWorkflowYaml(),
-                        "Update TestWeave GitHub Actions workflow before run");
+                        "Update VeyraAI GitHub Actions workflow before run");
                 githubPutFile("testweave/test-suite.xlsx", Files.readAllBytes(workbookPath),
-                        "Update TestWeave test suite workbook before run");
+                        "Update VeyraAI test suite workbook before run");
                 JSONObject inputs = new JSONObject()
                         .put("suite_file", "testweave/test-suite.xlsx")
                         .put("parallel", String.valueOf(testSuiteParallelExecutionCheck.isSelected()))
@@ -2301,6 +9476,9 @@ public class ApiValidatorFxApp extends Application {
         normalizeGithubRepositoryFields();
         if (githubAccessToken == null || githubAccessToken.isBlank()) {
             throw new IllegalStateException("Connect GitHub before deploying or running the workflow.");
+        }
+        if (!githubConnectionValidated) {
+            throw new IllegalStateException("Click Connect GitHub and confirm the saved connection before deploying or running the workflow.");
         }
         if (githubOwner().isBlank() || githubRepo().isBlank()) {
             throw new IllegalStateException("Enter GitHub owner and repository.");
@@ -2346,14 +9524,14 @@ public class ApiValidatorFxApp extends Application {
         }
         HttpResponse<String> pomResponse = githubRequest("GET", githubApiBase() + "/contents/pom.xml?ref=" + encode(githubBranch()), null, false);
         if (pomResponse.statusCode() == 404) {
-            throw new IllegalStateException("This deployment mode expects the selected repository to contain the TestWeave Maven source code with pom.xml. "
-                    + "Select the TestWeave repository, or add the source before deploying the workflow.");
+            throw new IllegalStateException("This deployment mode expects the selected repository to contain the VeyraAI Maven source code with pom.xml. "
+                    + "Select the VeyraAI repository, or add the source before deploying the workflow.");
         }
     }
 
     private String githubActionsWorkflowYaml() {
         return """
-                name: TestWeave Test Suite Runner
+                name: VeyraAI Test Suite Runner
 
                 on:
                   workflow_dispatch:
@@ -2363,11 +9541,11 @@ public class ApiValidatorFxApp extends Application {
                         required: true
                         default: testweave/test-suite.xlsx
                       parallel:
-                        description: Enable TestWeave parallel execution
+                        description: Enable VeyraAI parallel execution
                         required: true
                         default: '%s'
                       threads:
-                        description: TestWeave thread count
+                        description: VeyraAI thread count
                         required: true
                         default: '%s'
 
@@ -2376,11 +9554,11 @@ public class ApiValidatorFxApp extends Application {
                     runs-on: ubuntu-latest
                     steps:
                       - uses: actions/checkout@v4
-                      - name: Check TestWeave suite file
+                      - name: Check VeyraAI suite file
                         run: |
                           test -f "${{ inputs.suite_file }}"
                           ls -l "${{ inputs.suite_file }}"
-                      - name: Run TestWeave suite in Docker Compose
+                      - name: Run VeyraAI suite in Docker Compose
                         env:
                           SUITE_FILE: ${{ inputs.suite_file }}
                           TESTWEAVE_PARALLEL: ${{ inputs.parallel }}
@@ -2389,7 +9567,7 @@ public class ApiValidatorFxApp extends Application {
                         run: |
                           trap 'docker compose -f docker-compose.testweave.yml down -v --remove-orphans' EXIT
                           docker compose -f docker-compose.testweave.yml up --build --abort-on-container-exit --exit-code-from testweave
-                      - name: Upload TestWeave report
+                      - name: Upload VeyraAI report
                         if: always()
                         uses: actions/upload-artifact@v4
                         with:
@@ -2398,20 +9576,20 @@ public class ApiValidatorFxApp extends Application {
                 """.formatted(testSuiteParallelExecutionCheck.isSelected(), parseThreadCount());
     }
 
-    private void syncTestWeaveRunnerSourceToGithub() throws Exception {
+    private void syncVeyraAIRunnerSourceToGithub() throws Exception {
         Path projectRoot = Path.of("").toAbsolutePath().normalize();
         Path pomPath = projectRoot.resolve("pom.xml");
         Path srcPath = projectRoot.resolve("src");
         if (!Files.exists(pomPath) || !Files.isDirectory(srcPath)) {
-            throw new IllegalStateException("Cannot sync TestWeave runner source to GitHub because pom.xml or src folder was not found at "
-                    + projectRoot + ". Run the app from the TestWeave project folder or push the latest source manually.");
+            throw new IllegalStateException("Cannot sync VeyraAI runner source to GitHub because pom.xml or src folder was not found at "
+                    + projectRoot + ". Run the app from the VeyraAI project folder or push the latest source manually.");
         }
 
-        githubPutFile("pom.xml", Files.readAllBytes(pomPath), "Sync TestWeave runner pom");
+        githubPutFile("pom.xml", Files.readAllBytes(pomPath), "Sync VeyraAI runner pom");
         syncGithubFileIfPresent(projectRoot.resolve("Dockerfile.testweave"), "Dockerfile.testweave");
         syncGithubFileIfPresent(projectRoot.resolve("docker-compose.testweave.yml"), "docker-compose.testweave.yml");
         syncGithubFileIfPresent(projectRoot.resolve(".dockerignore"), ".dockerignore");
-        syncTestWeaveSupportFolders(projectRoot);
+        syncVeyraAISupportFolders(projectRoot);
         try (Stream<Path> paths = Files.walk(srcPath)) {
             List<Path> files = paths
                     .filter(Files::isRegularFile)
@@ -2419,18 +9597,18 @@ public class ApiValidatorFxApp extends Application {
                     .toList();
             for (Path file : files) {
                 String githubPath = projectRoot.relativize(file).toString().replace(File.separatorChar, '/');
-                githubPutFile(githubPath, Files.readAllBytes(file), "Sync TestWeave runner source");
+                githubPutFile(githubPath, Files.readAllBytes(file), "Sync VeyraAI runner source");
             }
         }
     }
 
     private void syncGithubFileIfPresent(Path file, String githubPath) throws Exception {
         if (Files.exists(file) && Files.isRegularFile(file)) {
-            githubPutFile(githubPath, Files.readAllBytes(file), "Sync TestWeave container setup");
+            githubPutFile(githubPath, Files.readAllBytes(file), "Sync VeyraAI container setup");
         }
     }
 
-    private void syncTestWeaveSupportFolders(Path projectRoot) throws Exception {
+    private void syncVeyraAISupportFolders(Path projectRoot) throws Exception {
         List<String> supportFolders = List.of("SavedResponse", "Baseline", "DBConnection", "APIVariables", "WebRecordings");
         Path documentsProjectRoot = Path.of(System.getProperty("user.home"), "Documents", "api-validator");
         for (String folder : supportFolders) {
@@ -2449,7 +9627,7 @@ public class ApiValidatorFxApp extends Application {
             List<Path> files = paths.filter(Files::isRegularFile).sorted().toList();
             for (Path file : files) {
                 String relative = folder.relativize(file).toString().replace(File.separatorChar, '/');
-                githubPutFile(githubFolder + "/" + relative, Files.readAllBytes(file), "Sync TestWeave support files");
+                githubPutFile(githubFolder + "/" + relative, Files.readAllBytes(file), "Sync VeyraAI support files");
             }
         }
     }
@@ -2714,11 +9892,7 @@ public class ApiValidatorFxApp extends Application {
                 result.addValidation(stepResult.action, nullToBlank(stepResult.selector),
                         nullToBlank(stepResult.expectedValue), stepResult.passed ? "PASS" : "FAIL",
                         stepResult.passed, nullToBlank(stepResult.message));
-                if (stepResult.capturedVariableName != null && !stepResult.capturedVariableName.isBlank()) {
-                    savedVariables.put(stepResult.capturedVariableName, nullToBlank(stepResult.capturedVariableValue));
-                }
             }
-            Platform.runLater(this::refreshVariablesView);
             return result;
         }
         if ("Performance Test".equals(type) && !row.getOrDefault("workbook:PERFORMANCE_TEST", "").isBlank()) {
@@ -2726,7 +9900,8 @@ public class ApiValidatorFxApp extends Application {
             ApiRequest request = buildRunnerApiRequest(row, performance.optString("body", row.getOrDefault("workbook:Request Payload", "")));
             PerformanceTestResult result = performanceTestService.runLoadTest(request,
                     Math.max(1, performance.optInt("threads", 1)),
-                    Math.max(1, performance.optInt("iterationsPerThread", 1)));
+                    Math.max(1, performance.optInt("iterationsPerThread", 1)),
+                    localPerformanceReportsDirectory());
             String status = result.errors == 0 ? "Passed (" + result.samples + " samples)" : "Failed (" + result.errors + " errors)";
             TestSuiteStepResult stepResult = new TestSuiteStepResult(row, status, result.errors == 0);
             stepResult.addValidation("Performance Test",
@@ -2738,6 +9913,7 @@ public class ApiValidatorFxApp extends Application {
             if (result.reportIndexPath != null) {
                 stepResult.details.add("Performance report: " + result.reportIndexPath);
             }
+            recordPerformanceExecution(result, row.getOrDefault("suite", "Performance Test Suite"));
             return stepResult;
         }
         if (!row.getOrDefault("workbook:Hit Request", "").isBlank()) {
@@ -2748,11 +9924,26 @@ public class ApiValidatorFxApp extends Application {
                 result.details.add("HTTP " + response.statusCode + ", duration: " + response.timeMs + " ms");
             }
             Map<String, String> variables = new HashMap<>(savedVariables);
+            captureRunnerVariables(row, response.rawBody, variables);
             runRunnerApiFieldValidation(row, response.rawBody, variables, result);
             runRunnerJsonCompare(row, response.rawBody, result);
             runRunnerDbValidation(row, response.rawBody, variables, result);
             if (!hasRunnerValidations) {
                 result.status = response.statusCode < 400 ? "Passed (" + response.statusCode + ")" : "Failed HTTP " + response.statusCode;
+            } else {
+                result.status = result.passed ? "Passed" : "Failed";
+            }
+            return result;
+        }
+        if (hasRunnerValidationColumns(row)) {
+            TestSuiteStepResult result = new TestSuiteStepResult(row, "Running validations", true);
+            Map<String, String> variables = new HashMap<>(savedVariables);
+            runRunnerDbValidation(row, "", variables, result);
+            if (result.validations.isEmpty()) {
+                result.passed = false;
+                result.status = "Failed";
+                result.addValidation("DB Validation", "Execution failed", "", "", false,
+                        "Validation columns were present, but no executable DB validation was configured.");
             } else {
                 result.status = result.passed ? "Passed" : "Failed";
             }
@@ -2774,6 +9965,34 @@ public class ApiValidatorFxApp extends Application {
                 || !row.getOrDefault("workbook:DB_COLUMN_VALIDATION", "").isBlank();
     }
 
+    private void captureRunnerVariables(Map<String, String> row, String responseBody, Map<String, String> variables) {
+        String captureText = row.getOrDefault("workbook:Captured Variables", "");
+        if (captureText.isBlank() || responseBody == null || responseBody.isBlank()) {
+            return;
+        }
+        Object responseJson = new JSONTokener(responseBody).nextValue();
+        for (String capture : captureText.split(";")) {
+            int equals = capture.indexOf('=');
+            if (equals <= 0 || equals == capture.length() - 1) {
+                continue;
+            }
+            String name = normalizeVariableName(capture.substring(0, equals));
+            String path = capture.substring(equals + 1).trim();
+            if (name.isBlank() || path.isBlank()) {
+                continue;
+            }
+            try {
+                Object actual = extractJsonPathValue(responseJson, path);
+                String value = actual == null || actual == JSONObject.NULL ? "" : String.valueOf(actual);
+                variables.put(name, value);
+                savedVariables.put(name, value);
+            } catch (Exception ignored) {
+                // Optional captures should not hide the actual step validation result.
+            }
+        }
+        Platform.runLater(this::refreshVariablesView);
+    }
+
     private WebTestRunReport executeRunnerWebTest(Map<String, String> row) throws Exception {
         JSONObject config = new JSONObject(row.get("workbook:WEB_TEST"));
         WebTestCase testCase = new WebTestCase();
@@ -2783,18 +10002,31 @@ public class ApiValidatorFxApp extends Application {
         if (steps == null || steps.isEmpty()) {
             throw new IllegalArgumentException("WEB_TEST step does not contain recorded web steps.");
         }
+        Map<String, String> runVariables = new LinkedHashMap<>(savedVariables);
         for (int i = 0; i < steps.length(); i++) {
             JSONObject item = steps.optJSONObject(i);
             if (item == null) {
                 continue;
             }
             WebTestStep step = new WebTestStep();
+            step.stepName = item.optString("stepName");
             step.action = item.optString("action");
-            step.selector = resolveVariables(item.optString("selector"));
-            step.value = "Get Text".equalsIgnoreCase(step.action)
-                    ? item.optString("value")
-                    : resolveVariables(item.optString("value"));
-            step.note = item.optString("note");
+            if ("Flow Variable".equalsIgnoreCase(step.action)) {
+                String variableName = normalizeVariableName(firstNonBlank(item.optString("flowVariableName"), item.optString("note"), item.optString("value")));
+                String value = resolveWebRunVariables(item.optString("value"), runVariables);
+                if (!variableName.isBlank()) runVariables.put(variableName, value);
+                step.selector = "";
+                step.value = value;
+                step.note = variableName;
+            } else {
+                step.selector = resolveWebRunVariables(item.optString("selector"), runVariables);
+                if ("Get Text".equalsIgnoreCase(step.action)) {
+                    configureGetTextExpectation(step, item.optString("value"), runVariables);
+                } else {
+                    step.value = resolveWebRunVariables(item.optString("value"), runVariables);
+                }
+                step.note = item.optString("note");
+            }
             step.suggested = item.optBoolean("suggested");
             testCase.steps.add(step);
         }
@@ -2958,6 +10190,7 @@ public class ApiValidatorFxApp extends Application {
         request.headers = resolveHeaderVariables(parseHeaders(hitRequest.optString("headersText", "")));
         request.body = resolveVariables(body == null ? "" : body);
         request.token = tokenField == null ? "" : resolveVariables(tokenField.getText());
+        applyApiTransportSettings(request);
         return request;
     }
 
@@ -3743,28 +10976,83 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void sendRequest() {
+        executeCurrentPostmanPreRequestScript();
+        boolean bearerAuthSelected = authTypeBox != null && "Bearer Token".equals(authTypeBox.getValue());
+        String rawBearerToken = bearerAuthSelected && tokenField != null
+                ? tokenField.getText().trim() : "";
         ApiRequest request = buildApiRequest(bodyArea.getText());
         if (request.url == null || request.url.isBlank()) {
-            showWarning("API Tester", "Enter an endpoint before sending the request.");
+            showWarning("API Studio", "Enter an endpoint before sending the request.");
+            return;
+        }
+        List<String> unresolvedVariables = unresolvedRequestVariables(request);
+        if (!unresolvedVariables.isEmpty()) {
+            showWarning("Unresolved Variables", "Set these variables before sending: "
+                    + String.join(", ", unresolvedVariables));
             return;
         }
         apiStatusLabel.setText("Sending...");
         Task<ApiResponse> task = new Task<>() {
             @Override
-            protected ApiResponse call() {
+            protected ApiResponse call() throws Exception {
+                hydrateOAuth2TokenIfNeeded(request);
+                hydratePostmanBearerTokenIfNeeded(request, bearerAuthSelected, rawBearerToken);
                 return apiService.sendRequest(request);
             }
         };
         task.setOnSucceeded(e -> {
             lastResponse = task.getValue();
+            captureAccessTokenFromResponse(lastResponse);
             renderResponse(lastResponse);
-            apiStatusLabel.setText("Response received");
+            try {
+                captureCurrentPostmanTestScript(lastResponse);
+                apiStatusLabel.setText("Response received");
+            } catch (Exception scriptError) {
+                apiStatusLabel.setText("Response received; Postman test script failed");
+                showError("Postman Test Script Failed", scriptError);
+            }
         });
         task.setOnFailed(e -> {
             apiStatusLabel.setText("Request failed");
             showError("Request Failed", task.getException());
         });
         start(task);
+    }
+
+    private void executeCurrentPostmanPreRequestScript() {
+        if (currentPostmanRequestNode == null || preRequestScriptArea == null) {
+            return;
+        }
+        String script = preRequestScriptArea.getText();
+        int updated = executePostmanJavaScript(currentPostmanRequestNode, "prerequest", script, null, null);
+        if (updated > 0) {
+            refreshVariablesViewSafely();
+        }
+    }
+
+    private void captureCurrentPostmanTestScript(ApiResponse response) {
+        if (currentPostmanRequestNode == null || testScriptArea == null || response == null
+                || response.rawBody == null || response.rawBody.isBlank()) {
+            return;
+        }
+        int captured = executePostmanJavaScript(currentPostmanRequestNode, "test", testScriptArea.getText(), response, null);
+        if (captured > 0) {
+            refreshVariablesViewSafely();
+        }
+    }
+
+    private void runApiAiAnalysisForLastResponse() {
+        if (!apiAiAgentConnected()) {
+            showWarning(selectedApiAiAgentName(), "Connect " + selectedApiAiAgentName() + " in Settings before running AI Analysis.");
+            updateApiAiConnectionLabels();
+            return;
+        }
+        if (lastResponse == null || lastResponse.rawBody == null || lastResponse.rawBody.isBlank()) {
+            showWarning("API AI Agent", "Send an API request first, then click AI Analysis.");
+            return;
+        }
+        ApiRequest request = buildApiRequest(bodyArea == null ? "" : bodyArea.getText());
+        maybeShowApiAiSuggestions(request, lastResponse);
     }
 
     private ApiRequest buildApiRequest(String body) {
@@ -3775,7 +11063,736 @@ public class ApiValidatorFxApp extends Application {
         request.body = body == null ? "" : resolveVariables(body);
         request.token = authTypeBox != null && "Bearer Token".equals(authTypeBox.getValue()) && tokenField != null
                 ? resolveVariables(tokenField.getText().trim()) : "";
+        if (authTypeBox != null && "OAuth2".equals(authTypeBox.getValue()) && tokenField != null) {
+            request.token = resolveVariables(tokenField.getText().trim());
+        }
+        applyApiTransportSettings(request);
+        if (currentPostmanRequestNode != null) {
+            request.bodyMode = currentPostmanBodyMode;
+            request.multipartParts = resolveRequestBodyParts(currentPostmanMultipartParts);
+            request.binaryFilePath = resolveVariables(currentPostmanBinaryFilePath);
+        }
         return request;
+    }
+
+    private ApiRequest buildPostmanApiRequest(PostmanCollectionNode node) {
+        if (node == null || !node.isRequest()) {
+            throw new IllegalArgumentException("Postman request node is required.");
+        }
+        JSONObject postmanRequest = node.request;
+        JSONObject postmanBody = postmanRequest.optJSONObject("body");
+        ApiRequest request = new ApiRequest();
+        request.url = resolveVariables(postmanRequestUrl(node));
+        request.method = firstNonBlank(postmanRequest.optString("method"), "GET").toUpperCase();
+        request.headers = resolveHeaderVariables(parseHeaders(postmanHeadersText(postmanRequest)));
+        request.body = resolveVariables(postmanBodyText(postmanBody));
+        request.bodyMode = postmanBody == null ? "" : postmanBody.optString("mode");
+        request.multipartParts = resolveRequestBodyParts(postmanMultipartParts(postmanBody));
+        request.binaryFilePath = resolveVariables(postmanBinaryFilePath(postmanBody));
+        applyApiTransportSettings(request);
+        applyPostmanAuth(request, postmanRequest);
+        return request;
+    }
+
+    private void applyPostmanAuth(ApiRequest request, JSONObject postmanRequest) {
+        JSONObject auth = postmanRequest == null ? null : postmanRequest.optJSONObject("auth");
+        String type = postmanAuthType(auth);
+        if ("bearer".equalsIgnoreCase(type)) {
+            request.token = resolveVariables(postmanAuthValue(auth, "bearer", "token"));
+            return;
+        }
+        if ("basic".equalsIgnoreCase(type)) {
+            String username = resolveVariables(postmanAuthValue(auth, "basic", "username"));
+            String password = resolveVariables(postmanAuthValue(auth, "basic", "password"));
+            putHeaderIfMissing(request.headers, "Authorization", "Basic " + Base64.getEncoder()
+                    .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8)));
+            return;
+        }
+        if ("apikey".equalsIgnoreCase(type)) {
+            String key = resolveVariables(postmanAuthValue(auth, "apikey", "key"));
+            String value = resolveVariables(postmanAuthValue(auth, "apikey", "value"));
+            String in = postmanAuthValue(auth, "apikey", "in");
+            if ("header".equalsIgnoreCase(in)) {
+                putHeaderIfMissing(request.headers, key, value);
+            } else if ("query".equalsIgnoreCase(in) && !key.isBlank()) {
+            request.url = appendQueryParameter(request.url, key, value);
+            }
+        }
+    }
+
+    private void applyApiTransportSettings(ApiRequest request) {
+        if (request == null) {
+            return;
+        }
+        request.sslVerificationDisabled = sslVerificationDisabledCheck != null && sslVerificationDisabledCheck.isSelected();
+        request.trustStorePath = trustStorePathField == null ? "" : resolveVariables(trustStorePathField.getText().trim());
+        request.trustStorePassword = trustStorePasswordField == null ? "" : resolveVariables(trustStorePasswordField.getText());
+        request.keyStorePath = keyStorePathField == null ? "" : resolveVariables(keyStorePathField.getText().trim());
+        request.keyStorePassword = keyStorePasswordField == null ? "" : resolveVariables(keyStorePasswordField.getText());
+        request.proxyEnabled = proxyEnabledCheck != null && proxyEnabledCheck.isSelected();
+        request.proxyScheme = proxySchemeBox == null ? "http" : proxySchemeBox.getValue();
+        request.proxyHost = proxyHostField == null ? "" : resolveVariables(proxyHostField.getText().trim());
+        request.proxyPort = parsePositiveInt(proxyPortField == null ? "" : resolveVariables(proxyPortField.getText().trim()), 0);
+        request.proxyUsername = proxyUsernameField == null ? "" : resolveVariables(proxyUsernameField.getText().trim());
+        request.proxyPassword = proxyPasswordField == null ? "" : resolveVariables(proxyPasswordField.getText());
+    }
+
+    private int parsePositiveInt(String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(value.trim()));
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private void hydrateOAuth2TokenIfNeeded(ApiRequest request) throws Exception {
+        if (authTypeBox == null || !"OAuth2".equals(authTypeBox.getValue()) || request == null) {
+            return;
+        }
+        if (request.token != null && !request.token.isBlank()) {
+            return;
+        }
+        JSONObject token = requestOAuth2Token();
+        request.token = token.optString("access_token");
+    }
+
+    private void fetchOAuth2Token() {
+        oauthStatusLabel.setText("Fetching token...");
+        Task<JSONObject> task = new Task<>() {
+            @Override
+            protected JSONObject call() throws Exception {
+                return requestOAuth2Token();
+            }
+        };
+        task.setOnSucceeded(e -> {
+            JSONObject token = task.getValue();
+            String accessToken = token.optString("access_token");
+            tokenField.setText(accessToken);
+            authTypeBox.setValue("OAuth2");
+            updateAuthControls();
+            oauthStatusLabel.setText(accessToken.isBlank() ? "Token response received" : "Access token saved");
+        });
+        task.setOnFailed(e -> {
+            oauthStatusLabel.setText("Token request failed");
+            showError("OAuth2 Token Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private JSONObject requestOAuth2Token() {
+        String tokenUrl = resolveVariables(oauthTokenUrlField == null ? "" : oauthTokenUrlField.getText().trim());
+        if (tokenUrl.isBlank()) {
+            throw new IllegalArgumentException("Enter an OAuth2 token URL.");
+        }
+        Map<String, String> params = new LinkedHashMap<>();
+        String grantType = oauthGrantTypeBox == null ? "client_credentials" : oauthGrantTypeBox.getValue();
+        params.put("grant_type", grantType);
+        addFormParam(params, "client_id", oauthClientIdField == null ? "" : oauthClientIdField.getText());
+        if (oauthBasicAuthCheck == null || !oauthBasicAuthCheck.isSelected()) {
+            addFormParam(params, "client_secret", oauthClientSecretField == null ? "" : oauthClientSecretField.getText());
+        }
+        addFormParam(params, "scope", oauthScopeField == null ? "" : oauthScopeField.getText());
+        if ("password".equals(grantType)) {
+            addFormParam(params, "username", oauthUsernameField == null ? "" : oauthUsernameField.getText());
+            addFormParam(params, "password", oauthPasswordField == null ? "" : oauthPasswordField.getText());
+        } else if ("authorization_code".equals(grantType)) {
+            addFormParam(params, "code", oauthAuthCodeField == null ? "" : oauthAuthCodeField.getText());
+            addFormParam(params, "redirect_uri", oauthRedirectUriField == null ? "" : oauthRedirectUriField.getText());
+        } else if ("refresh_token".equals(grantType)) {
+            addFormParam(params, "refresh_token", oauthRefreshTokenField == null ? "" : oauthRefreshTokenField.getText());
+        }
+
+        ApiRequest tokenRequest = new ApiRequest();
+        tokenRequest.method = "POST";
+        tokenRequest.url = tokenUrl;
+        tokenRequest.headers = new LinkedHashMap<>();
+        tokenRequest.headers.put("Accept", "application/json");
+        tokenRequest.headers.put("Content-Type", "application/x-www-form-urlencoded");
+        String clientId = resolveVariables(oauthClientIdField == null ? "" : oauthClientIdField.getText());
+        String clientSecret = resolveVariables(oauthClientSecretField == null ? "" : oauthClientSecretField.getText());
+        if (oauthBasicAuthCheck != null && oauthBasicAuthCheck.isSelected() && !clientId.isBlank()) {
+            tokenRequest.headers.put("Authorization", "Basic " + Base64.getEncoder()
+                    .encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8)));
+        }
+        tokenRequest.body = formBody(params);
+        applyApiTransportSettings(tokenRequest);
+
+        ApiResponse response = apiService.sendRequest(tokenRequest);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            throw new IllegalStateException("OAuth2 token request failed: HTTP "
+                    + response.statusCode + " " + shorten(response.rawBody, 500));
+        }
+        JSONObject json = new JSONObject(response.rawBody);
+        saveOAuth2TokenVariables(json);
+        return json;
+    }
+
+    private void addFormParam(Map<String, String> params, String key, String value) {
+        String resolved = resolveVariables(value == null ? "" : value.trim());
+        if (!resolved.isBlank()) {
+            params.put(key, resolved);
+        }
+    }
+
+    private String formBody(Map<String, String> params) {
+        return params.entrySet().stream()
+                .map(entry -> urlEncode(entry.getKey()) + "=" + urlEncode(entry.getValue()))
+                .collect(java.util.stream.Collectors.joining("&"));
+    }
+
+    private void saveOAuth2TokenVariables(JSONObject json) {
+        String accessToken = json.optString("access_token");
+        if (!accessToken.isBlank()) {
+            savedVariables.put("access_token", accessToken);
+            savedVariableTypes.put("access_token", "OAuth2");
+            savedVariablePaths.put("access_token", "oauth2:access_token");
+        }
+        String refreshToken = json.optString("refresh_token");
+        if (!refreshToken.isBlank()) {
+            savedVariables.put("refresh_token", refreshToken);
+            savedVariableTypes.put("refresh_token", "OAuth2");
+            savedVariablePaths.put("refresh_token", "oauth2:refresh_token");
+        }
+        long expiresIn = json.optLong("expires_in", 0);
+        if (expiresIn > 0) {
+            savedVariables.put("access_token_expiry", String.valueOf(System.currentTimeMillis() + expiresIn * 1000));
+            savedVariableTypes.put("access_token_expiry", "OAuth2");
+            savedVariablePaths.put("access_token_expiry", "oauth2:expires_in");
+        }
+        refreshVariablesViewSafely();
+    }
+
+    private void putHeaderIfMissing(Map<String, String> headers, String key, String value) {
+        if (headers == null || key == null || key.isBlank()) {
+            return;
+        }
+        boolean exists = headers.keySet().stream().anyMatch(existing -> existing.equalsIgnoreCase(key));
+        if (!exists) {
+            headers.put(key, value == null ? "" : value);
+        }
+    }
+
+    private void hydratePostmanBearerTokenIfNeeded(ApiRequest request, boolean bearerAuthSelected, String rawBearerToken) throws Exception {
+        if (request == null || !bearerAuthSelected) {
+            return;
+        }
+        if (request.token != null && !request.token.isBlank()) {
+            return;
+        }
+        if (rawBearerToken == null || !rawBearerToken.contains("access_token")) {
+            return;
+        }
+        String token = validSavedAccessToken();
+        if (token.isBlank()) {
+            token = requestPayPalAccessToken();
+        }
+        request.token = token;
+    }
+
+    private List<String> unresolvedRequestVariables(ApiRequest request) {
+        Set<String> names = new HashSet<>();
+        collectUnresolvedVariables(request.url, names);
+        collectUnresolvedVariables(request.body, names);
+        collectUnresolvedVariables(request.token, names);
+        if (request.headers != null) {
+            request.headers.forEach((key, value) -> {
+                collectUnresolvedVariables(key, names);
+                collectUnresolvedVariables(value, names);
+            });
+        }
+        return names.stream().sorted().toList();
+    }
+
+    private void collectUnresolvedVariables(String text, Set<String> names) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        Matcher matcher = Pattern.compile("\\$\\{([^}]+)}").matcher(text);
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+    }
+
+    private String validSavedAccessToken() {
+        String token = savedVariables.getOrDefault("access_token", "");
+        if (token.isBlank()) {
+            return "";
+        }
+        String expiryText = savedVariables.getOrDefault("access_token_expiry", "");
+        if (expiryText.isBlank()) {
+            return token;
+        }
+        try {
+            long expiry = Long.parseLong(expiryText.trim());
+            return expiry > System.currentTimeMillis() + 30_000 ? token : "";
+        } catch (NumberFormatException ignored) {
+            return token;
+        }
+    }
+
+    private String requestPayPalAccessToken() throws Exception {
+        String baseUrl = resolveVariables("${base_url}");
+        String clientId = resolveVariables("${client_id}");
+        String clientSecret = resolveVariables("${client_secret}");
+        if (baseUrl.isBlank() || clientId.isBlank() || clientSecret.isBlank()
+                || baseUrl.contains("${") || clientId.contains("${") || clientSecret.contains("${")) {
+            throw new IllegalStateException("Postman bearer token is empty. Import or set base_url, client_id, and client_secret variables first.");
+        }
+        String tokenUrl = baseUrl.replaceAll("/+$", "") + "/v1/oauth2/token";
+        String basic = Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8));
+        HttpRequest request = HttpRequest.newBuilder(URI.create(tokenUrl))
+                .timeout(Duration.ofSeconds(60))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("Authorization", "Basic " + basic)
+                .POST(HttpRequest.BodyPublishers.ofString("grant_type=client_credentials", StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("PayPal access token request failed: HTTP "
+                    + response.statusCode() + " " + shorten(response.body(), 500));
+        }
+        JSONObject json = new JSONObject(response.body());
+        String token = json.optString("access_token");
+        if (token.isBlank()) {
+            throw new IllegalStateException("PayPal access token response did not contain access_token.");
+        }
+        saveAccessTokenVariables(json, clientId);
+        return token;
+    }
+
+    private void captureAccessTokenFromResponse(ApiResponse response) {
+        if (response == null || response.rawBody == null || response.rawBody.isBlank()) {
+            return;
+        }
+        try {
+            JSONObject json = new JSONObject(response.rawBody);
+            if (json.has("access_token")) {
+                saveAccessTokenVariables(json, resolveVariables("${client_id}"));
+                Platform.runLater(this::refreshVariablesView);
+            }
+        } catch (Exception ignored) {
+            // Non-token responses are ignored.
+        }
+    }
+
+    private void saveAccessTokenVariables(JSONObject tokenJson, String clientId) {
+        String token = tokenJson.optString("access_token");
+        if (token.isBlank()) {
+            return;
+        }
+        long expiresInSeconds = Math.max(0, tokenJson.optLong("expires_in", 0));
+        long expiry = expiresInSeconds == 0 ? 0 : System.currentTimeMillis() + expiresInSeconds * 1000;
+        savedVariables.put("access_token", token);
+        savedVariableTypes.put("access_token", "Postman OAuth");
+        savedVariablePaths.put("access_token", "postman-oauth:access_token");
+        postmanCollectionVariables.put("access_token", token);
+        if (expiry > 0) {
+            savedVariables.put("access_token_expiry", String.valueOf(expiry));
+            savedVariableTypes.put("access_token_expiry", "Postman OAuth");
+            savedVariablePaths.put("access_token_expiry", "postman-oauth:expires_in");
+            postmanCollectionVariables.put("access_token_expiry", String.valueOf(expiry));
+        }
+        if (clientId != null && !clientId.isBlank() && !clientId.contains("${")) {
+            savedVariables.put("access_token_for", clientId);
+            savedVariableTypes.put("access_token_for", "Postman OAuth");
+            savedVariablePaths.put("access_token_for", "postman-oauth:client_id");
+            postmanCollectionVariables.put("access_token_for", clientId);
+        }
+    }
+
+    private void capturePostmanTestVariables(PostmanCollectionNode node, ApiResponse response) {
+        if (node == null || response == null || response.rawBody == null || response.rawBody.isBlank()) {
+            return;
+        }
+        JSONArray events = node.source.optJSONArray("event");
+        if (events == null || events.isEmpty()) {
+            return;
+        }
+        int captured = 0;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null || !"test".equalsIgnoreCase(event.optString("listen"))) {
+                continue;
+            }
+            String script = postmanScriptText(event.optJSONObject("script"));
+            captured += executePostmanJavaScript(node, event.optString("listen"), script, response, null);
+        }
+        if (captured > 0) {
+            refreshVariablesViewSafely();
+        }
+    }
+
+    private void executeBasicPostmanPreRequestVariables(PostmanCollectionNode node) {
+        if (node == null) {
+            return;
+        }
+        JSONArray events = node.source.optJSONArray("event");
+        if (events == null || events.isEmpty()) {
+            return;
+        }
+        int updated = 0;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null || !"prerequest".equalsIgnoreCase(event.optString("listen"))) {
+                continue;
+            }
+            String script = postmanScriptText(event.optJSONObject("script"));
+            updated += executePostmanJavaScript(node, event.optString("listen"), script, null, null);
+        }
+        if (updated > 0) {
+            refreshVariablesViewSafely();
+        }
+    }
+
+    private int executePostmanJavaScript(PostmanCollectionNode node, String eventType, String script,
+                                         ApiResponse response, ApiRequest request) {
+        if (script == null || script.isBlank()) {
+            return 0;
+        }
+        AtomicInteger updates = new AtomicInteger();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        AtomicReference<Context> activeContext = new AtomicReference<>();
+        Future<?> future = executor.submit(() -> {
+            try (Context context = Context.newBuilder("js")
+                    .allowAllAccess(false)
+                    .allowHostAccess(HostAccess.NONE)
+                    .allowHostClassLookup(className -> false)
+                    .allowCreateThread(false)
+                    .allowCreateProcess(false)
+                    .allowIO(false)
+                    .option("js.ecmascript-version", "2022")
+                    .option("engine.WarnInterpreterOnly", "false")
+                    .build()) {
+                activeContext.set(context);
+                context.getBindings("js").putMember("__responseText", response == null ? "" : nullToBlank(response.rawBody));
+                context.getBindings("js").putMember("pm", postmanPmApi(context, node, eventType, response, request, updates));
+                context.eval("js", script);
+            } catch (PolyglotException e) {
+                throw new IllegalStateException("Postman " + eventType + " script failed for " + node.name + ": "
+                        + firstNonBlank(e.getMessage(), e.toString()), e);
+            }
+        });
+        try {
+            future.get(3000, TimeUnit.MILLISECONDS);
+            return updates.get();
+        } catch (TimeoutException e) {
+            Context context = activeContext.get();
+            if (context != null) {
+                context.close(true);
+            }
+            future.cancel(true);
+            throw new IllegalStateException("Postman " + eventType + " script timed out after 3 seconds for " + node.name, e);
+        } catch (Exception e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException("Postman " + eventType + " script failed for " + node.name, cause);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private ProxyObject postmanPmApi(Context context, PostmanCollectionNode node, String eventType,
+                                     ApiResponse response, ApiRequest request, AtomicInteger updates) {
+        Map<String, Object> api = new LinkedHashMap<>();
+        api.put("variables", postmanVariableScope(node, "variables", updates));
+        api.put("collectionVariables", postmanVariableScope(node, "collectionVariables", updates));
+        api.put("environment", postmanVariableScope(node, "environment", updates));
+        api.put("response", postmanResponseApi(context, response));
+        api.put("request", postmanRequestApi(request));
+        api.put("info", ProxyObject.fromMap(Map.of(
+                "eventName", eventType == null ? "" : eventType,
+                "requestName", node == null ? "" : node.name
+        )));
+        api.put("test", (ProxyExecutable) args -> {
+            if (args.length > 1 && args[1].canExecute()) {
+                args[1].execute();
+            }
+            return true;
+        });
+        api.put("expect", (ProxyExecutable) args -> postmanExpectation(args.length == 0 ? null : args[0]));
+        return ProxyObject.fromMap(api);
+    }
+
+    private ProxyObject postmanVariableScope(PostmanCollectionNode node, String scope, AtomicInteger updates) {
+        Map<String, Object> api = new LinkedHashMap<>();
+        api.put("get", (ProxyExecutable) args -> postmanVariableValue(args.length == 0 ? "" : valueToString(args[0])));
+        api.put("has", (ProxyExecutable) args -> postmanVariableValue(args.length == 0 ? "" : valueToString(args[0])) != null);
+        api.put("set", (ProxyExecutable) args -> {
+            if (args.length >= 2) {
+                savePostmanScriptVariable(node, scope, valueToString(args[0]), valueToString(args[1]));
+                updates.incrementAndGet();
+            }
+            return null;
+        });
+        api.put("unset", (ProxyExecutable) args -> {
+            if (args.length >= 1) {
+                unsetPostmanScriptVariable(scope, valueToString(args[0]));
+                updates.incrementAndGet();
+            }
+            return null;
+        });
+        api.put("replaceIn", (ProxyExecutable) args -> resolveVariables(postmanVariableToVeyraAI(args.length == 0 ? "" : valueToString(args[0]))));
+        return ProxyObject.fromMap(api);
+    }
+
+    private ProxyObject postmanResponseApi(Context context, ApiResponse response) {
+        String body = response == null ? "" : nullToBlank(response.rawBody);
+        Map<String, Object> api = new LinkedHashMap<>();
+        api.put("code", response == null ? 0 : response.statusCode);
+        api.put("status", response == null ? "" : nullToBlank(response.statusLine));
+        api.put("responseTime", response == null ? 0L : response.timeMs);
+        api.put("text", (ProxyExecutable) args -> body);
+        api.put("json", (ProxyExecutable) args -> {
+            if (body.isBlank()) {
+                return null;
+            }
+            return context.eval("js", "JSON.parse(__responseText)");
+        });
+        api.put("headers", postmanHeadersApi(response == null ? "" : response.headersText));
+        return ProxyObject.fromMap(api);
+    }
+
+    private ProxyObject postmanHeadersApi(String headersText) {
+        Map<String, String> headers = parseHeaders(headersText);
+        Map<String, Object> api = new LinkedHashMap<>();
+        api.put("get", (ProxyExecutable) args -> {
+            String key = args.length == 0 ? "" : valueToString(args[0]);
+            return headers.entrySet().stream()
+                    .filter(entry -> entry.getKey().equalsIgnoreCase(key))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(null);
+        });
+        api.put("has", (ProxyExecutable) args -> {
+            String key = args.length == 0 ? "" : valueToString(args[0]);
+            return headers.keySet().stream().anyMatch(existing -> existing.equalsIgnoreCase(key));
+        });
+        return ProxyObject.fromMap(api);
+    }
+
+    private ProxyObject postmanRequestApi(ApiRequest request) {
+        Map<String, Object> api = new LinkedHashMap<>();
+        api.put("url", request == null ? "" : nullToBlank(request.url));
+        api.put("method", request == null ? "" : nullToBlank(request.method));
+        api.put("headers", ProxyObject.fromMap(request == null || request.headers == null ? Map.of() : new LinkedHashMap<>(request.headers)));
+        api.put("body", request == null ? "" : nullToBlank(request.body));
+        return ProxyObject.fromMap(api);
+    }
+
+    private ProxyObject postmanExpectation(Value actual) {
+        Map<String, Object> api = new LinkedHashMap<>();
+        ProxyExecutable equal = args -> {
+            Object expected = args.length == 0 ? null : valueToObject(args[0]);
+            Object actualObject = valueToObject(actual);
+            if (!Objects.equals(String.valueOf(expected), String.valueOf(actualObject))) {
+                throw new IllegalStateException("Expected " + actualObject + " to equal " + expected);
+            }
+            return true;
+        };
+        api.put("to", null);
+        api.put("be", null);
+        api.put("have", null);
+        api.put("that", null);
+        api.put("is", null);
+        api.put("and", null);
+        api.put("which", null);
+        api.put("with", null);
+        api.put("equal", equal);
+        api.put("equals", equal);
+        api.put("eql", equal);
+        api.put("property", (ProxyExecutable) args -> assertPropertyExpectation(actual, args));
+        api.put("include", (ProxyExecutable) args -> {
+            String expected = args.length == 0 ? "" : valueToString(args[0]);
+            String actualText = valueToString(actual);
+            if (!actualText.contains(expected)) {
+                throw new IllegalStateException("Expected " + actualText + " to include " + expected);
+            }
+            return true;
+        });
+        api.put("above", (ProxyExecutable) args -> assertNumericExpectation(actual, args, "above"));
+        api.put("below", (ProxyExecutable) args -> assertNumericExpectation(actual, args, "below"));
+        ProxyObject proxy = ProxyObject.fromMap(api);
+        api.put("to", proxy);
+        api.put("be", proxy);
+        api.put("have", proxy);
+        api.put("that", proxy);
+        api.put("is", proxy);
+        api.put("and", proxy);
+        api.put("which", proxy);
+        api.put("with", proxy);
+        return proxy;
+    }
+
+    private ProxyObject assertPropertyExpectation(Value actual, Value[] args) {
+        if (args.length == 0) {
+            throw new IllegalStateException("Expected property name.");
+        }
+        String propertyName = valueToString(args[0]);
+        if (!hasPostmanProperty(actual, propertyName)) {
+            throw new IllegalStateException("Expected " + valueToString(actual) + " to have property " + propertyName);
+        }
+        Value propertyValue = getPostmanProperty(actual, propertyName);
+        if (args.length > 1) {
+            Object expected = valueToObject(args[1]);
+            Object actualObject = valueToObject(propertyValue);
+            if (!Objects.equals(String.valueOf(expected), String.valueOf(actualObject))) {
+                throw new IllegalStateException("Expected property " + propertyName + " to equal " + expected
+                        + " but found " + actualObject);
+            }
+        }
+        return postmanExpectation(propertyValue);
+    }
+
+    private boolean hasPostmanProperty(Value actual, String propertyName) {
+        if (actual == null || actual.isNull() || propertyName == null) {
+            return false;
+        }
+        if (actual.hasMembers() && actual.hasMember(propertyName)) {
+            return true;
+        }
+        if (actual.hasArrayElements()) {
+            try {
+                long index = Long.parseLong(propertyName);
+                return index >= 0 && index < actual.getArraySize();
+            } catch (NumberFormatException ignored) {
+                return "length".equals(propertyName);
+            }
+        }
+        return false;
+    }
+
+    private Value getPostmanProperty(Value actual, String propertyName) {
+        if (actual.hasMembers() && actual.hasMember(propertyName)) {
+            return actual.getMember(propertyName);
+        }
+        if (actual.hasArrayElements()) {
+            if ("length".equals(propertyName)) {
+                return Context.getCurrent().asValue(actual.getArraySize());
+            }
+            return actual.getArrayElement(Long.parseLong(propertyName));
+        }
+        return Context.getCurrent().asValue(null);
+    }
+
+    private boolean assertNumericExpectation(Value actual, Value[] args, String operator) {
+        double left = valueToDouble(actual);
+        double right = args.length == 0 ? 0 : valueToDouble(args[0]);
+        boolean ok = "above".equals(operator) ? left > right : left < right;
+        if (!ok) {
+            throw new IllegalStateException("Expected " + left + " to be " + operator + " " + right);
+        }
+        return true;
+    }
+
+    private void savePostmanScriptVariable(PostmanCollectionNode node, String scope, String rawName, String rawValue) {
+        String variableName = normalizeVariableName(rawName);
+        if (variableName.isBlank()) {
+            return;
+        }
+        String value = resolveVariables(postmanVariableToVeyraAI(rawValue));
+        savedVariables.put(variableName, value);
+        savedVariableTypes.put(variableName, "environment".equals(scope) ? "Postman Environment" : "Postman Script");
+        savedVariablePaths.put(variableName, "postman-script:" + (node == null ? "" : node.name));
+        if ("environment".equals(scope)) {
+            postmanEnvironmentVariables.put(variableName, value);
+        } else {
+            postmanCollectionVariables.put(variableName, value);
+        }
+    }
+
+    private void unsetPostmanScriptVariable(String scope, String rawName) {
+        String variableName = normalizeVariableName(rawName);
+        savedVariables.remove(variableName);
+        savedVariableTypes.remove(variableName);
+        savedVariablePaths.remove(variableName);
+        if ("environment".equals(scope)) {
+            postmanEnvironmentVariables.remove(variableName);
+        } else {
+            postmanCollectionVariables.remove(variableName);
+        }
+    }
+
+    private String valueToString(Value value) {
+        Object object = valueToObject(value);
+        return object == null ? "" : String.valueOf(object);
+    }
+
+    private Object valueToObject(Value value) {
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (value.isString()) {
+            return value.asString();
+        }
+        if (value.isBoolean()) {
+            return value.asBoolean();
+        }
+        if (value.fitsInLong()) {
+            return value.asLong();
+        }
+        if (value.fitsInDouble()) {
+            return value.asDouble();
+        }
+        return value.toString();
+    }
+
+    private double valueToDouble(Value value) {
+        Object object = valueToObject(value);
+        if (object instanceof Number number) {
+            return number.doubleValue();
+        }
+        return Double.parseDouble(String.valueOf(object));
+    }
+
+    private void refreshVariablesViewSafely() {
+        if (Platform.isFxApplicationThread()) {
+            refreshVariablesView();
+        } else {
+            Platform.runLater(this::refreshVariablesView);
+        }
+    }
+
+    private String postmanScriptText(JSONObject script) {
+        if (script == null) {
+            return "";
+        }
+        Object exec = script.opt("exec");
+        if (exec instanceof JSONArray lines) {
+            List<String> text = new ArrayList<>();
+            for (int i = 0; i < lines.length(); i++) {
+                text.add(lines.optString(i));
+            }
+            return String.join("\n", text);
+        }
+        return exec == null || exec == JSONObject.NULL ? "" : String.valueOf(exec);
+    }
+
+    private Object extractPostmanJsonDataPath(Object root, String path) {
+        Object current = root;
+        Matcher matcher = Pattern.compile("\\.([A-Za-z0-9_]+)|\\[(\\d+)]").matcher(path == null ? "" : path);
+        while (matcher.find()) {
+            if (matcher.group(1) != null) {
+                if (!(current instanceof JSONObject object)) {
+                    return null;
+                }
+                current = object.opt(matcher.group(1));
+            } else {
+                if (!(current instanceof JSONArray array)) {
+                    return null;
+                }
+                current = array.opt(Integer.parseInt(matcher.group(2)));
+            }
+            if (current == null || current == JSONObject.NULL) {
+                return current;
+            }
+        }
+        return current;
     }
 
     private void toggleTokenVisibility(Button toggleButton) {
@@ -3813,6 +11830,14 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void renderResponse(ApiResponse response) {
+        if (response == null) {
+            return;
+        }
+        if (statusValueLabel == null || prettyResponseArea == null || rawResponseArea == null
+                || responseHeadersArea == null || responseCookiesArea == null) {
+            lastActualJson = response.rawBody;
+            return;
+        }
         statusValueLabel.setText(response.statusLine);
         timeValueLabel.setText(response.timeMs + " ms");
         sizeValueLabel.setText(response.sizeBytes + " bytes");
@@ -3821,14 +11846,2275 @@ public class ApiValidatorFxApp extends Application {
         responseHeadersArea.setText(response.headersText);
         responseCookiesArea.setText(response.cookiesText);
         lastActualJson = response.rawBody;
-        parseResponseFields(response.rawBody);
+        if (responseFieldRows != null || fieldValidationRows != null) {
+            parseResponseFields(response.rawBody);
+        }
+    }
+
+    private void maybeShowApiAiSuggestions(ApiRequest request, ApiResponse response) {
+        if (!apiAiAgentConnected() || response == null || response.rawBody == null || response.rawBody.isBlank()) {
+            updateApiAiConnectionLabels();
+            return;
+        }
+        String agentName = selectedApiAiAgentName();
+        apiStatusLabel.setText(agentName + " analyzing response...");
+        updateApiAiConnectionLabels(agentName + " analyzing with " + apiAiConnectedModel);
+        Task<ApiAiSuggestion> task = new Task<>() {
+            @Override protected ApiAiSuggestion call() {
+                return requestApiAiModelSuggestion(request, response);
+            }
+        };
+        task.setOnSucceeded(e -> {
+            ApiAiSuggestion suggestion = task.getValue();
+            apiStatusLabel.setText(agentName + " suggestions ready");
+            updateApiAiConnectionLabels(agentName + " connected: " + apiAiConnectedModel);
+            if (!suggestion.variables.isEmpty() || !suggestion.validations.isEmpty()) {
+                showApiAiSuggestionWindow(suggestion);
+            } else {
+                showWarning("API AI Agent", "The connected model did not return variable or validation suggestions.");
+            }
+        });
+        task.setOnFailed(e -> {
+            logApiAiConsole("AI Analysis task failed", task.getException());
+            apiStatusLabel.setText("API AI Agent suggestion failed");
+            if (apiAiAgentConnected()) {
+                updateApiAiConnectionLabels(agentName + " connected: " + apiAiConnectedModel
+                        + " (last analysis failed: " + exceptionMessage(rootCause(task.getException())) + ")");
+            } else {
+                updateApiAiConnectionLabels("API AI Agent disconnected: " + exceptionMessage(task.getException()));
+            }
+            showError("API AI Agent Suggestion Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private ApiAiSuggestion requestApiAiModelSuggestion(ApiRequest request, ApiResponse response) {
+        try {
+            logApiAiConsole("AI Analysis started for " + nullToBlank(request.method) + " " + nullToBlank(request.url)
+                    + ", status=" + nullToBlank(response.statusLine)
+                    + ", responseBytes=" + nullToBlank(response.rawBody).getBytes(StandardCharsets.UTF_8).length);
+            String prompt = apiAiSuggestionPrompt(request, response);
+            logApiAiConsole("AI Analysis prompt built, characters=" + prompt.length());
+            String output = runApiAiPrompt(prompt);
+            logApiAiConsole("AI Analysis model output received, characters=" + (output == null ? 0 : output.length()));
+            JSONObject root = extractJsonObject(output);
+            logApiAiConsole("AI Analysis model output parsed as JSON");
+            return apiAiSuggestionFromModelJson(request, response, root);
+        } catch (Exception e) {
+            logApiAiConsole("AI Analysis failed while preparing, running, or parsing model suggestion", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    private ApiAiSuggestion buildApiAiSuggestion(ApiRequest request, ApiResponse response) {
+        List<ResponseFieldCandidate> fields = responseVariableService.parseAllFields(response.rawBody);
+        String actionName = inferApiActionName(request);
+        String tableName = inferDbTableName(request);
+        ApiAiSuggestion suggestion = new ApiAiSuggestion(request, response, actionName);
+        Set<String> importantNames = Set.of("orderid", "status", "amount", "token", "userid", "createdat");
+        for (ResponseFieldCandidate field : fields) {
+            String fieldName = nullToBlank(field.fieldName);
+            String compact = fieldName.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+            boolean scalar = !List.of("object", "array", "null").contains(field.type);
+            if (!scalar || (!importantNames.contains(compact) && !field.jsonPath.matches(".*\\.(id|token|status|amount|createdAt|userId)$"))) {
+                continue;
+            }
+            String alias = actionName + "." + fieldName;
+            String variableName = normalizeVariableName(alias);
+            suggestion.variables.add(row("selected", "true", "variable", "${" + variableName + "}",
+                    "alias", "${" + alias + "}", "jsonPath", field.jsonPath, "value", field.value, "type", field.type));
+            String validation = suggestedValidation(field);
+            suggestion.validations.add(row("selected", "true", "field", field.jsonPath,
+                    "validation", validation, "expected", suggestedExpected(field, validation),
+                    "type", field.type, "actualType", field.type, "actual", field.value,
+                    "preview", field.previewValue));
+            suggestion.dbMappings.add(row("selected", "true", "apiField", fieldName, "jsonPath", field.jsonPath,
+                    "dbMapping", tableName + "." + toSnakeCase(fieldName)));
+        }
+        return suggestion;
+    }
+
+    private String apiAiSuggestionPrompt(ApiRequest request, ApiResponse response) {
+        List<ResponseFieldCandidate> fields = responseVariableService.parseAllFields(response.rawBody);
+        JSONArray candidates = new JSONArray();
+        Set<String> seenCandidateKeys = new HashSet<>();
+        for (ResponseFieldCandidate field : fields) {
+            if (List.of("object", "array", "null").contains(field.type)) continue;
+            String candidateKey = field.fieldName + "\u0000" + field.type;
+            if (!seenCandidateKeys.add(candidateKey) && candidates.length() >= 20) continue;
+            candidates.put(new JSONObject()
+                    .put("jsonPath", field.jsonPath)
+                    .put("fieldName", field.fieldName)
+                    .put("value", field.value)
+                    .put("type", field.type));
+            if (candidates.length() >= 80) break;
+        }
+        JSONObject input = new JSONObject()
+                .put("endpoint", request.url)
+                .put("method", request.method)
+                .put("status", response.statusLine)
+                .put("responseSample", apiAiResponseSample(response.rawBody))
+                .put("candidateFields", candidates);
+        JSONObject mcpContext = invokeVeyraApiMcpTool("api_analysis.build_analysis_context",
+                new JSONObject().put("source", "apiExecutor").put("action", "suggestValidations"),
+                request, response);
+        lastApiMcpAnalysisContext = mcpContext;
+        logApiAiConsole("API MCP context built with tools="
+                + mcpContext.optJSONArray("availableTools").length()
+                + ", failedValidationRules="
+                + mcpContext.optJSONObject("validation").optJSONArray("failedRules").length());
+        return """
+                You are VeyraAI API Quality Brain.
+                Analyze this API response and return ONLY strict JSON. No markdown, no prose.
+
+                Required JSON shape:
+                {
+                  "variables": [
+                    {"name":"createOrder_orderId","alias":"createOrder.orderId","jsonPath":"$.orderId","value":"123","type":"string"}
+                  ],
+                  "validations": [
+                    {"jsonPath":"$.orderId","validation":"notNull","expected":"","type":"string","preview":"123"}
+                  ],
+                  "dbMappings": [
+                    {"apiField":"orderId","jsonPath":"$.orderId","dbMapping":"orders.order_id"}
+                  ]
+                }
+
+                Prefer important reusable fields such as orderId, status, amount, token, userId, createdAt.
+                Suggest validations like notNull, equals, type number, type string, type boolean.
+                Suggest likely DB mappings using snake_case column names.
+                Use the VeyraAI API MCP context as the source of truth for request, response,
+                validation failures, expected schema, environment, history, and related endpoint context.
+
+                VeyraAI API MCP context:
+                %s
+
+                API input:
+                %s
+                """.formatted(mcpContext.toString(2), input.toString(2));
+    }
+
+    private JSONObject invokeVeyraApiMcpTool(String toolName, JSONObject arguments,
+                                             ApiRequest request, ApiResponse response) {
+        JSONObject args = arguments == null ? new JSONObject() : arguments;
+        return switch (toolName) {
+            case "workspace.get_current_project" -> mcpWorkspaceContext();
+            case "workspace.get_team_conventions" -> mcpTeamConventions();
+            case "api_executor.get_current_request" -> mcpCurrentRequest(request);
+            case "api_executor.get_last_execution" -> mcpLastExecution(response);
+            case "api_executor.get_request_collection" -> mcpArrayResult(toolName, "requests", mcpRequestCollection());
+            case "api_executor.get_environment_variables" -> mcpEnvironmentVariables();
+            case "api_collection.get_imported_collection" -> mcpImportedCollection();
+            case "api_collection.list_requests" -> mcpArrayResult(toolName, "requests", mcpCollectionListRequests());
+            case "api_collection.get_request_details" -> mcpCollectionRequestDetails(args);
+            case "api_collection.resolve_user_api_selection" -> mcpCollectionResolveUserSelection(args);
+            case "api_collection.propose_execution_plan" -> mcpCollectionProposeExecutionPlan(args);
+            case "api_collection.validate_execution_readiness" -> mcpCollectionValidateExecutionReadiness(args);
+            case "api_collection.execute_request" -> mcpCollectionExecuteRequest(args);
+            case "api_collection.execute_plan" -> mcpCollectionExecutePlan(args);
+            case "api_collection.get_execution_results" -> mcpCollectionExecutionResults();
+            case "api_collection.propose_validations" -> mcpArrayResult(toolName, "suggestions", mcpCollectionProposeValidations(args));
+            case "api_collection.detect_dependencies" -> mcpArrayResult(toolName, "dependencies", mcpCollectionDetectDependencies(args));
+            case "api_collection.build_ai_analysis_context" -> mcpCollectionBuildAiAnalysisContext(args);
+            case "api_validator.get_validation_rules" -> mcpArrayResult(toolName, "rules", mcpValidationRules());
+            case "api_validator.get_validation_result" -> mcpValidationResult();
+            case "api_validator.get_expected_schema" -> mcpExpectedSchema(response);
+            case "api_validator.compare_expected_vs_actual" -> mcpExpectedActualComparison(response);
+            case "api_context.get_endpoint_details" -> mcpEndpointDetails(request);
+            case "api_context.get_openapi_spec" -> mcpOpenApiSpec(request);
+            case "api_context.get_auth_context" -> mcpAuthContext(request);
+            case "api_context.resolve_variables" -> mcpResolvedVariables(request);
+            case "api_history.get_recent_executions" -> mcpArrayResult(toolName, "executions", mcpRecentExecutions(8));
+            case "api_history.get_failure_patterns" -> mcpArrayResult(toolName, "patterns", mcpFailurePatterns());
+            case "api_history.get_baseline_response" -> mcpBaselineResponse(request);
+            case "api_history.compare_with_previous_run" -> mcpPreviousRunComparison(response);
+            case "api_analysis.classify_failure" -> mcpFailureClassification(request, response);
+            case "api_analysis.suggest_fix_context" -> mcpSuggestFixContext(request, response);
+            case "api_analysis.get_related_endpoints" -> mcpArrayResult(toolName, "endpoints", mcpRelatedEndpoints(request));
+            case "api_analysis.build_analysis_context" -> mcpBuildAnalysisContext(args, request, response);
+            default -> new JSONObject()
+                    .put("tool", toolName)
+                    .put("error", "Unknown VeyraAI API MCP tool")
+                    .put("availableTools", veyraApiMcpToolNames());
+        };
+    }
+
+    private JSONObject mcpBuildAnalysisContext(JSONObject args, ApiRequest request, ApiResponse response) {
+        JSONObject context = new JSONObject()
+                .put("mcpServer", new JSONObject()
+                        .put("name", "veyra-api-analysis-mcp")
+                        .put("version", "1.0")
+                        .put("mode", "in-process")
+                        .put("connectedAgent", isVeyraAIRuntimeSelected() ? "Agentic AI API Agent" : "Hermes Agent")
+                        .put("source", args.optString("source", "apiExecutor"))
+                        .put("action", args.optString("action", "suggestValidations")))
+                .put("availableTools", veyraApiMcpToolNames())
+                .put("workspace", mcpWorkspaceContext())
+                .put("teamConventions", mcpTeamConventions())
+                .put("request", mcpCurrentRequest(request))
+                .put("execution", mcpLastExecution(response))
+                .put("validation", mcpValidationResult())
+                .put("validationRules", mcpValidationRules())
+                .put("expectedSchema", mcpExpectedSchema(response))
+                .put("expectedVsActual", mcpExpectedActualComparison(response))
+                .put("endpoint", mcpEndpointDetails(request))
+                .put("openapi", mcpOpenApiSpec(request))
+                .put("auth", mcpAuthContext(request))
+                .put("environment", mcpEnvironmentVariables())
+                .put("resolvedVariables", mcpResolvedVariables(request))
+                .put("collection", new JSONObject()
+                        .put("importedCollection", mcpImportedCollection())
+                        .put("requests", mcpCollectionListRequests())
+                        .put("dependencies", mcpCollectionDetectDependencies(new JSONObject()))
+                        .put("proposedExecutionPlan", mcpCollectionProposeExecutionPlan(new JSONObject().put("limit", 20)))
+                        .put("validationSuggestions", mcpCollectionProposeValidations(new JSONObject().put("limit", 20))))
+                .put("history", new JSONObject()
+                        .put("recentExecutions", mcpRecentExecutions(8))
+                        .put("failurePatterns", mcpFailurePatterns())
+                        .put("baselineResponse", mcpBaselineResponse(request))
+                        .put("previousRunComparison", mcpPreviousRunComparison(response)))
+                .put("analysis", new JSONObject()
+                        .put("failureClassification", mcpFailureClassification(request, response))
+                        .put("suggestFixContext", mcpSuggestFixContext(request, response))
+                        .put("relatedEndpoints", mcpRelatedEndpoints(request)))
+                .put("builtAt", Instant.now().toString());
+        return context;
+    }
+
+    private JSONObject mcpArrayResult(String toolName, String resultKey, JSONArray values) {
+        JSONArray result = values == null ? new JSONArray() : values;
+        return new JSONObject()
+                .put("tool", toolName)
+                .put(resultKey, result)
+                .put("count", result.length());
+    }
+
+    private JSONArray veyraApiMcpToolNames() {
+        return new JSONArray(List.of(
+                "workspace.get_current_project",
+                "workspace.get_team_conventions",
+                "api_executor.get_current_request",
+                "api_executor.get_last_execution",
+                "api_executor.get_request_collection",
+                "api_executor.get_environment_variables",
+                "api_collection.get_imported_collection",
+                "api_collection.list_requests",
+                "api_collection.get_request_details",
+                "api_collection.resolve_user_api_selection",
+                "api_collection.propose_execution_plan",
+                "api_collection.validate_execution_readiness",
+                "api_collection.execute_request",
+                "api_collection.execute_plan",
+                "api_collection.get_execution_results",
+                "api_collection.propose_validations",
+                "api_collection.detect_dependencies",
+                "api_collection.build_ai_analysis_context",
+                "api_validator.get_validation_rules",
+                "api_validator.get_validation_result",
+                "api_validator.get_expected_schema",
+                "api_validator.compare_expected_vs_actual",
+                "api_context.get_endpoint_details",
+                "api_context.get_openapi_spec",
+                "api_context.get_auth_context",
+                "api_context.resolve_variables",
+                "api_history.get_recent_executions",
+                "api_history.get_failure_patterns",
+                "api_history.get_baseline_response",
+                "api_history.compare_with_previous_run",
+                "api_analysis.build_analysis_context",
+                "api_analysis.classify_failure",
+                "api_analysis.suggest_fix_context",
+                "api_analysis.get_related_endpoints"));
+    }
+
+    private JSONObject mcpWorkspaceContext() {
+        return new JSONObject()
+                .put("workspaceId", configCacheKey())
+                .put("projectName", "VeyraAI Workspace")
+                .put("basePath", configBasePathField == null ? "" : nullToBlank(configBasePathField.getText()))
+                .put("activeTab", "API Executor")
+                .put("selectedCollectionPath", postmanCollectionPathField == null ? "" : nullToBlank(postmanCollectionPathField.getText()))
+                .put("selectedEnvironmentPath", postmanEnvironmentPathField == null ? "" : nullToBlank(postmanEnvironmentPathField.getText()))
+                .put("activeRequestName", currentPostmanRequestNode == null ? "Manual Request" : currentPostmanRequestNode.name);
+    }
+
+    private JSONObject mcpTeamConventions() {
+        return new JSONObject()
+                .put("requiredHeaders", new JSONArray(List.of("Accept", "Content-Type", "User-Agent")))
+                .put("standardValidationTypes", new JSONArray(List.of("notNull", "equals", "type string", "type number", "type boolean")))
+                .put("variableSyntax", "${variableName}")
+                .put("responseVariablePreference", "Capture reusable identifiers, tokens, status values, timestamps, and correlation keys.")
+                .put("dbMappingConvention", "Map API camelCase fields to likely snake_case DB columns.")
+                .put("secretHandling", "Never expose raw API keys, bearer tokens, passwords, client secrets, or cookies to the LLM.");
+    }
+
+    private JSONObject mcpCurrentRequest(ApiRequest request) {
+        ApiRequest effective = request == null ? buildApiRequest(bodyArea == null ? "" : bodyArea.getText()) : request;
+        return new JSONObject()
+                .put("method", nullToBlank(effective.method))
+                .put("url", nullToBlank(effective.url))
+                .put("rawUrl", endpointField == null ? "" : nullToBlank(endpointField.getText()))
+                .put("queryParams", queryParamsJson(endpointField == null ? nullToBlank(effective.url) : endpointField.getText()))
+                .put("headers", maskedHeadersJson(effective.headers))
+                .put("body", shorten(nullToBlank(effective.body), 5000))
+                .put("bodyMode", nullToBlank(effective.bodyMode))
+                .put("multipartParts", mcpMultipartParts(effective.multipartParts))
+                .put("binaryFilePath", nullToBlank(effective.binaryFilePath))
+                .put("authType", authTypeBox == null ? "" : nullToBlank(authTypeBox.getValue()))
+                .put("hasToken", !nullToBlank(effective.token).isBlank())
+                .put("transport", new JSONObject()
+                        .put("sslVerificationDisabled", effective.sslVerificationDisabled)
+                        .put("trustStorePath", nullToBlank(effective.trustStorePath))
+                        .put("keyStorePath", nullToBlank(effective.keyStorePath))
+                        .put("proxyEnabled", effective.proxyEnabled)
+                        .put("proxyScheme", nullToBlank(effective.proxyScheme))
+                        .put("proxyHost", nullToBlank(effective.proxyHost))
+                        .put("proxyPort", effective.proxyPort))
+                .put("postman", currentPostmanRequestNode == null ? JSONObject.NULL : mcpPostmanRequest(currentPostmanRequestNode));
+    }
+
+    private JSONObject mcpLastExecution(ApiResponse response) {
+        ApiResponse effective = response == null ? lastResponse : response;
+        if (effective == null) {
+            return new JSONObject().put("hasExecution", false);
+        }
+        return new JSONObject()
+                .put("hasExecution", true)
+                .put("statusCode", effective.statusCode)
+                .put("statusLine", nullToBlank(effective.statusLine))
+                .put("responseTimeMs", effective.timeMs)
+                .put("sizeBytes", effective.sizeBytes)
+                .put("headers", maskedHeadersJson(parseHeaders(effective.headersText)))
+                .put("cookiesPresent", !nullToBlank(effective.cookiesText).isBlank())
+                .put("bodyPreview", shorten(nullToBlank(effective.rawBody), 5000))
+                .put("bodyType", inferJsonRootType(effective.rawBody))
+                .put("executedAt", Instant.now().toString());
+    }
+
+    private JSONArray mcpRequestCollection() {
+        JSONArray requests = new JSONArray();
+        TreeItem<PostmanCollectionNode> root = postmanCollectionTree == null ? null : postmanCollectionTree.getRoot();
+        collectMcpRequestCollection(root, requests, 80);
+        return requests;
+    }
+
+    private void collectMcpRequestCollection(TreeItem<PostmanCollectionNode> item, JSONArray requests, int limit) {
+        if (item == null || item.getValue() == null || requests.length() >= limit) {
+            return;
+        }
+        PostmanCollectionNode node = item.getValue();
+        if (node.isRequest()) {
+            requests.put(new JSONObject()
+                    .put("name", node.name)
+                    .put("method", firstNonBlank(node.request.optString("method"), "GET"))
+                    .put("url", postmanRequestUrl(node))
+                    .put("auth", postmanAuthType(node.request.optJSONObject("auth"))));
+        }
+        for (TreeItem<PostmanCollectionNode> child : item.getChildren()) {
+            collectMcpRequestCollection(child, requests, limit);
+        }
+    }
+
+    private JSONObject mcpImportedCollection() {
+        TreeItem<PostmanCollectionNode> root = postmanCollectionTree == null ? null : postmanCollectionTree.getRoot();
+        PostmanCollectionNode node = root == null ? null : root.getValue();
+        boolean imported = node != null && !"placeholder".equals(node.kind);
+        return new JSONObject()
+                .put("available", imported)
+                .put("name", imported ? node.name : "")
+                .put("collectionPath", postmanCollectionPathField == null ? "" : nullToBlank(postmanCollectionPathField.getText()))
+                .put("environmentPath", postmanEnvironmentPathField == null ? "" : nullToBlank(postmanEnvironmentPathField.getText()))
+                .put("totalRequests", imported ? countPostmanRequests(root) : 0)
+                .put("totalFolders", imported ? countPostmanFolders(root) : 0)
+                .put("collectionVariables", postmanCollectionVariables.size())
+                .put("environmentVariables", postmanEnvironmentVariables.size())
+                .put("status", postmanCollectionStatusLabel == null ? "" : nullToBlank(postmanCollectionStatusLabel.getText()))
+                .put("secretValuesMasked", true);
+    }
+
+    private JSONArray mcpCollectionListRequests() {
+        JSONArray requests = new JSONArray();
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionRequestItems(500)) {
+            requests.put(mcpCollectionRequestSummary(item));
+        }
+        return requests;
+    }
+
+    private JSONObject mcpCollectionRequestDetails(JSONObject args) {
+        TreeItem<PostmanCollectionNode> item = mcpFindCollectionRequest(args.optString("requestId", args.optString("name")));
+        if (item == null) {
+            return new JSONObject().put("available", false)
+                    .put("message", "No imported collection request matched the supplied requestId/name.");
+        }
+        PostmanCollectionNode node = item.getValue();
+        ApiRequest request = buildPostmanApiRequest(node);
+        return mcpCollectionRequestSummary(item)
+                .put("available", true)
+                .put("headers", maskedHeadersJson(request.headers))
+                .put("queryParams", queryParamsJson(request.url))
+                .put("body", shorten(nullToBlank(request.body), 5000))
+                .put("bodyMode", nullToBlank(request.bodyMode))
+                .put("multipartParts", mcpMultipartParts(request.multipartParts))
+                .put("binaryFilePath", nullToBlank(request.binaryFilePath))
+                .put("preRequestScript", shorten(postmanEventScript(node.source, "prerequest"), 3000))
+                .put("testScript", shorten(postmanEventScript(node.source, "test"), 3000))
+                .put("executionPath", mcpPostmanExecutionPath(item))
+                .put("requiredVariables", new JSONArray(unresolvedRequestVariables(request)))
+                .put("producedVariables", mcpLikelyProducedVariables(item));
+    }
+
+    private JSONObject mcpCollectionResolveUserSelection(JSONObject args) {
+        JSONArray selected = new JSONArray();
+        String query = nullToBlank(args.optString("query", args.optString("userRequest"))).toLowerCase();
+        JSONArray requested = args.optJSONArray("requestIds");
+        if (requested != null) {
+            for (int i = 0; i < requested.length(); i++) {
+                TreeItem<PostmanCollectionNode> item = mcpFindCollectionRequest(requested.optString(i));
+                if (item != null) selected.put(mcpCollectionRequestSummary(item));
+            }
+        }
+        if (selected.isEmpty() && !query.isBlank()) {
+            for (TreeItem<PostmanCollectionNode> item : mcpCollectionRequestItems(500)) {
+                JSONObject summary = mcpCollectionRequestSummary(item);
+                String haystack = (summary.optString("id") + " " + summary.optString("name") + " "
+                        + summary.optString("method") + " " + summary.optString("url") + " "
+                        + summary.optString("folderPath")).toLowerCase();
+                if (haystack.contains(query) || query.contains(summary.optString("name").toLowerCase())) {
+                    selected.put(summary);
+                }
+            }
+        }
+        if (selected.isEmpty() && currentPostmanRequestNode != null) {
+            TreeItem<PostmanCollectionNode> active = mcpFindCollectionRequest(currentPostmanRequestNode.name);
+            if (active != null) selected.put(mcpCollectionRequestSummary(active));
+        }
+        return new JSONObject()
+                .put("matches", selected)
+                .put("matchCount", selected.length())
+                .put("query", query);
+    }
+
+    private JSONObject mcpCollectionProposeExecutionPlan(JSONObject args) {
+        List<TreeItem<PostmanCollectionNode>> targets = mcpCollectionExecutionTargets(args);
+        int limit = args.optInt("limit", 50);
+        JSONArray planRequests = new JSONArray();
+        int order = 1;
+        for (TreeItem<PostmanCollectionNode> item : targets) {
+            if (planRequests.length() >= limit) break;
+            PostmanCollectionNode node = item.getValue();
+            ApiRequest request = buildPostmanApiRequest(node);
+            planRequests.put(mcpCollectionRequestSummary(item)
+                    .put("order", order++)
+                    .put("reason", mcpExecutionReason(item, request))
+                    .put("requiredVariables", new JSONArray(unresolvedRequestVariables(request)))
+                    .put("producedVariables", mcpLikelyProducedVariables(item))
+                    .put("risk", mcpRequestRisk(request, node)));
+        }
+        JSONObject readiness = mcpCollectionValidateExecutionReadiness(new JSONObject().put("requestIds", mcpRequestIds(planRequests)));
+        return new JSONObject()
+                .put("planId", "collection-plan-" + Math.abs(planRequests.toString().hashCode()))
+                .put("planName", args.optString("planName", "Imported collection execution plan"))
+                .put("dryRunDefault", true)
+                .put("requests", planRequests)
+                .put("ready", readiness.optBoolean("ready", false))
+                .put("blockedBy", readiness.optJSONArray("blockingIssues"))
+                .put("warnings", readiness.optJSONArray("warnings"))
+                .put("risk", readiness.optJSONArray("warnings").isEmpty() ? "low" : "review_required");
+    }
+
+    private JSONObject mcpCollectionValidateExecutionReadiness(JSONObject args) {
+        JSONArray blocking = new JSONArray();
+        JSONArray warnings = new JSONArray();
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionExecutionTargets(args)) {
+            PostmanCollectionNode node = item.getValue();
+            ApiRequest request = buildPostmanApiRequest(node);
+            for (String variable : unresolvedRequestVariables(request)) {
+                blocking.put(new JSONObject()
+                        .put("requestId", mcpCollectionRequestId(item))
+                        .put("requestName", node.name)
+                        .put("issue", "Unresolved variable " + variable));
+            }
+            if (request.multipartParts != null) {
+                for (ApiRequestBodyPart part : request.multipartParts) {
+                    if (part != null && part.file && !nullToBlank(part.filePath).isBlank()
+                            && !Files.exists(Path.of(part.filePath))) {
+                        blocking.put(new JSONObject()
+                                .put("requestId", mcpCollectionRequestId(item))
+                                .put("requestName", node.name)
+                                .put("issue", "Multipart file does not exist: " + part.filePath));
+                    }
+                }
+            }
+            String risk = mcpRequestRisk(request, node);
+            if (!"low".equals(risk)) {
+                warnings.put(new JSONObject()
+                        .put("requestId", mcpCollectionRequestId(item))
+                        .put("requestName", node.name)
+                        .put("issue", "Request is classified as " + risk + " because it may mutate or delete data."));
+            }
+        }
+        return new JSONObject()
+                .put("ready", blocking.isEmpty())
+                .put("blockingIssues", blocking)
+                .put("warnings", warnings);
+    }
+
+    private JSONObject mcpCollectionExecuteRequest(JSONObject args) {
+        boolean dryRun = args.optBoolean("dryRun", true);
+        TreeItem<PostmanCollectionNode> item = mcpFindCollectionRequest(args.optString("requestId", args.optString("name")));
+        if (item == null) {
+            return new JSONObject().put("executed", false)
+                    .put("dryRun", dryRun)
+                    .put("error", "No imported collection request matched the supplied requestId/name.");
+        }
+        if (dryRun) {
+            return new JSONObject()
+                    .put("executed", false)
+                    .put("dryRun", true)
+                    .put("request", mcpCollectionRequestDetails(new JSONObject().put("requestId", mcpCollectionRequestId(item))))
+                    .put("readiness", mcpCollectionValidateExecutionReadiness(new JSONObject()
+                            .put("requestIds", new JSONArray().put(mcpCollectionRequestId(item)))));
+        }
+        return mcpExecuteCollectionRequestItem(item);
+    }
+
+    private JSONObject mcpCollectionExecutePlan(JSONObject args) {
+        boolean dryRun = args.optBoolean("dryRun", true);
+        JSONObject plan = mcpCollectionProposeExecutionPlan(args);
+        if (dryRun) {
+            return new JSONObject()
+                    .put("executed", false)
+                    .put("dryRun", true)
+                    .put("plan", plan)
+                    .put("readiness", mcpCollectionValidateExecutionReadiness(args));
+        }
+        JSONArray results = new JSONArray();
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionExecutionTargets(args)) {
+            results.put(mcpExecuteCollectionRequestItem(item));
+        }
+        return new JSONObject()
+                .put("executed", true)
+                .put("dryRun", false)
+                .put("plan", plan)
+                .put("results", results)
+                .put("aiAnalysisContext", mcpCollectionBuildAiAnalysisContext(args));
+    }
+
+    private JSONObject mcpCollectionExecutionResults() {
+        return new JSONObject()
+                .put("lastExecution", mcpLastExecution(lastResponse))
+                .put("validation", mcpValidationResult())
+                .put("candidateSuggestions", mcpCollectionProposeValidations(new JSONObject().put("limit", 20)));
+    }
+
+    private JSONArray mcpCollectionProposeValidations(JSONObject args) {
+        JSONArray suggestions = new JSONArray();
+        int limit = args.optInt("limit", 80);
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionRequestItems(500)) {
+            if (suggestions.length() >= limit) break;
+            PostmanCollectionNode node = item.getValue();
+            ApiRequest request = buildPostmanApiRequest(node);
+            suggestions.put(new JSONObject()
+                    .put("requestId", mcpCollectionRequestId(item))
+                    .put("requestName", node.name)
+                    .put("type", "statusCode")
+                    .put("suggestion", "Assert HTTP status is in the expected 2xx range for successful flows.")
+                    .put("method", request.method)
+                    .put("endpoint", request.url));
+            if (!mcpLikelyProducedVariables(item).isEmpty() && suggestions.length() < limit) {
+                suggestions.put(new JSONObject()
+                        .put("requestId", mcpCollectionRequestId(item))
+                        .put("requestName", node.name)
+                        .put("type", "variableCapture")
+                        .put("suggestion", "Capture produced variables from Postman tests and validate they are not null.")
+                        .put("producedVariables", mcpLikelyProducedVariables(item)));
+            }
+        }
+        return suggestions;
+    }
+
+    private JSONArray mcpCollectionDetectDependencies(JSONObject args) {
+        JSONArray dependencies = new JSONArray();
+        Map<String, JSONObject> producers = new LinkedHashMap<>();
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionRequestItems(500)) {
+            JSONArray produced = mcpLikelyProducedVariables(item);
+            for (int i = 0; i < produced.length(); i++) {
+                producers.put(produced.optString(i), mcpCollectionRequestSummary(item));
+            }
+        }
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionRequestItems(500)) {
+            ApiRequest request = buildPostmanApiRequest(item.getValue());
+            for (String variable : variablesReferencedByRequest(request)) {
+                JSONObject producer = producers.get(variable);
+                if (producer != null && !producer.optString("id").equals(mcpCollectionRequestId(item))) {
+                    dependencies.put(new JSONObject()
+                            .put("consumerRequestId", mcpCollectionRequestId(item))
+                            .put("consumerRequestName", item.getValue().name)
+                            .put("producerRequestId", producer.optString("id"))
+                            .put("producerRequestName", producer.optString("name"))
+                            .put("variable", variable));
+                }
+            }
+        }
+        return dependencies;
+    }
+
+    private JSONObject mcpCollectionBuildAiAnalysisContext(JSONObject args) {
+        return new JSONObject()
+                .put("collection", mcpImportedCollection())
+                .put("selection", mcpCollectionResolveUserSelection(args))
+                .put("executionPlan", mcpCollectionProposeExecutionPlan(args))
+                .put("readiness", mcpCollectionValidateExecutionReadiness(args))
+                .put("dependencies", mcpCollectionDetectDependencies(args))
+                .put("validationSuggestions", mcpCollectionProposeValidations(args))
+                .put("lastResults", mcpCollectionExecutionResults())
+                .put("builtAt", Instant.now().toString());
+    }
+
+    private int countPostmanFolders(TreeItem<PostmanCollectionNode> item) {
+        if (item == null || item.getValue() == null) {
+            return 0;
+        }
+        int count = "folder".equals(item.getValue().kind) ? 1 : 0;
+        for (TreeItem<PostmanCollectionNode> child : item.getChildren()) {
+            count += countPostmanFolders(child);
+        }
+        return count;
+    }
+
+    private List<TreeItem<PostmanCollectionNode>> mcpCollectionRequestItems(int limit) {
+        List<TreeItem<PostmanCollectionNode>> items = new ArrayList<>();
+        TreeItem<PostmanCollectionNode> root = postmanCollectionTree == null ? null : postmanCollectionTree.getRoot();
+        collectMcpCollectionRequestItems(root, items, limit);
+        return items;
+    }
+
+    private void collectMcpCollectionRequestItems(TreeItem<PostmanCollectionNode> item,
+                                                  List<TreeItem<PostmanCollectionNode>> items,
+                                                  int limit) {
+        if (item == null || item.getValue() == null || items.size() >= limit) {
+            return;
+        }
+        if (item.getValue().isRequest()) {
+            items.add(item);
+            return;
+        }
+        for (TreeItem<PostmanCollectionNode> child : item.getChildren()) {
+            collectMcpCollectionRequestItems(child, items, limit);
+        }
+    }
+
+    private JSONObject mcpCollectionRequestSummary(TreeItem<PostmanCollectionNode> item) {
+        PostmanCollectionNode node = item.getValue();
+        ApiRequest request = buildPostmanApiRequest(node);
+        return new JSONObject()
+                .put("id", mcpCollectionRequestId(item))
+                .put("name", node.name)
+                .put("folderPath", mcpCollectionFolderPath(item))
+                .put("method", nullToBlank(request.method))
+                .put("url", postmanRequestUrl(node))
+                .put("resolvedUrl", nullToBlank(request.url))
+                .put("authType", postmanAuthType(node.request.optJSONObject("auth")))
+                .put("hasBody", !nullToBlank(request.body).isBlank()
+                        || (request.multipartParts != null && !request.multipartParts.isEmpty())
+                        || !nullToBlank(request.binaryFilePath).isBlank())
+                .put("hasPreRequestScript", mcpHasPostmanEventScript(node, "prerequest"))
+                .put("hasTestScript", mcpHasPostmanEventScript(node, "test"))
+                .put("risk", mcpRequestRisk(request, node));
+    }
+
+    private String mcpCollectionRequestId(TreeItem<PostmanCollectionNode> item) {
+        List<String> names = new ArrayList<>();
+        TreeItem<PostmanCollectionNode> current = item;
+        while (current != null && current.getValue() != null) {
+            PostmanCollectionNode node = current.getValue();
+            if (!"placeholder".equals(node.kind)) {
+                names.add(0, node.name);
+            }
+            current = current.getParent();
+        }
+        return String.join("/", names).replaceAll("\\s+", " ").trim();
+    }
+
+    private String mcpCollectionFolderPath(TreeItem<PostmanCollectionNode> item) {
+        List<String> names = new ArrayList<>();
+        TreeItem<PostmanCollectionNode> current = item == null ? null : item.getParent();
+        while (current != null && current.getValue() != null) {
+            PostmanCollectionNode node = current.getValue();
+            if ("folder".equals(node.kind)) {
+                names.add(0, node.name);
+            }
+            current = current.getParent();
+        }
+        return String.join("/", names);
+    }
+
+    private TreeItem<PostmanCollectionNode> mcpFindCollectionRequest(String requestIdOrName) {
+        String needle = nullToBlank(requestIdOrName).trim();
+        if (needle.isBlank()) {
+            return null;
+        }
+        String normalizedNeedle = needle.toLowerCase();
+        TreeItem<PostmanCollectionNode> fallback = null;
+        for (TreeItem<PostmanCollectionNode> item : mcpCollectionRequestItems(1000)) {
+            String id = mcpCollectionRequestId(item);
+            String name = item.getValue().name;
+            if (id.equalsIgnoreCase(needle) || name.equalsIgnoreCase(needle)) {
+                return item;
+            }
+            String haystack = (id + " " + name + " " + postmanRequestUrl(item.getValue())).toLowerCase();
+            if (fallback == null && haystack.contains(normalizedNeedle)) {
+                fallback = item;
+            }
+        }
+        return fallback;
+    }
+
+    private List<TreeItem<PostmanCollectionNode>> mcpCollectionExecutionTargets(JSONObject args) {
+        List<TreeItem<PostmanCollectionNode>> targets = new ArrayList<>();
+        JSONArray ids = args.optJSONArray("requestIds");
+        if (ids == null) {
+            ids = args.optJSONArray("requests");
+        }
+        if (ids != null) {
+            for (int i = 0; i < ids.length(); i++) {
+                Object value = ids.opt(i);
+                String id = value instanceof JSONObject object ? object.optString("requestId", object.optString("id")) : String.valueOf(value);
+                TreeItem<PostmanCollectionNode> item = mcpFindCollectionRequest(id);
+                if (item != null && targets.stream().noneMatch(existing -> mcpCollectionRequestId(existing).equals(mcpCollectionRequestId(item)))) {
+                    targets.add(item);
+                }
+            }
+        }
+        if (targets.isEmpty() && !args.optString("query", args.optString("userRequest")).isBlank()) {
+            JSONArray matches = mcpCollectionResolveUserSelection(args).optJSONArray("matches");
+            for (int i = 0; i < matches.length(); i++) {
+                JSONObject match = matches.optJSONObject(i);
+                TreeItem<PostmanCollectionNode> item = match == null ? null : mcpFindCollectionRequest(match.optString("id"));
+                if (item != null) targets.add(item);
+            }
+        }
+        if (targets.isEmpty()) {
+            TreeItem<PostmanCollectionNode> selected = postmanCollectionTree == null
+                    ? null : postmanCollectionTree.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.getValue() != null && !"placeholder".equals(selected.getValue().kind)) {
+                collectPostmanRequestItems(selected, targets);
+            }
+        }
+        if (targets.isEmpty()) {
+            targets.addAll(mcpCollectionRequestItems(args.optInt("limit", 50)));
+        }
+        return targets;
+    }
+
+    private JSONArray mcpRequestIds(JSONArray requestSummaries) {
+        JSONArray ids = new JSONArray();
+        for (int i = 0; i < requestSummaries.length(); i++) {
+            JSONObject item = requestSummaries.optJSONObject(i);
+            if (item != null) {
+                ids.put(item.optString("id"));
+            }
+        }
+        return ids;
+    }
+
+    private JSONArray mcpPostmanExecutionPath(TreeItem<PostmanCollectionNode> item) {
+        JSONArray path = new JSONArray();
+        for (PostmanCollectionNode node : postmanExecutionPath(item)) {
+            path.put(new JSONObject()
+                    .put("name", node.name)
+                    .put("kind", node.kind)
+                    .put("hasPreRequestScript", mcpHasPostmanEventScript(node, "prerequest"))
+                    .put("hasTestScript", mcpHasPostmanEventScript(node, "test")));
+        }
+        return path;
+    }
+
+    private boolean mcpHasPostmanEventScript(PostmanCollectionNode node, String listen) {
+        return !postmanEventScript(node == null ? null : node.source, listen).isBlank();
+    }
+
+    private JSONArray mcpLikelyProducedVariables(TreeItem<PostmanCollectionNode> item) {
+        Set<String> variables = new HashSet<>();
+        for (PostmanCollectionNode node : postmanExecutionPath(item)) {
+            String scripts = postmanEventScript(node.source, "test") + "\n" + postmanEventScript(node.source, "prerequest");
+            Matcher matcher = Pattern.compile("(?i)(?:environment|collectionVariables|variables)\\.set\\s*\\(\\s*['\"]([^'\"]+)['\"]").matcher(scripts);
+            while (matcher.find()) {
+                variables.add(normalizeVariableName(matcher.group(1)));
+            }
+        }
+        String name = item == null || item.getValue() == null ? "" : item.getValue().name.toLowerCase();
+        if (name.contains("login") || name.contains("auth") || name.contains("token")) {
+            variables.add("access_token");
+        }
+        if (name.contains("create") || name.contains("add")) {
+            variables.add(normalizeVariableName(item.getValue().name.replaceAll("(?i)create|add", "").trim() + "Id"));
+        }
+        return new JSONArray(variables);
+    }
+
+    private Set<String> variablesReferencedByRequest(ApiRequest request) {
+        Set<String> variables = new HashSet<>();
+        String text = nullToBlank(request == null ? "" : request.url) + "\n"
+                + nullToBlank(request == null ? "" : request.body) + "\n"
+                + (request == null || request.headers == null ? "" : request.headers.toString());
+        Matcher matcher = Pattern.compile("\\$\\{([^}]+)}").matcher(text);
+        while (matcher.find()) {
+            variables.add(normalizeVariableName(matcher.group(1)));
+        }
+        return variables;
+    }
+
+    private String mcpExecutionReason(TreeItem<PostmanCollectionNode> item, ApiRequest request) {
+        String name = item.getValue().name.toLowerCase();
+        if (name.contains("login") || name.contains("auth")) {
+            return "Authentication request that may produce tokens for later calls.";
+        }
+        if ("POST".equalsIgnoreCase(request.method)) {
+            return "Creates or submits data and may produce identifiers for follow-up requests.";
+        }
+        if ("GET".equalsIgnoreCase(request.method)) {
+            return "Reads data and is usually safe for validation and response-shape analysis.";
+        }
+        return "Included from the imported collection selection/order.";
+    }
+
+    private String mcpRequestRisk(ApiRequest request, PostmanCollectionNode node) {
+        String method = nullToBlank(request == null ? "" : request.method).toUpperCase();
+        String name = nullToBlank(node == null ? "" : node.name).toLowerCase();
+        if ("DELETE".equals(method) || name.contains("delete") || name.contains("remove")
+                || name.contains("cancel") || name.contains("revoke")) {
+            return "destructive";
+        }
+        if ("PUT".equals(method) || "PATCH".equals(method) || name.contains("update")) {
+            return "mutating";
+        }
+        if ("POST".equals(method)) {
+            return "creates_or_mutates";
+        }
+        return "low";
+    }
+
+    private JSONObject mcpExecuteCollectionRequestItem(TreeItem<PostmanCollectionNode> item) {
+        PostmanCollectionNode node = item.getValue();
+        try {
+            runPostmanPreRequestScripts(item);
+            ApiRequest request = buildPostmanApiRequest(node);
+            List<String> unresolved = unresolvedRequestVariables(request);
+            if (!unresolved.isEmpty()) {
+                return new JSONObject()
+                        .put("executed", false)
+                        .put("request", mcpCollectionRequestSummary(item))
+                        .put("error", "Unresolved variables: " + String.join(", ", unresolved));
+            }
+            boolean bearerAuth = request.token != null && !request.token.isBlank();
+            hydratePostmanBearerTokenIfNeeded(request, bearerAuth, request.token);
+            ApiResponse response = apiService.sendRequest(request);
+            lastResponse = response;
+            captureAccessTokenFromResponse(response);
+            Platform.runLater(() -> renderResponse(response));
+            String scriptMessage = "";
+            boolean scriptPassed = true;
+            try {
+                capturePostmanTestVariables(item, response);
+            } catch (Exception scriptError) {
+                scriptPassed = false;
+                scriptMessage = exceptionMessage(scriptError);
+            }
+            JSONArray suggestions = apiExecutionSuggestionRows(node, response);
+            return new JSONObject()
+                    .put("executed", true)
+                    .put("request", mcpCollectionRequestSummary(item))
+                    .put("endpointHit", new JSONObject()
+                            .put("method", request.method)
+                            .put("url", request.url)
+                            .put("statusCode", response.statusCode)
+                            .put("statusLine", response.statusLine)
+                            .put("responseTimeMs", response.timeMs)
+                            .put("sizeBytes", response.sizeBytes))
+                    .put("postmanTestsPassed", scriptPassed)
+                    .put("postmanTestMessage", scriptMessage)
+                    .put("capturedVariables", mcpEnvironmentVariables().optJSONObject("activeVariables"))
+                    .put("responsePreview", shorten(nullToBlank(response.rawBody), 3000))
+                    .put("aiSuggestions", suggestions);
+        } catch (Exception ex) {
+            return new JSONObject()
+                    .put("executed", false)
+                    .put("request", mcpCollectionRequestSummary(item))
+                    .put("error", exceptionMessage(ex));
+        }
+    }
+
+    private JSONArray apiExecutionSuggestionRows(PostmanCollectionNode node, ApiResponse response) {
+        JSONArray suggestions = new JSONArray();
+        suggestions.put(new JSONObject()
+                .put("type", "validation")
+                .put("message", "Add status-code validation for " + nullToBlank(response.statusLine))
+                .put("requestName", node.name));
+        if (response != null && !nullToBlank(response.rawBody).isBlank()) {
+            for (ResponseFieldCandidate field : responseVariableService.parseAllFields(response.rawBody)) {
+                if (List.of("object", "array", "null").contains(field.type)) continue;
+                String compact = nullToBlank(field.fieldName).replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+                if (compact.endsWith("id") || compact.contains("token") || compact.contains("status")) {
+                    suggestions.put(new JSONObject()
+                            .put("type", "variable")
+                            .put("message", "Capture " + field.jsonPath + " as ${" + normalizeVariableName(node.name + "_" + field.fieldName) + "}")
+                            .put("jsonPath", field.jsonPath)
+                            .put("valuePreview", shorten(field.previewValue, 160)));
+                }
+                if (suggestions.length() >= 12) break;
+            }
+        }
+        return suggestions;
+    }
+
+    private JSONObject mcpEnvironmentVariables() {
+        JSONObject variables = new JSONObject();
+        for (Map.Entry<String, String> entry : postmanCollectionVariables.entrySet()) {
+            variables.put(entry.getKey(), maskIfSensitive(entry.getKey(), entry.getValue()));
+        }
+        for (Map.Entry<String, String> entry : postmanEnvironmentVariables.entrySet()) {
+            variables.put(entry.getKey(), maskIfSensitive(entry.getKey(), entry.getValue()));
+        }
+        JSONObject saved = new JSONObject();
+        for (Map.Entry<String, String> entry : savedVariables.entrySet()) {
+            saved.put(entry.getKey(), maskIfSensitive(entry.getKey(), entry.getValue()));
+        }
+        return new JSONObject()
+                .put("activeVariables", variables)
+                .put("savedVariables", saved)
+                .put("runtimeVariables", new JSONArray(RUNTIME_VARIABLES))
+                .put("secretValuesMasked", true);
+    }
+
+    private JSONArray mcpValidationRules() {
+        JSONArray rules = new JSONArray();
+        if (fieldValidationRows != null) {
+            for (Map<String, String> row : fieldValidationRows) {
+                rules.put(new JSONObject(row));
+            }
+        }
+        return rules;
+    }
+
+    private JSONObject mcpValidationResult() {
+        JSONArray failed = new JSONArray();
+        JSONArray passed = new JSONArray();
+        JSONArray notRun = new JSONArray();
+        if (fieldValidationRows != null) {
+            for (Map<String, String> row : fieldValidationRows) {
+                JSONObject item = new JSONObject(row);
+                String result = firstNonBlank(row.get("result"), row.get("status"));
+                if (result.toLowerCase().startsWith("failed") || result.equalsIgnoreCase("fail")) {
+                    failed.put(item);
+                } else if (result.equalsIgnoreCase("passed") || result.equalsIgnoreCase("pass")) {
+                    passed.put(item);
+                } else {
+                    notRun.put(item);
+                }
+            }
+        }
+        return new JSONObject()
+                .put("status", failed.length() > 0 ? "failed" : (passed.length() > 0 ? "passed" : "not_run"))
+                .put("failedRules", failed)
+                .put("passedRules", passed)
+                .put("notRunRules", notRun);
+    }
+
+    private JSONObject mcpExpectedSchema(ApiResponse response) {
+        JSONArray fields = new JSONArray();
+        ApiResponse effective = response == null ? lastResponse : response;
+        if (effective != null && !nullToBlank(effective.rawBody).isBlank()) {
+            for (ResponseFieldCandidate candidate : responseVariableService.parseAllFields(effective.rawBody)) {
+                fields.put(new JSONObject()
+                        .put("jsonPath", candidate.jsonPath)
+                        .put("fieldName", candidate.fieldName)
+                        .put("type", candidate.type)
+                        .put("preview", shorten(candidate.previewValue, 220)));
+                if (fields.length() >= 120) break;
+            }
+        }
+        return new JSONObject()
+                .put("source", "latest response and active Field Validation rows")
+                .put("responseFields", fields)
+                .put("validationRules", mcpValidationRules());
+    }
+
+    private JSONObject mcpExpectedActualComparison(ApiResponse response) {
+        JSONArray mismatches = new JSONArray();
+        if (fieldValidationRows != null) {
+            for (Map<String, String> row : fieldValidationRows) {
+                String result = firstNonBlank(row.get("result"), row.get("status"));
+                if (result.toLowerCase().startsWith("failed") || result.equalsIgnoreCase("fail")) {
+                    mismatches.put(new JSONObject()
+                            .put("jsonPath", row.getOrDefault("field", ""))
+                            .put("expected", firstNonBlank(row.get("expected"), row.get("nullValidation"), row.get("typeValidation")))
+                            .put("actual", row.getOrDefault("actual", ""))
+                            .put("message", row.getOrDefault("message", result)));
+                }
+            }
+        }
+        return new JSONObject()
+                .put("mismatches", mismatches)
+                .put("summary", mismatches.length() == 0
+                        ? "No executed validation mismatches are currently recorded."
+                        : mismatches.length() + " validation mismatch(es) found.");
+    }
+
+    private JSONObject mcpEndpointDetails(ApiRequest request) {
+        ApiRequest effective = request == null ? buildApiRequest(bodyArea == null ? "" : bodyArea.getText()) : request;
+        URI uri = safeUri(effective.url);
+        return new JSONObject()
+                .put("method", nullToBlank(effective.method))
+                .put("url", nullToBlank(effective.url))
+                .put("scheme", uri == null ? "" : nullToBlank(uri.getScheme()))
+                .put("host", uri == null ? "" : nullToBlank(uri.getHost()))
+                .put("path", uri == null ? "" : nullToBlank(uri.getPath()))
+                .put("queryParams", queryParamsJson(nullToBlank(effective.url)))
+                .put("source", currentPostmanRequestNode == null ? "manual" : "postmanCollection")
+                .put("description", currentPostmanRequestNode == null ? "" : currentPostmanRequestNode.source.optString("description"));
+    }
+
+    private JSONObject mcpOpenApiSpec(ApiRequest request) {
+        return new JSONObject()
+                .put("available", false)
+                .put("source", "No OpenAPI/Swagger document is imported in the current API Executor context.")
+                .put("endpointHint", mcpEndpointDetails(request));
+    }
+
+    private JSONObject mcpAuthContext(ApiRequest request) {
+        ApiRequest effective = request == null ? buildApiRequest(bodyArea == null ? "" : bodyArea.getText()) : request;
+        return new JSONObject()
+                .put("authType", authTypeBox == null ? "" : nullToBlank(authTypeBox.getValue()))
+                .put("hasBearerToken", !nullToBlank(effective.token).isBlank())
+                .put("oauth2", new JSONObject()
+                        .put("grantType", oauthGrantTypeBox == null ? "" : nullToBlank(oauthGrantTypeBox.getValue()))
+                        .put("tokenUrl", oauthTokenUrlField == null ? "" : nullToBlank(oauthTokenUrlField.getText()))
+                        .put("clientId", oauthClientIdField == null ? "" : maskIfSensitive("clientId", oauthClientIdField.getText()))
+                        .put("scope", oauthScopeField == null ? "" : nullToBlank(oauthScopeField.getText())))
+                .put("secretValuesMasked", true);
+    }
+
+    private JSONObject mcpResolvedVariables(ApiRequest request) {
+        ApiRequest effective = request == null ? buildApiRequest(bodyArea == null ? "" : bodyArea.getText()) : request;
+        return new JSONObject()
+                .put("resolvedUrl", nullToBlank(effective.url))
+                .put("resolvedHeaders", maskedHeadersJson(effective.headers))
+                .put("unresolvedVariables", new JSONArray(unresolvedRequestVariables(effective)));
+    }
+
+    private JSONArray mcpRecentExecutions(int limit) {
+        JSONArray items = new JSONArray();
+        if (dashboardExecutions != null) {
+            for (int i = 0; i < Math.min(limit, dashboardExecutions.length()); i++) {
+                JSONObject execution = dashboardExecutions.optJSONObject(i);
+                if (execution != null) {
+                    items.put(new JSONObject()
+                            .put("name", execution.optString("name"))
+                            .put("type", execution.optString("type"))
+                            .put("passed", execution.optLong("passed"))
+                            .put("failed", execution.optLong("failed"))
+                            .put("health", execution.optString("health"))
+                            .put("executedAt", execution.optLong("executedAt")));
+                }
+            }
+        }
+        return items;
+    }
+
+    private JSONArray mcpFailurePatterns() {
+        JSONArray patterns = new JSONArray();
+        JSONObject validation = mcpValidationResult();
+        JSONArray failures = validation.optJSONArray("failedRules");
+        for (int i = 0; i < failures.length(); i++) {
+            JSONObject failure = failures.optJSONObject(i);
+            if (failure != null) {
+                patterns.put(new JSONObject()
+                        .put("pattern", firstNonBlank(failure.optString("message"), failure.optString("result"), failure.optString("field")))
+                        .put("jsonPath", failure.optString("field"))
+                        .put("seenCount", 1)
+                        .put("lastSeen", Instant.now().toString()));
+            }
+        }
+        return patterns;
+    }
+
+    private JSONObject mcpBaselineResponse(ApiRequest request) {
+        JSONArray memory = loadRecentApiAiMemorySummary(5);
+        String method = request == null ? "" : nullToBlank(request.method);
+        String endpoint = request == null ? "" : nullToBlank(request.url);
+        for (int i = 0; i < memory.length(); i++) {
+            JSONObject item = memory.optJSONObject(i);
+            if (item != null && item.optString("method").equalsIgnoreCase(method)
+                    && !endpoint.isBlank() && endpoint.contains(item.optString("endpoint"))) {
+                return item.put("available", true);
+            }
+        }
+        return new JSONObject().put("available", false).put("recentApiMemory", memory);
+    }
+
+    private JSONObject mcpPreviousRunComparison(ApiResponse response) {
+        ApiResponse effective = response == null ? lastResponse : response;
+        if (effective == null) {
+            return new JSONObject().put("available", false);
+        }
+        return new JSONObject()
+                .put("available", false)
+                .put("currentStatusCode", effective.statusCode)
+                .put("note", "No previous run for this exact endpoint is persisted in the active API Executor state.");
+    }
+
+    private JSONObject mcpFailureClassification(ApiRequest request, ApiResponse response) {
+        ApiResponse effective = response == null ? lastResponse : response;
+        String type = "unknown";
+        String reason = "No execution response available.";
+        if (effective != null) {
+            if (effective.statusCode == 401 || effective.statusCode == 403) {
+                type = "auth_failure";
+                reason = "HTTP " + effective.statusCode + " indicates authentication or authorization failure.";
+            } else if (effective.statusCode >= 500) {
+                type = "server_error";
+                reason = "HTTP " + effective.statusCode + " indicates server-side failure.";
+            } else if (effective.statusCode >= 400) {
+                type = "client_request_error";
+                reason = "HTTP " + effective.statusCode + " indicates request contract or input issue.";
+            } else if (mcpValidationResult().optJSONArray("failedRules").length() > 0) {
+                type = "schema_mismatch";
+                reason = "One or more active API Validator rules failed.";
+            } else if (effective.timeMs > 3000) {
+                type = "performance_risk";
+                reason = "Response time is above 3000 ms.";
+            } else {
+                type = "healthy_or_unvalidated";
+                reason = "No HTTP failure or failed validation rule is currently recorded.";
+            }
+        }
+        return new JSONObject().put("type", type).put("reason", reason);
+    }
+
+    private JSONObject mcpSuggestFixContext(ApiRequest request, ApiResponse response) {
+        return new JSONObject()
+                .put("likelyRootCause", mcpFailureClassification(request, response))
+                .put("failedRules", mcpValidationResult().optJSONArray("failedRules"))
+                .put("unresolvedVariables", mcpResolvedVariables(request).optJSONArray("unresolvedVariables"))
+                .put("candidateFields", mcpExpectedSchema(response).optJSONArray("responseFields"))
+                .put("recommendedSuggestionTypes", new JSONArray(List.of(
+                        "response variable captures",
+                        "field validations",
+                        "status/header checks",
+                        "API-to-DB mapping hints",
+                        "negative and boundary test ideas")));
+    }
+
+    private JSONArray mcpRelatedEndpoints(ApiRequest request) {
+        JSONArray related = new JSONArray();
+        ApiRequest effective = request == null ? buildApiRequest(bodyArea == null ? "" : bodyArea.getText()) : request;
+        String path = "";
+        URI uri = safeUri(effective.url);
+        if (uri != null) {
+            path = nullToBlank(uri.getPath());
+        }
+        JSONArray collection = mcpRequestCollection();
+        for (int i = 0; i < collection.length(); i++) {
+            JSONObject item = collection.optJSONObject(i);
+            if (item == null) continue;
+            String otherUrl = item.optString("url");
+            if (!path.isBlank() && otherUrl.contains(path.substring(0, Math.min(path.length(), Math.max(1, path.lastIndexOf('/')))))) {
+                related.put(item);
+            }
+            if (related.length() >= 12) break;
+        }
+        return related;
+    }
+
+    private Object apiAiResponseSample(String rawBody) {
+        try {
+            Object parsed = new JSONTokener(rawBody).nextValue();
+            if (parsed instanceof JSONArray array) {
+                JSONArray sample = new JSONArray();
+                for (int i = 0; i < Math.min(5, array.length()); i++) {
+                    sample.put(array.opt(i));
+                }
+                return sample;
+            }
+            return parsed;
+        } catch (Exception e) {
+            logApiAiConsole("AI Analysis response sample could not be parsed as JSON. Raw response preview: "
+                    + shorten(rawBody, 600), e);
+            throw e;
+        }
+    }
+
+    private String runHermesApiAiPrompt(String prompt) throws Exception {
+        HermesSessionRecord session = activeApiAiHermesSession;
+        if (session == null || nullToBlank(session.sessionId()).isBlank()) {
+            throw new IllegalStateException("No active Hermes session is connected. Click Hermes Connect in Settings first.");
+        }
+        String containerName = firstNonBlank(session.containerName(), hermesContainerName());
+        requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+        if (!dockerContainerRunning(containerName)) {
+            ensureHermesContainerRunning(hermesDockerImage(), containerName, true);
+        }
+        String instruction = "Analyze the API payload from stdin and return ONLY the strict JSON object requested. No markdown or prose.";
+        String query = instruction + System.lineSeparator() + System.lineSeparator() + prompt;
+        Path promptPath = hermesDataDirectory().resolve("Sessions")
+                .resolve("api-ai-analysis-prompt-" + System.currentTimeMillis() + ".txt")
+                .toAbsolutePath().normalize();
+        Files.createDirectories(promptPath.getParent());
+        Files.writeString(promptPath, query, StandardCharsets.UTF_8);
+        Path scriptPath = promptPath.getParent().resolve("api-ai-analysis-run-" + System.currentTimeMillis() + ".sh")
+                .toAbsolutePath().normalize();
+        String containerPromptPath = "/opt/data/" + hermesDataDirectory().relativize(promptPath)
+                .toString().replace('\\', '/');
+        String containerScriptPath = "/opt/data/" + hermesDataDirectory().relativize(scriptPath)
+                .toString().replace('\\', '/');
+        Files.writeString(scriptPath, "#!/bin/sh\n"
+                + "set -eu\n"
+                + "prompt=$(cat " + shellSingleQuote(containerPromptPath) + ")\n"
+                + "exec hermes chat -q \"$prompt\" -Q --resume " + shellSingleQuote(session.sessionId()) + " --source tool\n",
+                StandardCharsets.UTF_8);
+        List<String> command = List.of("docker", "exec",
+                "-w", "/opt/data",
+                "-e", "AI_AGENT_PATH=/opt/data",
+                "-e", "TESTWEAVE_AI_AGENT_PATH=/opt/data",
+                containerName, "sh", containerScriptPath);
+        logApiAiConsole("AI Analysis Hermes prompt file: " + promptPath);
+        logApiAiConsole("AI Analysis Hermes script file: " + scriptPath);
+        logApiAiConsole("AI Analysis Hermes command: docker exec ... sh " + containerScriptPath);
+        Process process = new ProcessBuilder(command).redirectErrorStream(false).start();
+        ExecutorService stderrExecutor = Executors.newSingleThreadExecutor();
+        ExecutorService stdoutExecutor = Executors.newSingleThreadExecutor();
+        Future<String> stderr = stderrExecutor.submit(() -> new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
+        Future<String> stdoutFuture = stdoutExecutor.submit(() -> new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+        boolean completed = process.waitFor(120, java.util.concurrent.TimeUnit.SECONDS);
+        if (!completed) {
+            process.destroyForcibly();
+            stderrExecutor.shutdownNow();
+            stdoutExecutor.shutdownNow();
+            logApiAiConsole("AI Analysis Hermes process timed out after 120 seconds");
+            throw new IllegalStateException("Hermes model analysis timed out after 120 seconds. Confirm Hermes is running and try again.");
+        }
+        int exit = process.exitValue();
+        String errors = stderr.get();
+        String stdout = stdoutFuture.get();
+        stderrExecutor.shutdownNow();
+        stdoutExecutor.shutdownNow();
+        logApiAiConsole("AI Analysis Hermes exit code: " + exit);
+        if (!errors.isBlank()) {
+            logApiAiConsole("AI Analysis Hermes stderr:\n" + errors.trim());
+        }
+        if (!stdout.isBlank()) {
+            logApiAiConsole("AI Analysis Hermes stdout:\n" + stdout.trim());
+        }
+        if (exit != 0) {
+            String details = firstNonBlank(errors, stdout);
+            if (isHermesAuthFailure(details)) {
+                openHermesOpenAiCodexReauth(containerName);
+            }
+            throw new IllegalStateException("Hermes model analysis failed with exit code " + exit + ". "
+                    + shorten(details, 1200));
+        }
+        apiAiConnectedModel = selectedApiAiAgentName() + " (" + session.sessionId() + ")";
+        return stdout;
+    }
+
+    private String runApiAiPrompt(String prompt) throws Exception {
+        AgentRequest request = inferAgentRequestFromPrompt(prompt);
+        return routeAgentAnalysis(request, prompt).raw().optString("modelOutput");
+    }
+
+    private boolean apiAiAgentConnected() {
+        if (isVeyraAIRuntimeSelected()) {
+            return activeVeyraAIAgentSession != null && activeVeyraAIModelConfig != null
+                    && !nullToBlank(activeVeyraAIAgentSession.sessionId()).isBlank();
+        }
+        return activeApiAiHermesSession != null && !nullToBlank(activeApiAiHermesSession.sessionId()).isBlank();
+    }
+
+    private AgentRequest inferAgentRequestFromPrompt(String prompt) {
+        String value = nullToBlank(prompt).toLowerCase();
+        if (value.contains("webui") || value.contains("failed webui") || value.contains("locator") || value.contains("captured steps")) {
+            return new AgentRequest("uiStudio", "healFailedScript", configCacheKey(), "", "", "", new JSONObject(), new JSONObject());
+        }
+        if (value.contains("db resultset") || value.contains("api-db") || value.contains("db ai analysis")) {
+            return new AgentRequest("dbStudio", "suggestDbValidationRules", configCacheKey(), "", "", "", new JSONObject(), new JSONObject());
+        }
+        return new AgentRequest("apiExecutor", "suggestValidations", configCacheKey(), "", "", "", new JSONObject(), new JSONObject());
+    }
+
+    private AgentResponse routeAgentAnalysis(AgentRequest request, String prompt) throws Exception {
+        if (isHermesRuntimeSelected()) {
+            if (!"testDesign".equals(request.source())) {
+                String output = runHermesApiAiPrompt(prompt);
+                logApiAiConsole("AgentRouter handled " + request.source() + "/" + request.action() + " with Hermes Agent");
+                return new AgentResponse("hermes", request.source(), request.action(), new JSONArray(),
+                        "Hermes Agent completed analysis.", new JSONArray(), new JSONArray(),
+                        new JSONObject().put("modelOutput", output));
+            }
+        }
+        CustomAgentSkill skill = customAgentSkillRegistry.resolve(request.source(), request.action());
+        AgentResponse response = skill.analyze(request, prompt);
+        logApiAiConsole("AgentRouter handled " + request.source() + "/" + request.action() + " with "
+                + agenticAiRoleName(request));
+        return response;
+    }
+
+    private AgentResponse runCustomAgentSkill(AgentRequest request, String prompt) throws Exception {
+        if (activeVeyraAIModelConfig == null || activeVeyraAIAgentSession == null) {
+            throw new IllegalStateException("No active Agentic AI session is connected. Connect the API, DB and Web Agents in Settings first.");
+        }
+        agentSessionManager.touch();
+        JSONArray memoryUsed = searchCustomAgentMemory(request.source(), request.action(), 8, false);
+        JSONArray knowledgeUsed = searchCustomAgentMemory(request.source(), request.action(), 8, true);
+        if ("dbStudio".equals(request.source())) {
+            // The DB Agent is deliberately allowed to reuse approved analysis produced by the API Agent.
+            // Session memory remains scoped to the agent that produced it.
+            appendJsonArray(knowledgeUsed, searchCustomAgentMemory("apiExecutor", request.action(), 8, true), 16);
+            appendJsonArray(knowledgeUsed, searchCustomAgentMemory("apiValidator", request.action(), 8, true), 20);
+            appendJsonArray(knowledgeUsed, searchCustomAgentMemory("apiCollection", request.action(), 8, true), 24);
+        } else if (request.source().startsWith("api")) {
+            // Approved DB rules and mappings are shared back to later API analyses.
+            appendJsonArray(knowledgeUsed, searchCustomAgentMemory("dbStudio", request.action(), 8, true), 20);
+        }
+        String skill = customAgentSkillName(request);
+        String routedPrompt = customAgentPrompt(request, prompt, memoryUsed, knowledgeUsed);
+        saveVeyraAIMessage(activeVeyraAIAgentSession.sessionId(), "user", skill, routedPrompt);
+        saveCustomAgentMemory("session", activeVeyraAIAgentSession.sessionId(), request.source(), "prompt",
+                new JSONObject().put("action", request.action()).put("prompt", shorten(prompt, 1800)),
+                request.source() + "/" + request.action(), new JSONArray().put(request.action()), 1.0, 1);
+        saveCustomAgentMemory("context", configCacheKey(), request.source(), "currentContext",
+                request.context(), "Current " + request.source() + " analysis context",
+                new JSONArray().put(request.source()).put(request.action()), 0.9, 2);
+        String output = callVeyraAIModel(activeVeyraAIModelConfig, routedPrompt);
+        saveVeyraAIMessage(activeVeyraAIAgentSession.sessionId(), "assistant", skill, output);
+        JSONObject raw = new JSONObject().put("modelOutput", output);
+        try {
+            JSONObject parsed = extractJsonObject(output);
+            raw.put("json", parsed);
+        } catch (Exception ignored) {
+            // Some provider failures still return text. Callers that need strict JSON will parse and fail as before.
+        }
+        return new AgentResponse(agenticAiRoleId(request), request.source(), request.action(),
+                raw.optJSONObject("json") == null ? new JSONArray() : raw.optJSONObject("json").optJSONArray("suggestions"),
+                agenticAiRoleName(request) + " completed " + request.action() + ".", memoryUsed, knowledgeUsed, raw);
+    }
+
+    private void appendJsonArray(JSONArray target, JSONArray source, int maximumSize) {
+        if (target == null || source == null) {
+            return;
+        }
+        for (int i = 0; i < source.length() && target.length() < maximumSize; i++) {
+            target.put(source.get(i));
+        }
+    }
+
+    private String agenticAiRoleId(AgentRequest request) {
+        if (request != null && "dbStudio".equals(request.source())) return "db-agent";
+        if (request != null && "uiStudio".equals(request.source())) return "webAgent";
+        if (request != null && "testDesign".equals(request.source())) return "test-planning-agent";
+        return "api-agent";
+    }
+
+    private String agenticAiRoleName(AgentRequest request) {
+        if (request != null && "dbStudio".equals(request.source())) return "DB Agent";
+        if (request != null && "uiStudio".equals(request.source())) return "Web Agent";
+        if (request != null && "testDesign".equals(request.source())) return "Test Planning Agent";
+        return "API Agent";
+    }
+
+    private AgentResponse runTestPlanningAgentSkill(AgentRequest request, String prompt) throws Exception {
+        if (activeVeyraAIModelConfig == null || activeVeyraAIAgentSession == null) {
+            throw new IllegalStateException(
+                    "No active Agentic AI session is connected. Connect API, DB, Web & Test Planning Agents in Settings first.");
+        }
+        JSONObject context = request == null ? null : request.context();
+        if (context == null || context.optJSONArray("sources") == null || context.getJSONArray("sources").isEmpty()) {
+            throw new IllegalArgumentException("Jira, Swagger, project, or document context was not provided.");
+        }
+        JSONArray memory = searchCustomAgentMemory("testDesign", request.action(), 20, false);
+        JSONObject result = testPlanningAgent.analyze(context, memory, prompt,
+                routedPrompt -> callVeyraAIModel(activeVeyraAIModelConfig, routedPrompt));
+        return new AgentResponse("test-planning-agent", request.source(), request.action(),
+                result.optJSONArray("testCases"), result.optString("analysisSummary"),
+                memory, new JSONArray(), new JSONObject().put("json", result).put("modelOutput", result.toString()));
+    }
+
+    private String customAgentSkillName(AgentRequest request) {
+        return switch (request.source() + ":" + request.action()) {
+            case "apiExecutor:suggestVariables" -> "ApiVariableSuggestionSkill";
+            case "apiExecutor:suggestDbMappings" -> "ApiDbMappingSuggestionSkill";
+            case "apiCollection:buildAnalysisContext" -> "ApiCollectionAnalysisContextSkill";
+            case "apiCollection:proposeExecutionPlan" -> "ApiCollectionExecutionPlanSkill";
+            case "apiCollection:executePlan" -> "ApiCollectionExecutionResultSkill";
+            case "apiCollection:proposeValidations" -> "ApiCollectionValidationSuggestionSkill";
+            case "apiValidator:buildAnalysisContext" -> "ApiMcpAnalysisContextSkill";
+            case "apiValidator:compareExpectedVsActual" -> "ApiValidatorComparisonSkill";
+            case "apiValidator:suggestValidationFixes" -> "ApiValidatorFixSuggestionSkill";
+            case "dbStudio:suggestColumnValidations" -> "DbColumnValidationSuggestionSkill";
+            case "dbStudio:suggestDbApiMappings" -> "DbAutoMappingSkill";
+            case "dbStudio:suggestDbValidationRules" -> "DbValidationRuleSuggestionSkill";
+            case "uiStudio:healLocator" -> "UiLocatorHealingSkill";
+            case "uiStudio:healExpectedResult" -> "UiExpectedResultHealingSkill";
+            case "uiStudio:suggestWaitsAndRetries" -> "UiStabilitySuggestionSkill";
+            case "uiStudio:healFailedScript" -> "UiScriptHealingSkill";
+            case "uiStudio:healValue" -> "UiValueHealingSkill";
+            case "uiStudio:healVariable" -> "UiVariableHealingSkill";
+            case "uiStudio:healFlowVariable" -> "UiFlowVariableHealingSkill";
+            case "uiStudio:suggestActionReplacement" -> "UiActionReplacementSkill";
+            case "uiStudio:suggestRuntimeVariable" -> "UiRuntimeVariableSkill";
+            case "uiStudio:suggestSavedVariableReuse" -> "UiSavedVariableReuseSkill";
+            case "uiStudio:retrieveKnownHealing" -> "UiKnownHealingRetrievalSkill";
+            case "testDesign:generateTestPlan" -> "TestPlanGenerationSkill";
+            case "testDesign:generateTestCases" -> "TestCaseGenerationSkill";
+            case "testDesign:generateTestStrategy" -> "TestStrategyGenerationSkill";
+            case "testDesign:generateTestData" -> "TestDataGenerationSkill";
+            default -> "ApiValidationSuggestionSkill";
+        };
+    }
+
+    private String customAgentPrompt(AgentRequest request, String userPrompt, JSONArray memoryUsed, JSONArray knowledgeUsed) {
+        String mcpContext = lastApiMcpAnalysisContext != null
+                && ("apiExecutor".equals(request.source()) || "apiValidator".equals(request.source())
+                || "apiCollection".equals(request.source()))
+                ? lastApiMcpAnalysisContext.toString(2)
+                : "{}";
+        return """
+                SYSTEM:
+                You are the VeyraAI %s, a specialized Agentic AI assistant for software quality engineering.
+                Route this request through the selected skill and return the strict JSON shape requested by the caller.
+                The API Agent, DB Agent and Web Agent share the connected model session, while each role keeps scoped working memory.
+                The DB Agent may consume approved API Agent knowledge supplied below for API-to-DB mapping.
+                Do not invent connector data. If Jira, Confluence, Swagger, or project-code context is not present, say it was not provided.
+                For API Executor and API Validator requests, use the VeyraAI API MCP context as the factual source of truth.
+
+                SOURCE:
+                %s
+
+                ACTION:
+                %s
+
+                SKILL:
+                %s
+
+                MEMORY USED:
+                %s
+
+                KNOWLEDGE USED:
+                %s
+
+                VEYRAAI API MCP CONTEXT:
+                %s
+
+                ORIGINAL REQUEST:
+                %s
+                """.formatted(agenticAiRoleName(request), request.source(), request.action(), customAgentSkillName(request),
+                memoryUsed.toString(2), knowledgeUsed.toString(2), mcpContext, userPrompt);
+    }
+
+    private String inferVeyraAISkill(String prompt) {
+        String value = nullToBlank(prompt).toLowerCase();
+        if (value.contains("db ai analysis") || value.contains("resultset") || value.contains("db mapping")) {
+            return "DbSkill";
+        }
+        if (value.contains("web ai analysis") || value.contains("locator") || value.contains("playwright")) {
+            return "WebUiSkill";
+        }
+        if (value.contains("releasehealth") || value.contains("release health") || value.contains("dashboard")) {
+            return "ReleaseHealthSkill";
+        }
+        if (value.contains("performance") || value.contains("load") || value.contains("p95")) {
+            return "PerformanceSkill";
+        }
+        if (value.contains("test suite") || value.contains("suite execution")) {
+            return "TestSuiteSkill";
+        }
+        if (value.contains("report")) {
+            return "ReportAnalysisSkill";
+        }
+        return "ApiSkill";
+    }
+
+    private String buildVeyraAIPrompt(String skill, String userRequest) {
+        return """
+                SYSTEM:
+                You are VeyraAI Quality Engineering Agent, an indie-style software quality AI platform.
+                You are a skill-routed agent. Suggest, explain, and generate VeyraAI/TestWeave assets that deterministic engines can run.
+                Never invent execution results. Prefer structured JSON when the caller requests JSON. No markdown around JSON.
+
+                ACTIVE SKILL:
+                %s
+
+                SKILL GUIDE:
+                %s
+
+                MEMORY:
+                %s
+
+                RECENT SESSION:
+                %s
+
+                USER REQUEST:
+                %s
+                """.formatted(skill, veyraaiSkillInstruction(skill), loadVeyraAIRelevantMemory(), loadRecentVeyraAIConversation(), userRequest);
+    }
+
+    private String veyraaiSkillInstruction(String skill) {
+        return switch (skill) {
+            case "DbSkill" -> "Suggest DB column validations, API-to-DB mappings, SQL validation queries, and mismatch explanations.";
+            case "WebUiSkill" -> "Suggest locator healing candidates, baseline decisions, UI validation fixes, stable selectors, and wait strategies.";
+            case "PerformanceSkill" -> "Analyze response-time spikes, SLA breaches, slow APIs, load thresholds, and bottleneck hypotheses.";
+            case "ReportAnalysisSkill" -> "Summarize API, DB, Web, Performance, and Suite reports into structured insights with impact and fixes.";
+            case "TestSuiteSkill" -> "Cluster suite failures, identify flaky workflows, and recommend focused reruns or asset changes.";
+            case "ReleaseHealthSkill" -> "Return release health JSON with status GREEN/AMBER/RED, score, recommendation, and insight rows.";
+            case "DashboardInsightSkill" -> "Return dashboard insight rows: area, status, metric, value, risk, suggestion.";
+            case "ModelConnectionSkill" -> "Validate model connectivity with a compact machine-readable response.";
+            default -> "Suggest JSONPath variables, validations, negative tests, boundary tests, and likely DB mapping hints.";
+        };
+    }
+
+    private String loadVeyraAIRelevantMemory() {
+        JSONObject memory = new JSONObject();
+        memory.put("project", new JSONObject().put("name", "VeyraAI Workspace")
+                .put("basePath", configBasePathField == null ? "" : nullToBlank(configBasePathField.getText())));
+        memory.put("apiMemory", loadRecentApiAiMemorySummary(8));
+        memory.put("executionMemory", dashboardExecutions == null ? new JSONArray() : compactDashboardExecutions(dashboardExecutions, 8));
+        return memory.toString(2);
+    }
+
+    private JSONArray loadRecentApiAiMemorySummary(int limit) {
+        JSONArray items = new JSONArray();
+        try {
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (!Files.exists(sqliteDbPath)) {
+                return items;
+            }
+            initializeApiAiMemoryTable(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("SELECT endpoint, method, action_name, variables_json, validations_json, db_mappings_json "
+                         + "FROM " + API_AI_MEMORY_TABLE + " ORDER BY created_at DESC LIMIT ?")) {
+                statement.setInt(1, limit);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        items.put(new JSONObject()
+                                .put("endpoint", resultSet.getString("endpoint"))
+                                .put("method", resultSet.getString("method"))
+                                .put("actionName", resultSet.getString("action_name"))
+                                .put("variables", new JSONArray(firstNonBlank(resultSet.getString("variables_json"), "[]")))
+                                .put("validations", new JSONArray(firstNonBlank(resultSet.getString("validations_json"), "[]")))
+                                .put("dbMappings", new JSONArray(firstNonBlank(resultSet.getString("db_mappings_json"), "[]"))));
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Memory is helpful, not required for analysis.
+        }
+        return items;
+    }
+
+    private JSONArray compactDashboardExecutions(JSONArray executions, int limit) {
+        JSONArray items = new JSONArray();
+        for (int i = 0; i < Math.min(limit, executions.length()); i++) {
+            JSONObject execution = executions.optJSONObject(i);
+            if (execution == null) continue;
+            items.put(new JSONObject()
+                    .put("name", execution.optString("name"))
+                    .put("type", execution.optString("type"))
+                    .put("passed", execution.optLong("passed"))
+                    .put("failed", execution.optLong("failed"))
+                    .put("health", execution.optString("health"))
+                    .put("executedAt", execution.optLong("executedAt")));
+        }
+        return items;
+    }
+
+    private String loadRecentVeyraAIConversation() {
+        if (activeVeyraAIAgentSession == null) {
+            return "[]";
+        }
+        JSONArray messages = new JSONArray();
+        try {
+            if (apiAiAgentMemoryStorageMode() == StorageMode.CLOUD) {
+                return loadRecentVeyraAIConversationFromFirebase(activeVeyraAIAgentSession.sessionId()).toString(2);
+            }
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            if (!Files.exists(sqliteDbPath)) {
+                return "[]";
+            }
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("SELECT role, skill, content FROM "
+                         + VEYRAAI_AGENT_MESSAGE_TABLE + " WHERE system_user_key = ? AND session_id = ? ORDER BY created_at DESC LIMIT 8")) {
+                statement.setString(1, configCacheKey());
+                statement.setString(2, activeVeyraAIAgentSession.sessionId());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        messages.put(new JSONObject()
+                                .put("role", resultSet.getString("role"))
+                                .put("skill", resultSet.getString("skill"))
+                                .put("content", shorten(resultSet.getString("content"), 1200)));
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            return "[]";
+        }
+        return messages.toString(2);
+    }
+
+    private JSONArray loadRecentVeyraAIConversationFromFirebase(String sessionId) throws Exception {
+        JSONArray messages = new JSONArray();
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedSession = URLEncoder.encode(sessionId, StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_VEYRAAI_MESSAGE_FIREBASE_PATH
+                        + "/" + key + "/" + encodedSession + ".json").GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 || response.body() == null || response.body().isBlank() || "null".equals(response.body())) {
+            return messages;
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase VeyraAI messages load failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+        JSONObject root = new JSONObject(response.body());
+        List<JSONObject> items = new ArrayList<>();
+        for (String id : root.keySet()) {
+            JSONObject item = root.optJSONObject(id);
+            if (item != null) {
+                items.add(item);
+            }
+        }
+        items.sort((left, right) -> right.optString("createdAt").compareTo(left.optString("createdAt")));
+        for (JSONObject item : items.stream().limit(8).toList()) {
+            messages.put(new JSONObject()
+                    .put("role", item.optString("role"))
+                    .put("skill", item.optString("skill"))
+                    .put("content", shorten(item.optString("content"), 1200)));
+        }
+        return messages;
+    }
+
+    private void saveVeyraAIMessage(String sessionId, String role, String skill, String content) {
+        try {
+            if (apiAiAgentMemoryStorageMode() == StorageMode.CLOUD) {
+                saveVeyraAIMessageToFirebase(sessionId, role, skill, content);
+                return;
+            }
+            Path sqliteDbPath = configCacheDatabasePathFromField();
+            initializeVeyraAIAgentTables(sqliteDbPath);
+            try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+                 PreparedStatement statement = connection.prepareStatement("INSERT INTO " + VEYRAAI_AGENT_MESSAGE_TABLE
+                         + " (id, system_user_key, session_id, role, skill, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                statement.setString(1, "msg-" + System.currentTimeMillis() + "-" + UUID.randomUUID());
+                statement.setString(2, configCacheKey());
+                statement.setString(3, sessionId);
+                statement.setString(4, role);
+                statement.setString(5, skill);
+                statement.setString(6, content);
+                statement.setString(7, Instant.now().toString());
+                statement.executeUpdate();
+            }
+        } catch (Exception e) {
+            logApiAiConsole("Could not save VeyraAI agent message", e);
+        }
+    }
+
+    private void saveVeyraAIMessageToFirebase(String sessionId, String role, String skill, String content) throws Exception {
+        String id = "msg-" + System.currentTimeMillis() + "-" + UUID.randomUUID();
+        JSONObject payload = new JSONObject()
+                .put("id", id)
+                .put("systemUserKey", configCacheKey())
+                .put("sessionId", sessionId)
+                .put("role", role)
+                .put("skill", skill)
+                .put("content", content)
+                .put("createdAt", Instant.now().toString());
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedSession = URLEncoder.encode(sessionId, StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedId = URLEncoder.encode(id, StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_VEYRAAI_MESSAGE_FIREBASE_PATH
+                        + "/" + key + "/" + encodedSession + "/" + encodedId + ".json")
+                        .PUT(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
+                        .header("Content-Type", "application/json")
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase VeyraAI message save failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private String callVeyraAIModel(VeyraAIModelConfig config, String prompt) throws Exception {
+        if (isOpenAiCodexProvider(config.provider())) {
+            return runVeyraAICodexCliPrompt(prompt);
+        }
+        if ("Google Gemini".equals(config.provider()) || "Gemini CLI".equals(config.provider())) {
+            return callVeyraAIGemini(config, prompt);
+        }
+        if ("Anthropic Claude".equals(config.provider()) || "Claude Code".equals(config.provider())) {
+            return callVeyraAIAnthropic(config, prompt);
+        }
+        if ("GitHub Copilot".equals(config.provider()) || "Amazon Q Developer".equals(config.provider())) {
+            throw new IllegalStateException(config.provider()
+                    + " login is stored, but direct chat invocation requires the provider's registered app endpoint and scopes.");
+        }
+        return callVeyraAIOpenAiCompatible(config, prompt);
+    }
+
+    private String callVeyraAIOpenAiCompatible(VeyraAIModelConfig config, String prompt) throws Exception {
+        JSONObject body = new JSONObject()
+                .put("model", config.model())
+                .put("temperature", 0.1)
+                .put("messages", new JSONArray()
+                        .put(new JSONObject().put("role", "system").put("content", "You are VeyraAI Quality Engineering Agent. Return the exact format requested."))
+                        .put(new JSONObject().put("role", "user").put("content", prompt)));
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(config.endpoint()))
+                .timeout(Duration.ofSeconds(120))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                .header("Content-Type", "application/json");
+        if ("Azure OpenAI / Azure AI Foundry".equals(config.provider())) {
+            builder.header("api-key", config.apiKey());
+        } else if (!config.apiKey().isBlank()) {
+            builder.header("Authorization", "Bearer " + config.apiKey());
+        }
+        HttpResponse<String> response = HttpClient.newHttpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        requireSuccessfulAiResponse(response, config.provider());
+        JSONObject root = new JSONObject(response.body());
+        JSONArray choices = root.optJSONArray("choices");
+        if (choices == null || choices.isEmpty()) {
+            throw new IllegalStateException(config.provider() + " response had no choices: " + shorten(response.body(), 800));
+        }
+        JSONObject message = choices.optJSONObject(0).optJSONObject("message");
+        return message == null ? choices.optJSONObject(0).optString("text") : message.optString("content");
+    }
+
+    private String callVeyraAIGemini(VeyraAIModelConfig config, String prompt) throws Exception {
+        String endpoint = config.endpoint().replace("{model}", URLEncoder.encode(config.model(), StandardCharsets.UTF_8));
+        String separator = endpoint.contains("?") ? "&" : "?";
+        endpoint = endpoint + separator + "key=" + URLEncoder.encode(config.apiKey(), StandardCharsets.UTF_8);
+        JSONObject body = new JSONObject()
+                .put("contents", new JSONArray().put(new JSONObject()
+                        .put("parts", new JSONArray().put(new JSONObject().put("text", prompt)))));
+        HttpRequest request = HttpRequest.newBuilder(URI.create(endpoint))
+                .timeout(Duration.ofSeconds(120))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                .header("Content-Type", "application/json")
+                .build();
+        HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        requireSuccessfulAiResponse(response, config.provider());
+        JSONArray candidates = new JSONObject(response.body()).optJSONArray("candidates");
+        if (candidates == null || candidates.isEmpty()) {
+            throw new IllegalStateException("Gemini response had no candidates: " + shorten(response.body(), 800));
+        }
+        JSONArray parts = candidates.optJSONObject(0).optJSONObject("content").optJSONArray("parts");
+        return parts == null || parts.isEmpty() ? "" : parts.optJSONObject(0).optString("text");
+    }
+
+    private String callVeyraAIAnthropic(VeyraAIModelConfig config, String prompt) throws Exception {
+        JSONObject body = new JSONObject()
+                .put("model", config.model())
+                .put("max_tokens", 4096)
+                .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("content", prompt)));
+        HttpRequest request = HttpRequest.newBuilder(URI.create(config.endpoint()))
+                .timeout(Duration.ofSeconds(120))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                .header("Content-Type", "application/json")
+                .header("anthropic-version", "2023-06-01")
+                .header("x-api-key", config.apiKey())
+                .build();
+        HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        requireSuccessfulAiResponse(response, config.provider());
+        JSONArray content = new JSONObject(response.body()).optJSONArray("content");
+        if (content == null || content.isEmpty()) {
+            throw new IllegalStateException("Anthropic response had no content: " + shorten(response.body(), 800));
+        }
+        return content.optJSONObject(0).optString("text");
+    }
+
+    private void requireSuccessfulAiResponse(HttpResponse<String> response, String provider) {
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException(provider + " model request failed: HTTP " + response.statusCode()
+                    + " " + shorten(response.body(), 1200));
+        }
+    }
+
+    private String runVeyraAICodexCliPrompt(String prompt) throws Exception {
+        Path bundledCodex = findBundledCodexCliExecutable();
+        if (!Files.isRegularFile(bundledCodex)) {
+            throw new IllegalStateException("Bundled Codex CLI was not found at " + expectedBundledCodexCliPath()
+                    + ". This flow intentionally does not read codex from PATH.");
+        }
+        prepareCodexCliHome();
+        Path outputPath = Files.createTempFile(codexCliHomeDirectory(), "veyraai-codex-analysis-", ".txt");
+        int timeoutSeconds = 600;
+        ProcessBuilder builder = new ProcessBuilder(bundledCodex.toString(), "exec",
+                "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
+                "--output-last-message", outputPath.toString(), "-");
+        builder.redirectErrorStream(true);
+        builder.directory(appInstallRoot().toFile());
+        builder.environment().put(CODEX_HOME_ENV, codexCliHomeDirectory().toString());
+        Process process = builder.start();
+        ExecutorService outputExecutor = Executors.newSingleThreadExecutor();
+        Future<String> outputFuture = outputExecutor.submit(() -> new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+        try {
+            try (OutputStream stdin = process.getOutputStream()) {
+                stdin.write(nullToBlank(prompt).getBytes(StandardCharsets.UTF_8));
+            }
+            boolean completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            String output = "";
+            if (!completed) {
+                process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS);
+                try {
+                    output = outputFuture.get(5, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    outputFuture.cancel(true);
+                }
+                throw new IllegalStateException("Codex CLI timed out after " + timeoutSeconds
+                        + " seconds. Output before timeout: " + shorten(output, 1200));
+            }
+            output = outputFuture.get(10, TimeUnit.SECONDS);
+            String finalMessage = Files.isRegularFile(outputPath)
+                    ? Files.readString(outputPath, StandardCharsets.UTF_8).trim()
+                    : "";
+            if (process.exitValue() != 0) {
+                throw new IllegalStateException("Codex CLI failed with exit code " + process.exitValue()
+                        + ". " + shorten(firstNonBlank(finalMessage, output), 1200));
+            }
+            return firstNonBlank(finalMessage, output);
+        } finally {
+            outputExecutor.shutdownNow();
+            try {
+                Files.deleteIfExists(outputPath);
+            } catch (IOException ignored) {
+                // Best effort cleanup for temporary Codex output files.
+            }
+        }
+    }
+
+    private String shellSingleQuote(String value) {
+        return "'" + nullToBlank(value).replace("'", "'\"'\"'") + "'";
+    }
+
+    private JSONObject extractJsonObject(String text) {
+        String value = text == null ? "" : text.trim();
+        if (value.startsWith("```")) {
+            value = value.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("\\s*```$", "").trim();
+        }
+        int start = value.indexOf('{');
+        int end = value.lastIndexOf('}');
+        if (start < 0 || end <= start) {
+            throw new IllegalArgumentException("Model response did not contain a JSON object: " + shorten(value, 600));
+        }
+        return new JSONObject(value.substring(start, end + 1));
+    }
+
+    private ApiAiSuggestion apiAiSuggestionFromModelJson(ApiRequest request, ApiResponse response, JSONObject root) {
+        ApiAiSuggestion suggestion = new ApiAiSuggestion(request, response, inferApiActionName(request));
+        Map<String, ResponseFieldCandidate> responseFieldsByPath = new LinkedHashMap<>();
+        for (ResponseFieldCandidate candidate : responseVariableService.parseAllFields(response.rawBody)) {
+            responseFieldsByPath.put(candidate.jsonPath, candidate);
+        }
+        JSONArray variables = root.optJSONArray("variables");
+        if (variables != null) for (int i = 0; i < variables.length(); i++) {
+            JSONObject item = variables.optJSONObject(i);
+            if (item == null) continue;
+            String name = normalizeVariableName(item.optString("name", item.optString("alias", "apiField")));
+            suggestion.variables.add(row("selected", "true", "variable", "${" + name + "}",
+                    "alias", item.optString("alias"), "jsonPath", item.optString("jsonPath"),
+                    "value", item.optString("value"), "type", item.optString("type")));
+        }
+        JSONArray validations = root.optJSONArray("validations");
+        if (validations != null) for (int i = 0; i < validations.length(); i++) {
+            JSONObject item = validations.optJSONObject(i);
+            if (item == null) continue;
+            String jsonPath = item.optString("jsonPath");
+            String validation = item.optString("validation").trim();
+            ResponseFieldCandidate responseField = responseFieldsByPath.get(jsonPath);
+            String actual = responseField == null ? item.optString("preview") : responseField.value;
+            String actualType = responseField == null ? item.optString("type") : responseField.type;
+            String expected = "equals".equalsIgnoreCase(validation) ? item.optString("expected") : "";
+            suggestion.validations.add(row("selected", "true", "field", jsonPath,
+                    "validation", validation, "expected", expected,
+                    "type", actualType, "actualType", actualType, "actual", actual,
+                    "preview", responseField == null ? item.optString("preview") : responseField.previewValue));
+        }
+        JSONArray mappings = root.optJSONArray("dbMappings");
+        if (mappings != null) for (int i = 0; i < mappings.length(); i++) {
+            JSONObject item = mappings.optJSONObject(i);
+            if (item == null) continue;
+            suggestion.dbMappings.add(row("selected", "true", "apiField", item.optString("apiField"), "jsonPath", item.optString("jsonPath"),
+                    "dbMapping", item.optString("dbMapping",
+                            item.optString("table") + "." + item.optString("column"))));
+        }
+        return suggestion;
+    }
+
+    private String suggestedValidation(ResponseFieldCandidate field) {
+        if ("status".equalsIgnoreCase(field.fieldName) && !field.value.isBlank()) {
+            return "equals";
+        }
+        if (!field.type.isBlank() && !"string".equals(field.type)) {
+            return "type " + field.type;
+        }
+        return "notNull";
+    }
+
+    private String suggestedExpected(ResponseFieldCandidate field, String validation) {
+        if ("equals".equals(validation)) {
+            return field.value;
+        }
+        return "";
+    }
+
+    private void showApiAiSuggestionWindow(ApiAiSuggestion suggestion) {
+        ObservableList<Map<String, String>> variableRows = FXCollections.observableArrayList(suggestion.variables);
+        ObservableList<Map<String, String>> validationRows = FXCollections.observableArrayList(suggestion.validations);
+        ObservableList<Map<String, String>> dbRows = FXCollections.observableArrayList(suggestion.dbMappings);
+        TableView<Map<String, String>> variablesTable = mapTable(variableRows, "Save", "selected",
+                "Variable", "variable", "Alias", "alias", "JSON Path", "jsonPath", "Value", "value", "Type", "type");
+        TableView<Map<String, String>> validationsTable = mapTable(validationRows, "Add", "selected",
+                "JSON Path", "field", "Validation", "validation", "Expected", "expected", "Type", "type",
+                "Actual Value", "actual", "Preview", "preview");
+        TableView<Map<String, String>> mappingsTable = mapTable(dbRows, "Add", "selected",
+                "API Field", "apiField", "JSON Path", "jsonPath", "Possible DB Mapping", "dbMapping");
+        variablesTable.setPrefHeight(210);
+        variablesTable.setMinHeight(140);
+        validationsTable.setPrefHeight(240);
+        validationsTable.setMinHeight(150);
+        mappingsTable.setPrefHeight(210);
+        mappingsTable.setMinHeight(130);
+        Button approve = primary("Approve & Save Memory");
+        Button importSuggestion = primary("Import");
+        Button toggleAll = secondary("Check All");
+        Button close = secondary("Close");
+        Stage suggestionStage = new Stage();
+        if (stage != null) {
+            suggestionStage.initOwner(stage);
+        }
+        final boolean[] allChecked = {true};
+        toggleAll.setOnAction(e -> {
+            boolean selected = !"Uncheck All".equals(toggleAll.getText());
+            setAllRowsSelected(variableRows, variablesTable, selected);
+            setAllRowsSelected(validationRows, validationsTable, selected);
+            setAllRowsSelected(dbRows, mappingsTable, selected);
+            allChecked[0] = selected;
+            toggleAll.setText(selected ? "Uncheck All" : "Check All");
+        });
+        importSuggestion.setOnAction(e -> importApiAiSuggestionToTabs(variableRows, validationRows));
+        approve.setOnAction(e -> {
+            saveApprovedApiAiSuggestionMemory(suggestion, variableRows, validationRows, dbRows);
+            suggestionStage.close();
+        });
+        close.setOnAction(e -> suggestionStage.close());
+        VBox content = new VBox(14,
+                sectionTitle("AI Suggestion"),
+                new Label("API AI Agent converted this response into reusable variables, validations, and DB mapping hints."),
+                card("Variables", variablesTable),
+                card("Validation", validationsTable),
+                card("DB Validation Opportunities", mappingsTable));
+        content.setPadding(new Insets(16));
+        VBox.setVgrow(variablesTable, Priority.ALWAYS);
+        VBox.setVgrow(validationsTable, Priority.ALWAYS);
+        VBox.setVgrow(mappingsTable, Priority.ALWAYS);
+        ScrollPane scroller = new ScrollPane(content);
+        scroller.setFitToWidth(true);
+        scroller.setPannable(true);
+        scroller.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroller.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        FlowPane footer = actionRow(toggleAll, importSuggestion, approve, close);
+        footer.setPadding(new Insets(12, 16, 16, 16));
+        footer.getStyleClass().add("card");
+        BorderPane shell = new BorderPane();
+        shell.setCenter(scroller);
+        shell.setBottom(footer);
+        double[] suggestionSize = apiAiSuggestionWindowSize();
+        Scene scene = new Scene(shell, suggestionSize[0], suggestionSize[1]);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        suggestionStage.setTitle("AI Suggestion - API AI Agent");
+        suggestionStage.setScene(scene);
+        suggestionStage.setMinWidth(Math.min(760, suggestionSize[0]));
+        suggestionStage.setMinHeight(Math.min(520, suggestionSize[1]));
+        suggestionStage.setMaxWidth(Screen.getPrimary().getVisualBounds().getWidth());
+        suggestionStage.setMaxHeight(Screen.getPrimary().getVisualBounds().getHeight());
+        if (stage != null) {
+            suggestionStage.setX(stage.getX() + Math.max(0, (stage.getWidth() - suggestionSize[0]) / 2));
+            suggestionStage.setY(stage.getY() + Math.max(0, (stage.getHeight() - suggestionSize[1]) / 2));
+        }
+        suggestionStage.show();
+    }
+
+    private double[] apiAiSuggestionWindowSize() {
+        Rectangle2D visualBounds = Screen.getPrimary().getVisualBounds();
+        double maxWidth = visualBounds.getWidth() - 32;
+        double maxHeight = visualBounds.getHeight() - 48;
+        double parentWidth = stage == null ? maxWidth : Math.max(760, stage.getWidth() - 48);
+        double parentHeight = stage == null ? maxHeight : Math.max(560, stage.getHeight() - 48);
+        double width = Math.min(maxWidth, Math.max(760, parentWidth));
+        double height = Math.min(maxHeight, Math.max(560, parentHeight));
+        return new double[]{width, height};
+    }
+
+    private void importApiAiSuggestionToTabs(List<Map<String, String>> variables, List<Map<String, String>> validations) {
+        savedVariables.clear();
+        savedVariablePaths.clear();
+        savedVariableTypes.clear();
+        if (responseFieldRows != null) {
+            responseFieldRows.clear();
+        }
+        int variableCount = 0;
+        for (Map<String, String> variable : variables) {
+            if (!isSelected(variable)) continue;
+            String name = variable.getOrDefault("variable", "").replace("${", "").replace("}", "");
+            if (name.isBlank()) {
+                name = normalizeVariableName(variable.getOrDefault("alias", variable.getOrDefault("jsonPath", "apiField")));
+            }
+            String jsonPath = variable.getOrDefault("jsonPath", "");
+            String value = variable.getOrDefault("value", "");
+            String type = firstNonBlank(variable.get("type"), "API AI Agent");
+            if (responseFieldRows != null) {
+                responseFieldRows.add(row("selected", "true", "jsonPath", jsonPath,
+                        "preview", value, "variableName", name, "type", type, "value", value));
+            }
+            savedVariables.put(name, variable.getOrDefault("value", ""));
+            savedVariablePaths.put(name, jsonPath);
+            savedVariableTypes.put(name, type);
+            variableCount++;
+        }
+        if (responseFieldsTable != null) {
+            responseFieldsTable.refresh();
+        }
+        if (fieldValidationRows != null) {
+            fieldValidationRows.clear();
+            for (Map<String, String> validation : validations) {
+                if (!isSelected(validation)) continue;
+                String validationText = validation.getOrDefault("validation", "");
+                String actualType = firstNonBlank(validation.get("actualType"), validation.get("type"));
+                String typeValidation = validationText.toLowerCase().startsWith("type ")
+                        ? validationText.substring("type ".length()).trim()
+                        : actualType;
+                String nullValidation = "notNull".equalsIgnoreCase(validationText) ? "Not Null" : "Skip";
+                String expected = "equals".equalsIgnoreCase(validationText)
+                        ? validation.getOrDefault("expected", "")
+                        : "";
+                String actual = firstNonBlank(validation.get("actual"), validation.get("preview"));
+                fieldValidationRows.add(row("selected", "true", "field", validation.getOrDefault("field", ""),
+                        "preview", firstNonBlank(validation.get("preview"), actual), "nullValidation", nullValidation,
+                        "typeValidation", typeValidation, "operator", "equals",
+                        "expected", expected, "actual", actual,
+                        "actualType", actualType, "result", "Imported", "message", "Imported from API AI Agent"));
+            }
+        }
+        if (fieldValidationsTable != null) {
+            fieldValidationsTable.refresh();
+        }
+        refreshVariablesView();
+        showInfo("API AI Agent", "Imported " + variableCount + " variable(s) and "
+                + (fieldValidationRows == null ? 0 : fieldValidationRows.size()) + " validation row(s).");
+    }
+
+    private void saveApprovedApiAiSuggestionMemory(ApiAiSuggestion suggestion, List<Map<String, String>> variables,
+                                                   List<Map<String, String>> validations, List<Map<String, String>> dbMappings) {
+        JSONArray selectedVariables = new JSONArray();
+        JSONArray selectedValidations = new JSONArray();
+        JSONArray mappings = new JSONArray();
+        for (Map<String, String> variable : variables) {
+            if (!isSelected(variable)) continue;
+            selectedVariables.put(new JSONObject(variable));
+        }
+        for (Map<String, String> validation : validations) {
+            if (!isSelected(validation)) continue;
+            selectedValidations.put(new JSONObject(validation));
+        }
+        for (Map<String, String> mapping : dbMappings) {
+            if (isSelected(mapping)) {
+                mappings.put(new JSONObject(mapping));
+            }
+        }
+        JSONObject memory = new JSONObject()
+                .put("id", "api-ai-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                .put("endpoint", suggestion.request.url)
+                .put("method", suggestion.request.method)
+                .put("actionName", suggestion.actionName)
+                .put("hermesSessionId", activeAgentSessionId())
+                .put("provider", activeAgentProviderName())
+                .put("response", new JSONObject().put("status", suggestion.response.statusLine)
+                        .put("body", suggestion.response.rawBody))
+                .put("variables", selectedVariables)
+                .put("validations", selectedValidations)
+                .put("dbMappings", mappings)
+                .put("createdAt", Instant.now().toString());
+        saveApiAiMemory(memory);
+        saveCustomAgentKnowledgeIfActive("apiExecutor", "acceptedSuggestion", memory,
+                "Approved API suggestions for " + suggestion.request.method + " " + suggestion.request.url,
+                new JSONArray().put("apiValidation").put("variableExtraction").put("dbMapping"));
+    }
+
+    private void saveCustomAgentKnowledgeIfActive(String source, String type, JSONObject content, String summary, JSONArray tags) {
+        if (!isVeyraAIRuntimeSelected()) {
+            return;
+        }
+        saveCustomAgentMemory("knowledgeBase", activeAgentSessionId(), source, type, content, summary, tags, 1.0, 5);
+    }
+
+    private void saveApiAiMemory(JSONObject memory) {
+        Task<Void> task = new Task<>() {
+            @Override protected Void call() throws Exception {
+                if (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL) {
+                    saveApiAiMemoryToSqlite(memory);
+                } else {
+                    saveApiAiMemoryToFirebase(memory);
+                }
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> showInfo("API AI Agent", "Saved API AI memory for " + memory.optString("endpoint")));
+        task.setOnFailed(e -> showError("Save API AI Memory Failed", task.getException()));
+        start(task);
+    }
+
+    private void saveApiAiMemoryToSqlite(JSONObject memory) throws Exception {
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        initializeApiAiMemoryTable(sqliteDbPath);
+        String sql = "INSERT INTO " + API_AI_MEMORY_TABLE
+                + " (id, endpoint, method, response_json, variables_json, validations_json, db_mappings_json, created_at, action_name, provider, hermes_session_id) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "ON CONFLICT(id) DO UPDATE SET endpoint = excluded.endpoint, method = excluded.method, "
+                + "response_json = excluded.response_json, variables_json = excluded.variables_json, "
+                + "validations_json = excluded.validations_json, db_mappings_json = excluded.db_mappings_json, "
+                + "created_at = excluded.created_at, action_name = excluded.action_name, provider = excluded.provider, "
+                + "hermes_session_id = excluded.hermes_session_id";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, memory.optString("id"));
+            statement.setString(2, memory.optString("endpoint"));
+            statement.setString(3, memory.optString("method"));
+            statement.setString(4, memory.optJSONObject("response").toString());
+            statement.setString(5, memory.optJSONArray("variables").toString());
+            statement.setString(6, memory.optJSONArray("validations").toString());
+            statement.setString(7, memory.optJSONArray("dbMappings").toString());
+            statement.setString(8, memory.optString("createdAt"));
+            statement.setString(9, memory.optString("actionName"));
+            statement.setString(10, memory.optString("provider"));
+            statement.setString(11, memory.optString("hermesSessionId"));
+            statement.executeUpdate();
+        }
+    }
+
+    private void saveApiAiMemoryToFirebase(JSONObject memory) throws Exception {
+        String id = URLEncoder.encode(memory.optString("id"), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_FIREBASE_PATH + "/" + id + ".json")
+                        .PUT(HttpRequest.BodyPublishers.ofString(memory.toString(), StandardCharsets.UTF_8))
+                        .header("Content-Type", "application/json")
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase API AI memory save failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private HttpRequest.Builder apiAiFirebaseRequest(String path) {
+        String auth = firstNonBlank(System.getProperty("testweave.firebase.authToken"),
+                System.getenv("TESTWEAVE_FIREBASE_AUTH_TOKEN"));
+        String uri = DashboardExecutionService.FIREBASE_URL + path + (auth.isBlank() ? "" : "?auth="
+                + URLEncoder.encode(auth, StandardCharsets.UTF_8));
+        return HttpRequest.newBuilder(URI.create(uri)).timeout(Duration.ofSeconds(10));
+    }
+
+    private StorageMode apiAiAgentMemoryStorageMode() {
+        return apiAiAgentStorageToggle != null && apiAiAgentStorageToggle.isSelected() ? StorageMode.CLOUD : StorageMode.LOCAL;
+    }
+
+    private String activeAgentSessionId() {
+        if (isVeyraAIRuntimeSelected()) {
+            return activeVeyraAIAgentSession == null ? "" : nullToBlank(activeVeyraAIAgentSession.sessionId());
+        }
+        return activeApiAiHermesSession == null ? "" : nullToBlank(activeApiAiHermesSession.sessionId());
+    }
+
+    private String activeAgentProviderName() {
+        return isVeyraAIRuntimeSelected() && activeVeyraAIModelConfig != null
+                ? activeVeyraAIModelConfig.provider()
+                : "Hermes Agent";
+    }
+
+    private String selectedApiAiAgentProfile() {
+        return isVeyraAIRuntimeSelected() ? "CUSTOM" : "HERMES";
+    }
+
+    private String selectedApiAiAgentName() {
+        return isVeyraAIRuntimeSelected() ? "API Agent" : "Hermes Agent";
+    }
+
+    private String selectedDbAiAgentName() {
+        return isVeyraAIRuntimeSelected() ? "DB Agent" : "Hermes Agent";
+    }
+
+    private String selectedWebAiAgentName() {
+        return isVeyraAIRuntimeSelected() ? "Web Agent" : "Hermes Agent";
+    }
+
+    private String inferApiActionName(ApiRequest request) {
+        String segment = lastEndpointSegment(request == null ? "" : request.url);
+        String noun = singularize(toCamelCase(segment.isBlank() ? "apiResponse" : segment));
+        String method = request == null || request.method == null ? "GET" : request.method.toUpperCase();
+        if ("POST".equals(method)) return "create" + capitalize(noun);
+        if ("PUT".equals(method) || "PATCH".equals(method)) return "update" + capitalize(noun);
+        if ("DELETE".equals(method)) return "delete" + capitalize(noun);
+        if (noun.toLowerCase().contains("login")) return "login";
+        return "get" + capitalize(noun);
+    }
+
+    private String inferDbTableName(ApiRequest request) {
+        String segment = lastEndpointSegment(request == null ? "" : request.url);
+        String snake = toSnakeCase(segment.isBlank() ? "api_response" : segment);
+        return snake.endsWith("s") ? snake : snake + "s";
+    }
+
+    private String lastEndpointSegment(String url) {
+        try {
+            String path = URI.create(url).getPath();
+            String[] parts = path == null ? new String[0] : path.split("/");
+            for (int i = parts.length - 1; i >= 0; i--) {
+                if (!parts[i].isBlank() && !parts[i].matches("\\d+")) return parts[i];
+            }
+        } catch (Exception ignored) {
+            // Fall through to a generic action name.
+        }
+        return "apiResponse";
+    }
+
+    private String toCamelCase(String value) {
+        String[] parts = value.replaceAll("[^A-Za-z0-9]+", " ").trim().split("\\s+");
+        StringBuilder builder = new StringBuilder();
+        for (String part : parts) {
+            if (part.isBlank()) continue;
+            if (builder.isEmpty()) builder.append(part.substring(0, 1).toLowerCase()).append(part.substring(1));
+            else builder.append(capitalize(part));
+        }
+        return builder.isEmpty() ? "apiResponse" : builder.toString();
+    }
+
+    private String toSnakeCase(String value) {
+        return value.replaceAll("([a-z])([A-Z])", "$1_$2")
+                .replaceAll("[^A-Za-z0-9]+", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "")
+                .toLowerCase();
+    }
+
+    private String singularize(String value) {
+        return value != null && value.length() > 1 && value.endsWith("s") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private String capitalize(String value) {
+        if (value == null || value.isBlank()) return "";
+        return value.substring(0, 1).toUpperCase() + value.substring(1);
     }
 
     private void updateAuthControls() {
-        boolean bearer = "Bearer Token".equals(authTypeBox.getValue());
-        tokenField.setDisable(!bearer);
-        visibleTokenField.setDisable(!bearer);
-        if (!bearer) {
+        boolean tokenAuth = "Bearer Token".equals(authTypeBox.getValue()) || "OAuth2".equals(authTypeBox.getValue());
+        tokenField.setDisable(!tokenAuth);
+        visibleTokenField.setDisable(!tokenAuth);
+        if (!tokenAuth) {
             tokenField.clear();
         }
     }
@@ -3846,8 +14132,12 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void parseResponseFields(String body) {
-        responseFieldRows.clear();
-        fieldValidationRows.clear();
+        if (responseFieldRows != null) {
+            responseFieldRows.clear();
+        }
+        if (fieldValidationRows != null) {
+            fieldValidationRows.clear();
+        }
         Task<List<ResponseFieldCandidate>> task = new Task<>() {
             @Override
             protected List<ResponseFieldCandidate> call() {
@@ -3856,16 +14146,20 @@ public class ApiValidatorFxApp extends Application {
         };
         task.setOnSucceeded(e -> {
             for (ResponseFieldCandidate candidate : task.getValue()) {
-                responseFieldRows.add(row("selected", "false", "jsonPath", candidate.jsonPath,
-                        "field", candidate.fieldName, "preview", candidate.previewValue,
-                        "variableName", normalizeVariableName(candidate.fieldName == null || candidate.fieldName.isBlank()
-                                ? candidate.jsonPath : candidate.fieldName),
-                        "value", candidate.value, "type", candidate.type));
-                fieldValidationRows.add(row("selected", "true", "field", candidate.jsonPath,
-                        "preview", candidate.previewValue, "nullValidation", "Not Null",
-                        "typeValidation", candidate.type, "operator", "equals",
-                        "expected", candidate.value, "actual", candidate.value,
-                        "actualType", candidate.type, "result", "Ready", "message", ""));
+                if (responseFieldRows != null) {
+                    responseFieldRows.add(row("selected", "true", "jsonPath", candidate.jsonPath,
+                            "field", candidate.fieldName, "preview", candidate.previewValue,
+                            "variableName", normalizeVariableName(candidate.fieldName == null || candidate.fieldName.isBlank()
+                                    ? candidate.jsonPath : candidate.fieldName),
+                            "value", candidate.value, "type", candidate.type));
+                }
+                if (fieldValidationRows != null) {
+                    fieldValidationRows.add(row("selected", "true", "field", candidate.jsonPath,
+                            "preview", candidate.previewValue, "nullValidation", "Not Null",
+                            "typeValidation", candidate.type, "operator", "equals",
+                            "expected", "", "actual", candidate.value,
+                            "actualType", candidate.type, "result", "Not run", "message", ""));
+                }
             }
         });
         start(task);
@@ -3885,23 +14179,58 @@ public class ApiValidatorFxApp extends Application {
             showWarning("Field Validations", "Send an API request first to list response fields for validation.");
             return;
         }
-        parseResponseFields(lastResponse.rawBody);
+        for (Map<String, String> row : fieldValidationRows) {
+            String actualType = row.getOrDefault("actualType", "");
+            row.put("selected", "true");
+            row.put("nullValidation", "Not Null");
+            row.put("typeValidation", actualType.isBlank() ? "Skip" : actualType);
+            row.put("expected", "");
+            row.put("result", "Not run");
+            row.put("message", "");
+        }
+        fieldValidationsTable.refresh();
+        writeStandaloneValidationReport("API_VALIDATION", "API Validation", "Field Validation",
+                localApiValidationReportsDirectory(), fieldValidationRows,
+                "field", "expected", "actual", "nullValidation", "typeValidation", "result", "message");
+        writeStandaloneValidationReport("API_VALIDATION", "API Validation", "Field Validation",
+                localApiValidationReportsDirectory(), fieldValidationRows,
+                "field", "expected", "actual", "nullValidation", "typeValidation", "result", "message");
     }
 
     private void runFieldValidations() {
+        if (fieldValidationRows.isEmpty()) {
+            showWarning("Field Validations", "No response fields are available to validate.");
+            return;
+        }
+        int passed = 0;
+        int failed = 0;
         for (Map<String, String> row : fieldValidationRows) {
             if (!isSelected(row)) {
                 continue;
             }
-            String actual = extractJsonValue(lastResponse == null ? null : lastResponse.rawBody, row.get("field"));
-            String expected = resolveVariables(row.get("expected"));
-            boolean passed = compareValues(expected, actual, row.get("operator"));
-            if ("Not Null".equals(row.get("nullValidation"))) {
-                passed = passed && actual != null && !actual.isBlank() && !"null".equalsIgnoreCase(actual);
+            String responseBody = lastResponse == null ? null : lastResponse.rawBody;
+            String actual = extractJsonValue(responseBody, row.get("field"));
+            if (actual == null && row.containsKey("actual")) {
+                actual = row.get("actual");
+            }
+            String actualType = extractJsonValueType(responseBody, row.get("field"));
+            if (actualType.isBlank()) {
+                actualType = row.getOrDefault("actualType", "");
+            }
+            String expected = resolveVariables(row.getOrDefault("expected", ""));
+            List<String> errors = fieldValidationErrors(actualType, actual, row.getOrDefault("nullValidation", ""),
+                    row.getOrDefault("typeValidation", ""), expected);
+            if (errors.isEmpty()) {
+                row.put("result", "Passed");
+                row.put("message", "Expected checks matched");
+                passed++;
+            } else {
+                row.put("result", "Failed: " + String.join(", ", errors));
+                row.put("message", String.join(", ", errors));
+                failed++;
             }
             row.put("actual", actual);
-            row.put("result", passed ? "Pass" : "Fail");
-            row.put("message", passed ? "Expected value matched" : "Expected " + expected + " but found " + actual);
+            row.put("actualType", actualType);
         }
         fieldValidationsTable.refresh();
     }
@@ -3915,8 +14244,14 @@ public class ApiValidatorFxApp extends Application {
         responseFieldsTable.refresh();
     }
 
+    private void toggleAllSelected(ObservableList<Map<String, String>> rows, TableView<Map<String, String>> table) {
+        boolean selectAll = rows.stream().anyMatch(row -> !isSelected(row));
+        rows.forEach(row -> row.put("selected", String.valueOf(selectAll)));
+        table.refresh();
+    }
+
     private void chooseExpectedJson() {
-        File file = chooseOpenFile("JSON Files", "*.json");
+        File file = chooseOpenFile("JSON Files", "*.json", configuredFolder("API", "ExpectedResponse"));
         if (file != null) {
             expectedJsonPathField.setText(file.getAbsolutePath());
         }
@@ -3934,6 +14269,9 @@ public class ApiValidatorFxApp extends Application {
                 compareRows.add(row("status", valueAt(result, 0), "path", valueAt(result, 1),
                         "expected", valueAt(result, 2), "actual", valueAt(result, 3), "message", valueAt(result, 4)));
             }
+            writeStandaloneValidationReport("API_VALIDATION", "API Validation", "JSON Compare",
+                    localApiValidationReportsDirectory(), compareRows,
+                    "path", "expected", "actual", "status", "message");
         } catch (Exception e) {
             showError("Compare Failed", e);
         }
@@ -3942,18 +14280,20 @@ public class ApiValidatorFxApp extends Application {
     private void runPerformanceTest() {
         ApiRequest request = buildApiRequest(perfBodyArea.getText().isBlank() && bodyArea != null ? bodyArea.getText() : perfBodyArea.getText());
         if (request.url.isBlank()) {
-            showWarning("Performance Test", "Enter an endpoint in API Tester first.");
+            showWarning("Load Studio", "Enter an endpoint in API Studio first.");
             return;
         }
+        Path reportsDirectory = localPerformanceReportsDirectory();
         perfLogArea.appendText("Starting load test...\n");
         Task<PerformanceTestResult> task = new Task<>() {
             @Override
             protected PerformanceTestResult call() throws Exception {
-                return performanceTestService.runLoadTest(request, perfThreadsSpinner.getValue(), perfIterationsSpinner.getValue());
+                return performanceTestService.runLoadTest(request, perfThreadsSpinner.getValue(),
+                        perfIterationsSpinner.getValue(), reportsDirectory);
             }
         };
         task.setOnSucceeded(e -> renderPerformance(task.getValue()));
-        task.setOnFailed(e -> showError("Performance Test Failed", task.getException()));
+        task.setOnFailed(e -> showError("Load Studio Failed", task.getException()));
         start(task);
     }
 
@@ -3965,6 +14305,7 @@ public class ApiValidatorFxApp extends Application {
         lastPerformanceReportPath = result.reportIndexPath;
         perfReportLabel.setText(result.reportIndexPath == null ? "No report" : result.reportIndexPath.toString());
         perfLogArea.appendText("Completed " + result.samples + " samples. Report: " + perfReportLabel.getText() + "\n");
+        recordPerformanceExecution(result, "Performance Load Test");
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         for (Map.Entry<String, Double> entry : result.chartValuesMs.entrySet()) {
             series.getData().add(new XYChart.Data<>(entry.getKey(), entry.getValue()));
@@ -3973,34 +14314,46 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void openPerformanceReport() {
+        Path reportDirectory = localPerformanceReportsDirectory();
+        if (!isReportUnder(lastPerformanceReportPath, reportDirectory)) {
+            lastPerformanceReportPath = latestPerformanceReportPath();
+        }
         openPath(lastPerformanceReportPath, "No HTML performance report is available yet.");
     }
 
     private void openTestSuiteReport() {
-        if (lastTestSuiteReportPath == null || !Files.exists(lastTestSuiteReportPath)) {
+        Path reportDirectory = localTestSuiteReportsDirectory();
+        if (!isReportUnder(lastTestSuiteReportPath, reportDirectory)) {
             lastTestSuiteReportPath = latestTestSuiteReportPath();
         }
         openPath(lastTestSuiteReportPath, "No HTML test suite report is available yet.");
     }
 
+    private Path latestPerformanceReportPath() {
+        Path reportDirectory = localPerformanceReportsDirectory();
+        if (!Files.isDirectory(reportDirectory)) {
+            return null;
+        }
+        try (var reports = Files.walk(reportDirectory)) {
+            return reports
+                    .filter(Files::isRegularFile)
+                    .filter(path -> "index.html".equalsIgnoreCase(path.getFileName().toString()))
+                    .max(this::compareLastModified)
+                    .orElse(null);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private Path latestTestSuiteReportPath() {
-        Path workbookPath = selectedWorkbookPath();
-        Path reportDirectory = workbookPath == null || workbookPath.getParent() == null
-                ? Path.of("target", "test-suite-reports")
-                : workbookPath.getParent().resolve("Reports");
+        Path reportDirectory = localTestSuiteReportsDirectory();
         if (!Files.isDirectory(reportDirectory)) {
             return null;
         }
         try (var reports = Files.list(reportDirectory)) {
             return reports
                     .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".html"))
-                    .max((left, right) -> {
-                        try {
-                            return Files.getLastModifiedTime(left).compareTo(Files.getLastModifiedTime(right));
-                        } catch (Exception ignored) {
-                            return 0;
-                        }
-                    })
+                    .max(this::compareLastModified)
                     .orElse(null);
         } catch (Exception ignored) {
             return null;
@@ -4008,16 +14361,298 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private Path writeTestSuiteReport(Path workbookPath, List<TestSuiteStepResult> results) throws Exception {
-        Path reportDirectory = workbookPath == null || workbookPath.getParent() == null
-                ? Path.of("target", "test-suite-reports")
-                : workbookPath.getParent().resolve("Reports");
+        Path reportDirectory = localTestSuiteReportsDirectory();
         Files.createDirectories(reportDirectory);
         String suiteName = workbookPath == null
                 ? "test-suite"
                 : workbookNameWithoutExtension(workbookPath.getFileName().toString()).replaceAll("[^A-Za-z0-9_.-]", "_");
         Path reportPath = reportDirectory.resolve(suiteName + "-report-" + System.currentTimeMillis() + ".html").toAbsolutePath();
         Files.writeString(reportPath, buildTestSuiteReportHtml(workbookPath, results), StandardCharsets.UTF_8);
+        recordTestSuiteExecution(suiteName, reportPath, results);
         return reportPath;
+    }
+
+    private Path localTestSuiteReportsDirectory() {
+        return localReportsDirectory("TestSuite_Reports");
+    }
+
+    private Path localPerformanceReportsDirectory() {
+        return localReportsDirectory("Perfomance_Reports");
+    }
+
+    private Path localApiValidationReportsDirectory() {
+        return localReportsDirectory("APIValidation_Reports");
+    }
+
+    private Path localDbValidatorReportsDirectory() {
+        return localReportsDirectory("DBValidator_Reports");
+    }
+
+    private Path localWebTestingReportsDirectory() {
+        return localReportsDirectory("WebTesting_Reports");
+    }
+
+    private Path configuredBaseReportsDirectory() {
+        String basePathText = configBasePathField == null || configBasePathField.getText() == null
+                ? "" : configBasePathField.getText().trim();
+        return basePathText.isBlank()
+                ? Path.of("target", "reports").toAbsolutePath().normalize()
+                : Path.of(basePathText, "Reports").toAbsolutePath().normalize();
+    }
+
+    private Path localReportsDirectory(String reportTypeFolder) {
+        String basePathText = configBasePathField == null || configBasePathField.getText() == null
+                ? ""
+                : configBasePathField.getText().trim();
+        return basePathText.isBlank()
+                ? Path.of("target", "reports", reportTypeFolder).toAbsolutePath().normalize()
+                : Path.of(basePathText, "Reports", reportTypeFolder).toAbsolutePath().normalize();
+    }
+
+    private boolean isReportUnder(Path reportPath, Path reportDirectory) {
+        return reportPath != null
+                && Files.exists(reportPath)
+                && reportPath.toAbsolutePath().normalize().startsWith(reportDirectory.toAbsolutePath().normalize());
+    }
+
+    private int compareLastModified(Path left, Path right) {
+        try {
+            return Files.getLastModifiedTime(left).compareTo(Files.getLastModifiedTime(right));
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private void recordTestSuiteExecution(String suiteName, Path reportPath, List<TestSuiteStepResult> results) {
+        try {
+            long passed = results.stream().filter(result -> result.passed).count();
+            long failed = results.size() - passed;
+            Set<String> cases = new java.util.HashSet<>();
+            JSONArray details = new JSONArray();
+            for (TestSuiteStepResult result : results) {
+                cases.add(result.suite + "\u0000" + result.testCase);
+                JSONArray validations = new JSONArray();
+                for (TestSuiteValidationRow validation : result.validations) {
+                    validations.put(new JSONObject().put("field", validation.field).put("validation", validation.validation)
+                            .put("expected", validation.expected).put("actual", validation.actual)
+                            .put("passed", validation.passed).put("message", validation.message));
+                }
+                details.put(new JSONObject().put("suite", result.suite).put("testCase", result.testCase)
+                        .put("testStep", result.stepName).put("type", result.type).put("status", result.status)
+                        .put("passed", result.passed).put("message", String.join(" | ", result.details))
+                        .put("validations", validations));
+            }
+            double rate = results.isEmpty() ? 0 : passed * 100.0 / results.size();
+            JSONObject execution = new JSONObject().put("id", "suite-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                    .put("type", "TEST_SUITE").put("name", suiteName).put("executedAt", System.currentTimeMillis())
+                    .put("totalTestCases", cases.size()).put("totalSteps", results.size())
+                    .put("passed", passed).put("failed", failed).put("passPercentage", rate)
+                    .put("health", executionHealth(rate)).put("reportPath", reportPath.toString()).put("details", details);
+            StorageMode storageMode = selectedDashboardStorageMode();
+            dashboardExecutionService.save(execution, configuredBaseReportsDirectory(), storageMode, dashboardExecutionSqlitePath(storageMode));
+        } catch (Exception ignored) {
+            // Report generation must remain successful if dashboard persistence is temporarily unavailable.
+        }
+    }
+
+    private void recordPerformanceExecution(PerformanceTestResult result, String name) {
+        try {
+            long passed = Math.max(0, result.samples - result.errors);
+            double rate = result.samples == 0 ? 0 : passed * 100.0 / result.samples;
+            JSONObject performance = new JSONObject().put("samples", result.samples).put("errors", result.errors)
+                    .put("threads", result.threads).put("iterationsPerThread", result.iterationsPerThread)
+                    .put("throughputPerSecond", result.throughputPerSecond)
+                    .put("durationMs", durationMillis(result.duration)).put("minMs", durationMillis(result.min))
+                    .put("averageMs", durationMillis(result.mean)).put("medianMs", durationMillis(result.median))
+                    .put("p90Ms", durationMillis(result.perc90)).put("p95Ms", durationMillis(result.perc95))
+                    .put("p99Ms", durationMillis(result.perc99)).put("maxMs", durationMillis(result.max))
+                    .put("method", nullToBlank(result.method)).put("endpoint", nullToBlank(result.endpoint))
+                    .put("requestCapturePath", result.requestCaptureJsonPath == null ? "" : result.requestCaptureJsonPath.toString());
+            String report = result.reportIndexPath == null ? "" : result.reportIndexPath.toAbsolutePath().toString();
+            JSONObject execution = new JSONObject().put("id", "performance-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                    .put("type", "PERFORMANCE").put("name", firstNonBlank(name, "Performance Load Test"))
+                    .put("executedAt", System.currentTimeMillis()).put("totalTestCases", 1).put("totalSteps", result.samples)
+                    .put("passed", passed).put("failed", result.errors).put("passPercentage", rate)
+                    .put("health", executionHealth(rate)).put("reportPath", report).put("performance", performance)
+                    .put("details", new JSONArray().put(new JSONObject().put("suite", name).put("testCase", "Load Test")
+                            .put("testStep", result.method + " " + result.endpoint).put("type", "Performance Test")
+                            .put("status", result.errors == 0 ? "Passed" : "Failed")
+                            .put("message", result.samples + " samples; " + result.errors + " errors")));
+            StorageMode storageMode = selectedDashboardStorageMode();
+            dashboardExecutionService.save(execution, configuredBaseReportsDirectory(), storageMode, dashboardExecutionSqlitePath(storageMode));
+        } catch (Exception ignored) {
+            // Local execution is not failed by an unavailable dashboard backend.
+        }
+    }
+
+    private Path writeStandaloneValidationReport(String executionType, String suiteName, String validationName,
+                                                  Path reportDirectory, List<Map<String, String>> sourceRows,
+                                                  String... reportKeys) {
+        try {
+            List<Map<String, String>> performedRows = sourceRows.stream()
+                    .filter(row -> !row.containsKey("selected") || isSelected(row))
+                    .toList();
+            if (performedRows.isEmpty()) {
+                return null;
+            }
+            Files.createDirectories(reportDirectory);
+            String reportName = validationName.replaceAll("[^A-Za-z0-9_.-]", "_");
+            Path reportPath = reportDirectory.resolve(reportName + "-report-" + System.currentTimeMillis() + ".html").toAbsolutePath();
+            Files.writeString(reportPath, buildStandaloneValidationReportHtml(suiteName, validationName, performedRows, reportKeys),
+                    StandardCharsets.UTF_8);
+            recordStandaloneValidationExecution(executionType, suiteName, validationName, reportPath, performedRows);
+            return reportPath;
+        } catch (Exception ignored) {
+            // Screen validation should remain successful if report/dashboard persistence is unavailable.
+            return null;
+        }
+    }
+
+    private void createAndOpenStandaloneHtmlReport(String executionType, String suiteName, String validationName,
+                                                    Path reportDirectory, List<Map<String, String>> rows,
+                                                    String... reportKeys) {
+        if (rows == null || rows.isEmpty()) {
+            showWarning(validationName + " HTML Report", "Run " + validationName + " before generating its HTML report.");
+            return;
+        }
+        Path reportPath = writeStandaloneValidationReport(executionType, suiteName, validationName,
+                reportDirectory, rows, reportKeys);
+        openPath(reportPath, "The " + validationName + " HTML report could not be generated.");
+    }
+
+    private void createAndOpenDbStudioHtmlReport() {
+        if (dbResultRows != null && !dbResultRows.isEmpty()) {
+            createAndOpenStandaloneHtmlReport("DB_VALIDATOR", "DB Studio", "API-DB Validation",
+                    localDbValidatorReportsDirectory(), dbResultRows,
+                    "field", "expected", "actual", "operator", "result", "message");
+            return;
+        }
+        if (dbColumnValidationRows != null && dbColumnValidationRows.stream()
+                .anyMatch(row -> "Pass".equalsIgnoreCase(row.get("result")) || "Fail".equalsIgnoreCase(row.get("result")))) {
+            createAndOpenStandaloneHtmlReport("DB_VALIDATOR", "DB Studio", "DB Validation",
+                    localDbValidatorReportsDirectory(), dbColumnValidationRows,
+                    "dbColumnName", "expectedValueOrVariable", "value", "nullValidation", "typeValidation", "result", "message");
+            return;
+        }
+        showWarning("DB Studio HTML Report", "Run API-DB Validation or DB Column Validation before generating the HTML report.");
+    }
+
+    private String buildStandaloneValidationReportHtml(String suiteName, String validationName,
+                                                       List<Map<String, String>> rows, String... reportKeys) {
+        long passed = rows.stream().filter(this::standaloneRowPassed).count();
+        long failed = rows.size() - passed;
+        int passPercent = rows.isEmpty() ? 0 : Math.round((passed * 100f) / rows.size());
+        StringBuilder html = new StringBuilder("""
+                <!doctype html>
+                <html>
+                <head>
+                  <meta charset="utf-8">
+                  <title>VeyraAI Validation Report</title>
+                  <style>
+                    :root{--bg:#071018;--panel:#111827;--line:#29415f;--ink:#f8fafc;--muted:#a7b4c7;--pass:#19c37d;--fail:#ef476f;--accent:#38bdf8}
+                    *{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+                    header{padding:24px 30px;background:#0b1625;border-bottom:1px solid var(--line)}h1{margin:0 0 6px;font-size:26px}header div{color:var(--muted)}
+                    main{padding:20px 28px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:12px;margin-bottom:18px}
+                    .metric{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}.metric b{display:block;font-size:28px}
+                    table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+                    th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left;font-size:13px}th{color:var(--accent);background:#0f1d31}
+                    pre{white-space:pre-wrap;word-break:break-word;margin:0;font:12px Consolas,monospace}.pass{color:var(--pass);font-weight:700}.fail{color:var(--fail);font-weight:700}
+                  </style>
+                </head>
+                <body>
+                """);
+        html.append("<header><h1>").append(escapeXml(suiteName)).append(" - ").append(escapeXml(validationName))
+                .append("</h1><div>Generated ").append(escapeXml(Instant.now().toString())).append("</div></header><main>");
+        html.append("<section class=\"metrics\"><div class=\"metric\"><b>").append(rows.size()).append("</b>Total</div>")
+                .append("<div class=\"metric\"><b>").append(passed).append("</b>Passed</div>")
+                .append("<div class=\"metric\"><b>").append(failed).append("</b>Failed</div>")
+                .append("<div class=\"metric\"><b>").append(passPercent).append("%</b>Pass Rate</div></section>");
+        html.append("<table><thead><tr>");
+        for (String key : reportKeys) {
+            html.append("<th>").append(escapeXml(reportHeader(key))).append("</th>");
+        }
+        html.append("</tr></thead><tbody>");
+        for (Map<String, String> row : rows) {
+            html.append("<tr>");
+            for (String key : reportKeys) {
+                String value = row.getOrDefault(key, "");
+                String css = isStatusKey(key) ? (standaloneStatusPassed(value) ? " class=\"pass\"" : " class=\"fail\"") : "";
+                html.append("<td").append(css).append("><pre>").append(escapeXml(value)).append("</pre></td>");
+            }
+            html.append("</tr>");
+        }
+        html.append("</tbody></table></main></body></html>");
+        return html.toString();
+    }
+
+    private void recordStandaloneValidationExecution(String executionType, String suiteName, String validationName,
+                                                     Path reportPath, List<Map<String, String>> rows) {
+        try {
+            long passed = rows.stream().filter(this::standaloneRowPassed).count();
+            long failed = rows.size() - passed;
+            double rate = rows.isEmpty() ? 0 : passed * 100.0 / rows.size();
+            JSONArray details = new JSONArray();
+            for (Map<String, String> row : rows) {
+                String status = standaloneRowPassed(row) ? "Passed" : "Failed";
+                details.put(new JSONObject().put("suite", suiteName).put("testCase", validationName)
+                        .put("testStep", standaloneStepName(row)).put("type", validationName).put("status", status)
+                        .put("passed", standaloneRowPassed(row)).put("message", standaloneRowMessage(row))
+                        .put("expected", firstNonBlank(row.get("expected"), row.get("expectedValueOrVariable")))
+                        .put("actual", firstNonBlank(row.get("actual"), row.get("value"), row.get("selector"))));
+            }
+            JSONObject execution = new JSONObject().put("id", executionType.toLowerCase() + "-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                    .put("type", executionType).put("name", suiteName + " - " + validationName)
+                    .put("executedAt", System.currentTimeMillis()).put("totalTestCases", 1).put("totalSteps", rows.size())
+                    .put("passed", passed).put("failed", failed).put("passPercentage", rate)
+                    .put("health", executionHealth(rate)).put("reportPath", reportPath.toString()).put("details", details);
+            StorageMode storageMode = selectedDashboardStorageMode();
+            dashboardExecutionService.save(execution, configuredBaseReportsDirectory(), storageMode, dashboardExecutionSqlitePath(storageMode));
+        } catch (Exception ignored) {
+            // Report generation must remain successful if dashboard persistence is temporarily unavailable.
+        }
+    }
+
+    private boolean standaloneRowPassed(Map<String, String> row) {
+        return standaloneStatusPassed(firstNonBlank(row.get("result"), row.get("status")));
+    }
+
+    private boolean standaloneStatusPassed(String status) {
+        String normalized = nullToBlank(status).trim().toLowerCase();
+        return normalized.equals("pass") || normalized.equals("passed") || normalized.equals("match")
+                || normalized.startsWith("passed ");
+    }
+
+    private boolean isStatusKey(String key) {
+        return "result".equals(key) || "status".equals(key);
+    }
+
+    private String standaloneStepName(Map<String, String> row) {
+        return firstNonBlank(row.get("field"), row.get("path"), row.get("dbColumnName"), row.get("action"), "Validation");
+    }
+
+    private String standaloneRowMessage(Map<String, String> row) {
+        return firstNonBlank(row.get("message"), row.get("result"), row.get("status"));
+    }
+
+    private String reportHeader(String key) {
+        return switch (key) {
+            case "apiField" -> "API Field";
+            case "dbColumnName" -> "DB Column";
+            case "expectedValueOrVariable" -> "Expected";
+            case "nullValidation" -> "Null Validation";
+            case "typeValidation" -> "Type Validation";
+            default -> key == null || key.isBlank()
+                    ? ""
+                    : Character.toUpperCase(key.charAt(0)) + key.substring(1).replaceAll("([A-Z])", " $1");
+        };
+    }
+
+    private long durationMillis(Duration value) {
+        return value == null ? 0 : value.toMillis();
+    }
+
+    private String executionHealth(double passRate) {
+        return passRate >= 95 ? "Excellent" : passRate >= 80 ? "Watch" : "At risk";
     }
 
     private String buildTestSuiteReportHtml(Path workbookPath, List<TestSuiteStepResult> results) {
@@ -4041,22 +14676,22 @@ public class ApiValidatorFxApp extends Application {
                 <html>
                 <head>
                   <meta charset="utf-8">
-                  <title>TestWeave Test Suite Report</title>
+                  <title>VeyraAI Test Suite Report</title>
                   <style>
-                    :root{--blue:#1e5ed6;--ink:#172033;--muted:#5f6778;--line:#d2dceb;--bg:#f5f7fb;--panel:#fff;--pass:#12864a;--fail:#c44636}
+                    :root{--blue:#2f7cff;--cyan:#18d8e8;--violet:#8b4df6;--ink:#f8fbff;--muted:#b7c7f7;--line:#243b78;--bg:#05081a;--panel:#111b3d;--panel2:#0d1430;--paper:#f8fbff;--paper-ink:#111827;--pass:#20d38f;--fail:#ff4f72}
                     *{box-sizing:border-box}
                     body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:var(--bg);color:var(--ink)}
-                    header{background:#164da8;color:white;padding:22px 30px}
+                    header{background:linear-gradient(110deg,#06091f,#111b3d,#271052);color:white;padding:22px 30px;border-bottom:1px solid var(--line)}
                     header h1{margin:0 0 6px;font-size:26px}
                     header div{opacity:.9;font-size:13px;word-break:break-all}
                     main{display:grid;grid-template-columns:310px minmax(0,1fr);gap:18px;padding:18px 24px 28px}
                     aside{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:calc(100vh - 130px);padding:14px;position:sticky;top:14px;align-self:start}
-                    aside h2{margin:0 0 12px;color:var(--blue);font-size:18px}
-                    details{border-top:1px solid #eef2f8;padding:8px 0}
-                    summary{cursor:pointer;font-weight:700;color:#22314d}
-                    .case summary{font-weight:600;color:#44506a;margin-left:10px}
-                    .step-link{display:flex;align-items:center;gap:8px;width:calc(100% - 22px);margin:6px 0 4px 22px;padding:8px 9px;border:1px solid transparent;border-radius:6px;background:white;color:#26344f;text-align:left;cursor:pointer;font:13px Segoe UI,Arial,sans-serif}
-                    .step-link:hover,.step-link.active{border-color:#9db8e9;background:#eef5ff}
+                    aside h2{margin:0 0 12px;color:var(--cyan);font-size:18px}
+                    details{border-top:1px solid var(--line);padding:8px 0}
+                    summary{cursor:pointer;font-weight:700;color:#ffffff}
+                    .case summary{font-weight:600;color:var(--muted);margin-left:10px}
+                    .step-link{display:flex;align-items:center;gap:8px;width:calc(100% - 22px);margin:6px 0 4px 22px;padding:8px 9px;border:1px solid #2a4080;border-radius:6px;background:#0d1430;color:#f8fbff;text-align:left;cursor:pointer;font:13px Segoe UI,Arial,sans-serif}
+                    .step-link:hover,.step-link.active{border-color:var(--cyan);background:#17265a}
                     .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:0 0 auto}.dot.pass{background:var(--pass)}.dot.fail{background:var(--fail)}
                     .summary-cards{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:14px}
                     .metric{background:var(--panel);border:1px solid var(--line);padding:14px;border-radius:8px}
@@ -4064,19 +14699,20 @@ public class ApiValidatorFxApp extends Application {
                     .viz{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-bottom:14px}
                     .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
                     .pie{width:164px;height:164px;border-radius:50%;margin:8px auto;background:conic-gradient(var(--pass) 0 var(--pass-pct),var(--fail) var(--pass-pct) 100%)}
-                    .bar{height:28px;display:flex;border-radius:5px;overflow:hidden;background:#e9eef7;margin:20px 0 10px}.passbar{background:var(--pass)}.failbar{background:var(--fail)}
+                    .bar{height:28px;display:flex;border-radius:5px;overflow:hidden;background:#18234b;margin:20px 0 10px}.passbar{background:var(--pass)}.failbar{background:var(--fail)}
                     .legend{color:var(--muted);font-size:14px}
                     .detail{display:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px}
                     .detail.active{display:block}
-                    .detail-head{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #e6edf7;padding-bottom:12px;margin-bottom:14px}
-                    h2{margin:0;color:var(--blue);font-size:22px}.meta{color:var(--muted);font-size:14px;margin-top:6px}
-                    .pill{border-radius:999px;padding:6px 10px;font-weight:700;align-self:start}.pill.pass{background:#e8f6ef;color:var(--pass)}.pill.fail{background:#fdecea;color:var(--fail)}
+                    .detail-head{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:14px}
+                    h2{margin:0;color:var(--cyan);font-size:22px}.meta{color:var(--muted);font-size:14px;margin-top:6px}
+                    .pill{border-radius:999px;padding:6px 10px;font-weight:700;align-self:start}.pill.pass{background:#d9fff6;color:#07533d}.pill.fail{background:#ffe3eb;color:#8f1832}
                     .facts{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin-bottom:14px}
-                    .fact{background:#f8fbff;border:1px solid #e4ebf6;border-radius:6px;padding:10px}.fact span{display:block;color:var(--muted);font-size:12px}.fact b{font-size:15px}
-                    .error{background:#fff5f3;border:1px solid #f0bbb2;color:#8f2f22;border-radius:6px;padding:12px;margin:12px 0}
+                    .fact{background:var(--paper);border:1px solid #b7cff6;border-radius:6px;padding:10px;color:var(--paper-ink)}.fact span{display:block;color:#526480;font-size:12px}.fact b{font-size:15px}
+                    .error{background:#ffeef3;border:1px solid #ff9ab0;color:#8f1832;border-radius:6px;padding:12px;margin:12px 0}
                     table{width:100%;border-collapse:collapse;font-size:14px}
-                    th,td{border:1px solid #d9e2f1;padding:8px;vertical-align:top;text-align:left}
-                    th{background:#eef3fb}.ok{color:var(--pass);font-weight:700}.bad{color:var(--fail);font-weight:700}
+                    th,td{border:1px solid #d5e6ff;padding:8px;vertical-align:top;text-align:left;color:var(--paper-ink)}
+                    th{background:#101936;color:#ffffff}.ok{color:#067a52;font-weight:700}.bad{color:#b11d3b;font-weight:700}
+                    td{background:var(--paper)}
                     pre{white-space:pre-wrap;margin:0;font-family:Consolas,monospace;font-size:13px}
                     @media(max-width:960px){main{grid-template-columns:1fr}aside{position:static;min-height:auto}.summary-cards,.viz,.facts{grid-template-columns:1fr}}
                   </style>
@@ -4223,10 +14859,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void saveDbConnection() {
-        FileChooser chooser = new FileChooser();
-        chooser.setInitialFileName("db-connection.json");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON Files", "*.json"));
-        File file = chooser.showSaveDialog(stage);
+        File file = chooseSaveFile("JSON Files", "*.json", "db-connection.json", configuredFolder("DB", "Connection"));
         if (file == null) {
             return;
         }
@@ -4247,7 +14880,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void loadDbConnection() {
-        File file = chooseOpenFile("JSON Files", "*.json");
+        File file = chooseOpenFile("JSON Files", "*.json", configuredFolder("DB", "Connection"));
         if (file == null) {
             return;
         }
@@ -4284,6 +14917,900 @@ public class ApiValidatorFxApp extends Application {
         refreshDbColumnValidationRows(rows);
     }
 
+    private void runDbAiAnalysisForResultSet() {
+        if (!apiAiAgentConnected()) {
+            showWarning(selectedDbAiAgentName(), isVeyraAIRuntimeSelected()
+                    ? "No Agentic AI session is connected."
+                    : "Connect Hermes Agent in Settings before running AI Analysis.");
+            updateApiAiConnectionLabels();
+            return;
+        }
+        if (isVeyraAIRuntimeSelected()
+                && !agenticAIConnectionManager.getConnectedAgents().contains("dbAgent")) {
+            showWarning("DB Agent", "DB Agent is not connected to the active session.");
+            return;
+        }
+        if (dbQueryResultRows == null || dbQueryResultRows.isEmpty()) {
+            showWarning("DB AI Analysis", "Select a DB table or provide query results before requesting validation suggestions.");
+            return;
+        }
+        if (isApiDbMappingOnly() && !hasApiContextForDbMapping()) {
+            showWarning("DB AI Analysis", "API context is required for API-to-DB auto-mapping.");
+            return;
+        }
+        String agentName = selectedDbAiAgentName();
+        dbConnectionStatusLabel.setText(agentName + " analyzing DB resultset...");
+        updateApiAiConnectionLabels(agentName + " analyzing DB resultset with " + apiAiConnectedModel);
+        Task<DbAiSuggestion> task = new Task<>() {
+            @Override protected DbAiSuggestion call() {
+                return requestDbAiModelSuggestion();
+            }
+        };
+        task.setOnSucceeded(e -> {
+            dbConnectionStatusLabel.setText("DB AI suggestions ready");
+            updateApiAiConnectionLabels(agentName + " connected: " + apiAiConnectedModel);
+            DbAiSuggestion suggestion = task.getValue();
+            if (!suggestion.apiDbMappings.isEmpty() || !suggestion.dbValidations.isEmpty() || !suggestion.variables.isEmpty()) {
+                showDbAiSuggestionWindow(suggestion);
+            } else {
+                showWarning("DB AI Analysis", "The connected model did not return DB mapping, validation, or variable suggestions.");
+            }
+        });
+        task.setOnFailed(e -> {
+            logApiAiConsole("DB AI Analysis task failed", task.getException());
+            dbConnectionStatusLabel.setText("DB AI suggestion failed");
+            updateApiAiConnectionLabels(agentName + " connected: " + apiAiConnectedModel
+                    + " (last DB analysis failed: " + exceptionMessage(rootCause(task.getException())) + ")");
+            showError("DB AI Analysis Failed", task.getException());
+            if (isVeyraAIRuntimeSelected()) {
+                confirmHermesFallbackAfterDbAgentFailure();
+            }
+        });
+        start(task);
+    }
+
+    private DbAiSuggestion requestDbAiModelSuggestion() {
+        try {
+            String prompt = isVeyraAIRuntimeSelected() ? "" : dbAiSuggestionPrompt();
+            logApiAiConsole("DB AI Analysis prompt built, characters=" + prompt.length());
+            String output;
+            if (isVeyraAIRuntimeSelected()) {
+                JSONObject context = buildDbAgentStructuredContext();
+                AgentRequest request = new AgentRequest("dbStudio", "suggestDbValidationRules",
+                        configCacheKey(), configCacheKey(), "", "", context, context);
+                output = dbAnalysisAgent.analyze(context,
+                        dbPrompt -> routeAgentAnalysis(request, dbPrompt).raw().optString("modelOutput"));
+            } else {
+                // Preserve the existing Hermes DB prompt and execution path.
+                output = runApiAiPrompt(prompt);
+            }
+            logApiAiConsole("DB AI Analysis model output received, characters=" + (output == null ? 0 : output.length()));
+            JSONObject root = extractJsonObject(output);
+            DbAiSuggestion suggestion = dbAiSuggestionFromModelJson(root);
+            supplementDbAiAutoMappings(suggestion);
+            return suggestion;
+        } catch (Exception e) {
+            logApiAiConsole("DB AI Analysis failed while preparing, running, or parsing model suggestion", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    private boolean isApiDbMappingOnly() {
+        return dbAiAnalysisModeBox != null && "API-DB Mapping".equals(dbAiAnalysisModeBox.getValue());
+    }
+
+    private boolean hasApiContextForDbMapping() {
+        if (lastResponse != null && !nullToBlank(lastResponse.rawBody).isBlank()) {
+            return true;
+        }
+        try {
+            return loadApiAiMemoryRepositorySample().length() > 0;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private JSONObject buildDbAgentStructuredContext() throws Exception {
+        JSONObject databaseContext = new JSONObject()
+                .put("mode", dbAiAnalysisModeBox == null ? "DB Validation + API-DB Mapping" : dbAiAnalysisModeBox.getValue())
+                .put("databaseType", dbTypeBox == null ? "" : dbTypeBox.getValue())
+                .put("schema", inferDbSchemaName())
+                .put("table", inferDbTableFromQuery())
+                .put("query", dbQueryArea == null ? "" : dbQueryArea.getText())
+                .put("selectedColumns", dbQueryResultRows.isEmpty()
+                        ? new JSONArray() : new JSONArray(dbQueryResultRows.get(0).keySet()))
+                .put("sampleRows", dbResultSetSample());
+        JSONObject apiContext = new JSONObject()
+                .put("lastRequest", lastApiRequestSummary())
+                .put("responseFields", lastApiResponseFieldSample());
+        JSONObject knowledgeQuery = new JSONObject()
+                .put("workspaceId", configCacheKey())
+                .put("schema", databaseContext.optString("schema"))
+                .put("table", databaseContext.optString("table"))
+                .put("apiContext", apiContext)
+                .put("analysisType", databaseContext.optString("mode"));
+        JSONArray approvedKnowledge = sharedKnowledgeRepository.search(knowledgeQuery, 16);
+        appendJsonArray(approvedKnowledge, searchCustomAgentMemory("apiExecutor", "", 12, true), 24);
+        appendJsonArray(approvedKnowledge, searchCustomAgentMemory("dbStudio", "", 12, true), 32);
+        return dbAgentContextBuilder.build(configCacheKey(), configCacheKey(), activeAgentSessionId(),
+                databaseContext, apiContext, approvedKnowledge, approvedKnowledge);
+    }
+
+    private String inferDbSchemaName() {
+        String query = dbQueryArea == null ? "" : nullToBlank(dbQueryArea.getText());
+        Matcher matcher = Pattern.compile("(?i)\\b(?:from|join)\\s+([A-Za-z0-9_]+)\\.([A-Za-z0-9_]+)").matcher(query);
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
+    private String inferDbTableFromQuery() {
+        String query = dbQueryArea == null ? "" : nullToBlank(dbQueryArea.getText());
+        Matcher matcher = Pattern.compile("(?i)\\b(?:from|join)\\s+(?:[A-Za-z0-9_]+\\.)?([A-Za-z0-9_]+)").matcher(query);
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
+    private void confirmHermesFallbackAfterDbAgentFailure() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                "DB Agent analysis failed. Run with Hermes instead?", ButtonType.YES, ButtonType.NO);
+        confirm.setTitle("DB Agent Fallback");
+        confirm.setHeaderText("Agentic AI DB Agent failed");
+        if (confirm.showAndWait().orElse(ButtonType.NO) == ButtonType.YES) {
+            if (activeApiAiHermesSession == null) {
+                showInfo("Hermes Fallback", "Connect Hermes Agent in Settings, then run DB AI Analysis again.");
+                return;
+            }
+            apiAiAgentRuntimeToggle.setSelected(false);
+            updateApiAiAgentToggleLabels();
+            persistApiAiAgentProfile();
+            runDbAiAnalysisForResultSet();
+        }
+    }
+
+    private String dbAiSuggestionPrompt() throws Exception {
+        JSONObject input = new JSONObject()
+                .put("dbType", dbTypeBox == null ? "" : dbTypeBox.getValue())
+                .put("jdbcUrl", jdbcUrlField == null ? "" : scrubJdbcUrl(jdbcUrlField.getText()))
+                .put("sqlQuery", dbQueryArea == null ? "" : dbQueryArea.getText())
+                .put("resultSet", dbResultSetSample())
+                .put("lastApiRequest", lastApiRequestSummary())
+                .put("lastApiResponseFields", lastApiResponseFieldSample())
+                .put("knowledgeRepositoryMode", apiAiAgentMemoryStorageMode().name())
+                .put("knowledgeRepository", loadApiAiMemoryRepositorySample());
+        return """
+                You are VeyraAI API-DB Quality Brain.
+                Analyze this DB ResultSet with the API details and knowledge repository below.
+                Return ONLY strict JSON. No markdown, no prose.
+
+                Required JSON shape:
+                {
+                  "apiDbMappings": [
+                    {"apiField":"$.orderId","jsonPath":"$.orderId","dbColumn":"order_id","operator":"=","description":"API orderId matches DB order_id"}
+                  ],
+                  "dbValidations": [
+                    {"dbColumnName":"order_id[0]","nullValidation":"must not be null","typeValidation":"uuid","expectedValueOrVariable":"","description":"Validate persisted order id"}
+                  ],
+                  "variables": [
+                    {"variable":"${dbOrderId}","dbColumnName":"order_id[0]","value":"123","type":"uuid","description":"Store order id for later validations"}
+                  ]
+                }
+
+                Rules:
+                - Use the ResultSet columns as DB Column values.
+                - Prefer API-DB mappings when an API JSON path or stored memory field clearly corresponds to a DB column.
+                - Suggest individual DB validations for identifiers, statuses, totals, amounts, dates, foreign keys, and non-null business fields.
+                - Suggest variables only for reusable identifiers, correlation keys, tokens, status values, and generated references.
+                - For dbColumnName include [rowIndex] when the validation or variable points to a concrete ResultSet cell.
+                - Do not invent API fields absent from the API response sample or knowledge repository.
+
+                Input:
+                """ + input.toString(2);
+    }
+
+    private String scrubJdbcUrl(String jdbcUrl) {
+        return nullToBlank(jdbcUrl).replaceAll("(?i)(password|pwd)=([^;&]+)", "$1=***");
+    }
+
+    private JSONArray dbResultSetSample() {
+        JSONArray rows = new JSONArray();
+        if (dbQueryResultRows == null) {
+            return rows;
+        }
+        int rowIndex = 0;
+        for (Map<String, String> row : dbQueryResultRows) {
+            JSONObject item = new JSONObject();
+            item.put("_rowIndex", rowIndex);
+            for (Map.Entry<String, String> entry : row.entrySet()) {
+                if (!"row".equals(entry.getKey())) {
+                    item.put(entry.getKey(), entry.getValue());
+                }
+            }
+            rows.put(item);
+            if (++rowIndex >= 10) {
+                break;
+            }
+        }
+        return rows;
+    }
+
+    private JSONObject lastApiRequestSummary() {
+        ApiRequest request = endpointField == null ? null : buildApiRequest(bodyArea == null ? "" : bodyArea.getText());
+        return new JSONObject()
+                .put("method", request == null ? "" : request.method)
+                .put("endpoint", request == null ? "" : request.url)
+                .put("hasResponse", lastResponse != null && !nullToBlank(lastResponse.rawBody).isBlank());
+    }
+
+    private JSONArray lastApiResponseFieldSample() {
+        JSONArray fields = new JSONArray();
+        if (lastResponse == null || nullToBlank(lastResponse.rawBody).isBlank()) {
+            return fields;
+        }
+        for (ResponseFieldCandidate candidate : responseVariableService.parseAllFields(lastResponse.rawBody)) {
+            if (List.of("object", "array", "null").contains(candidate.type)) {
+                continue;
+            }
+            fields.put(new JSONObject()
+                    .put("jsonPath", candidate.jsonPath)
+                    .put("fieldName", candidate.fieldName)
+                    .put("value", shorten(candidate.value, 180))
+                    .put("type", candidate.type));
+            if (fields.length() >= 60) {
+                break;
+            }
+        }
+        return fields;
+    }
+
+    private JSONArray loadApiAiMemoryRepositorySample() throws Exception {
+        return apiAiAgentMemoryStorageMode() == StorageMode.LOCAL
+                ? loadApiAiMemoryRepositoryFromSqlite()
+                : loadApiAiMemoryRepositoryFromFirebase();
+    }
+
+    private JSONArray loadApiAiMemoryRepositoryFromSqlite() throws Exception {
+        JSONArray memories = new JSONArray();
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        if (!Files.exists(sqliteDbPath)) {
+            return memories;
+        }
+        initializeApiAiMemoryTable(sqliteDbPath);
+        String sql = "SELECT id, endpoint, method, response_json, variables_json, validations_json, db_mappings_json, created_at, action_name "
+                + "FROM " + API_AI_MEMORY_TABLE + " ORDER BY created_at DESC LIMIT 20";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                memories.put(apiAiMemorySummary(
+                        resultSet.getString("id"),
+                        resultSet.getString("endpoint"),
+                        resultSet.getString("method"),
+                        resultSet.getString("action_name"),
+                        resultSet.getString("response_json"),
+                        resultSet.getString("variables_json"),
+                        resultSet.getString("validations_json"),
+                        resultSet.getString("db_mappings_json"),
+                        resultSet.getString("created_at")));
+            }
+        }
+        return memories;
+    }
+
+    private JSONArray loadApiAiMemoryRepositoryFromFirebase() throws Exception {
+        JSONArray memories = new JSONArray();
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_FIREBASE_PATH + ".json")
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 || response.body() == null || response.body().isBlank() || "null".equals(response.body())) {
+            return memories;
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase API AI memory load failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+        JSONObject root = new JSONObject(response.body());
+        List<JSONObject> items = new ArrayList<>();
+        for (String id : root.keySet()) {
+            JSONObject item = root.optJSONObject(id);
+            if (item != null) {
+                items.add(item);
+            }
+        }
+        items.sort((left, right) -> right.optString("createdAt").compareTo(left.optString("createdAt")));
+        for (JSONObject item : items) {
+            memories.put(apiAiMemorySummary(
+                    item.optString("id"),
+                    item.optString("endpoint"),
+                    item.optString("method"),
+                    item.optString("actionName"),
+                    item.optJSONObject("response") == null ? "{}" : item.optJSONObject("response").toString(),
+                    item.optJSONArray("variables") == null ? "[]" : item.optJSONArray("variables").toString(),
+                    item.optJSONArray("validations") == null ? "[]" : item.optJSONArray("validations").toString(),
+                    item.optJSONArray("dbMappings") == null ? "[]" : item.optJSONArray("dbMappings").toString(),
+                    item.optString("createdAt")));
+            if (memories.length() >= 20) {
+                break;
+            }
+        }
+        return memories;
+    }
+
+    private JSONObject apiAiMemorySummary(String id, String endpoint, String method, String actionName,
+                                          String responseJson, String variablesJson, String validationsJson,
+                                          String dbMappingsJson, String createdAt) {
+        JSONObject response = safeJsonObject(responseJson);
+        return new JSONObject()
+                .put("id", nullToBlank(id))
+                .put("endpoint", nullToBlank(endpoint))
+                .put("method", nullToBlank(method))
+                .put("actionName", nullToBlank(actionName))
+                .put("createdAt", nullToBlank(createdAt))
+                .put("responseStatus", response.optString("status"))
+                .put("responsePreview", shorten(response.optString("body"), 900))
+                .put("variables", safeJsonArray(variablesJson))
+                .put("validations", safeJsonArray(validationsJson))
+                .put("dbMappings", safeJsonArray(dbMappingsJson));
+    }
+
+    private JSONObject safeJsonObject(String text) {
+        try {
+            return new JSONObject(nullToBlank(text).isBlank() ? "{}" : text);
+        } catch (Exception e) {
+            return new JSONObject();
+        }
+    }
+
+    private JSONArray safeJsonArray(String text) {
+        try {
+            return new JSONArray(nullToBlank(text).isBlank() ? "[]" : text);
+        } catch (Exception e) {
+            return new JSONArray();
+        }
+    }
+
+    private DbAiSuggestion dbAiSuggestionFromModelJson(JSONObject root) {
+        DbAiSuggestion suggestion = new DbAiSuggestion();
+        JSONArray mappings = root.optJSONArray("apiDbMappings");
+        if (mappings != null) for (int i = 0; i < mappings.length(); i++) {
+            JSONObject item = mappings.optJSONObject(i);
+            if (item == null) continue;
+            JSONObject api = item.optJSONObject("apiField");
+            JSONObject db = item.optJSONObject("dbField");
+            String jsonPath = firstNonBlank(item.optString("jsonPath"),
+                    api == null ? "" : api.optString("jsonPath"));
+            String apiField = firstNonBlank(api == null ? "" : api.optString("name"),
+                    item.optString("apiField"), jsonPath);
+            String dbColumn = firstNonBlank(db == null ? "" : db.optString("column"),
+                    item.optString("dbColumn"), item.optString("column"));
+            if (apiField.isBlank() || dbColumn.isBlank()) continue;
+            suggestion.apiDbMappings.add(row("selected", "true",
+                    "apiField", apiField,
+                    "jsonPath", jsonPath,
+                    "apiDataType", api == null ? item.optString("apiDataType") : api.optString("dataType"),
+                    "dbSchema", db == null ? item.optString("dbSchema") : db.optString("schema"),
+                    "dbTable", db == null ? item.optString("dbTable") : db.optString("table"),
+                    "dbColumn", dbColumn,
+                    "dbDataType", db == null ? item.optString("dbDataType") : db.optString("dataType"),
+                    "transformation", jsonValueText(item.opt("transformation")),
+                    "normalization", jsonValueText(item.opt("normalization")),
+                    "nullHandling", item.optString("nullHandling"),
+                    "operator", firstNonBlank(item.optString("comparison"), item.optString("operator"), "="),
+                    "confidence", String.valueOf(item.optDouble("confidence", 0.75)),
+                    "reason", firstNonBlank(item.optString("reason"), item.optString("description"),
+                            apiField + " matches " + dbColumn),
+                    "contextSources", jsonValueText(item.opt("contextSources")),
+                    "status", firstNonBlank(item.optString("status"), "Suggested")));
+        }
+        JSONArray validations = root.optJSONArray("dbValidations");
+        if (validations != null) for (int i = 0; i < validations.length(); i++) {
+            JSONObject item = validations.optJSONObject(i);
+            if (item == null) continue;
+            String columnName = firstNonBlank(item.optString("dbColumnName"), item.optString("dbColumn"), item.optString("column"));
+            if (columnName.isBlank()) continue;
+            String value = firstNonBlank(item.optString("value"), dbResultValueForColumnReference(columnName));
+            String rule = firstNonBlank(item.optString("rule"),
+                    !item.optString("nullValidation").isBlank() ? item.optString("nullValidation")
+                            : item.optString("typeValidation"));
+            suggestion.dbValidations.add(row("selected", "true",
+                    "id", firstNonBlank(item.optString("id"), "db-val-" + UUID.randomUUID()),
+                    "table", firstNonBlank(item.optString("table"), inferDbTableFromQuery()),
+                    "dbColumnName", columnName,
+                    "value", value,
+                    "rule", rule,
+                    "nullValidation", firstNonBlank(item.optString("nullValidation"), value.isBlank() ? "must be null" : "must not be null"),
+                    "typeValidation", firstNonBlank(item.optString("typeValidation"), inferTypeValidation(value)),
+                    "expectedValueOrVariable", firstNonBlank(item.optString("expectedValueOrVariable"),
+                            jsonValueText(item.opt("expected"))),
+                    "confidence", String.valueOf(item.optDouble("confidence", 0.75)),
+                    "reason", firstNonBlank(item.optString("reason"), item.optString("description")),
+                    "contextSources", jsonValueText(item.opt("contextSources")),
+                    "status", firstNonBlank(item.optString("status"), "Suggested"),
+                    "result", "AI Suggested"));
+        }
+        JSONArray variables = root.optJSONArray("variables");
+        if (variables != null) for (int i = 0; i < variables.length(); i++) {
+            JSONObject item = variables.optJSONObject(i);
+            if (item == null) continue;
+            String dbColumnName = firstNonBlank(item.optString("dbColumnName"), item.optString("dbColumn"), item.optString("column"));
+            String value = firstNonBlank(item.optString("value"), dbResultValueForColumnReference(dbColumnName));
+            String variable = item.optString("variable");
+            if (variable.isBlank()) {
+                variable = "${" + normalizeVariableName(firstNonBlank(dbColumnName, "dbValue")) + "}";
+            }
+            suggestion.variables.add(row("selected", "true",
+                    "variable", variable,
+                    "dbColumnName", dbColumnName,
+                    "value", value,
+                    "type", firstNonBlank(item.optString("type"), inferTypeValidation(value)),
+                    "description", item.optString("description")));
+        }
+        return suggestion;
+    }
+
+    private String jsonValueText(Object value) {
+        return value == null || JSONObject.NULL.equals(value) ? "" : String.valueOf(value);
+    }
+
+    private void supplementDbAiAutoMappings(DbAiSuggestion suggestion) throws Exception {
+        if (suggestion == null || dbQueryResultRows == null || dbQueryResultRows.isEmpty()) {
+            return;
+        }
+        Map<String, String> dbColumns = new LinkedHashMap<>();
+        for (String column : dbQueryResultRows.get(0).keySet()) {
+            if (!"row".equals(column)) {
+                dbColumns.putIfAbsent(normalizeMappingName(column), column);
+            }
+        }
+        Map<String, String> apiFields = new LinkedHashMap<>();
+        for (Object value : lastApiResponseFieldSample()) {
+            if (value instanceof JSONObject field) {
+                String jsonPath = field.optString("jsonPath");
+                String fieldName = firstNonBlank(field.optString("fieldName"), lastJsonPathSegment(jsonPath));
+                addApiMappingCandidate(apiFields, fieldName, jsonPath);
+            }
+        }
+        for (Object value : loadApiAiMemoryRepositorySample()) {
+            if (!(value instanceof JSONObject memory)) {
+                continue;
+            }
+            collectApiMappingCandidates(apiFields, memory.optJSONArray("variables"));
+            collectApiMappingCandidates(apiFields, memory.optJSONArray("validations"));
+            collectApiMappingCandidates(apiFields, memory.optJSONArray("dbMappings"));
+        }
+        Set<String> existing = new HashSet<>();
+        for (Map<String, String> mapping : suggestion.apiDbMappings) {
+            existing.add(normalizeMappingName(mapping.getOrDefault("apiField", "")) + ":"
+                    + normalizeMappingName(mapping.getOrDefault("dbColumn", "")));
+        }
+        for (Map.Entry<String, String> apiField : apiFields.entrySet()) {
+            String dbColumn = dbColumns.get(apiField.getKey());
+            if (dbColumn == null) {
+                continue;
+            }
+            String key = apiField.getKey() + ":" + normalizeMappingName(dbColumn);
+            if (!existing.add(key)) {
+                continue;
+            }
+            suggestion.apiDbMappings.add(row("selected", "true",
+                    "apiField", apiField.getValue(),
+                    "jsonPath", apiField.getValue(),
+                    "apiDataType", "",
+                    "dbSchema", inferDbSchemaName(),
+                    "dbTable", inferDbTableFromQuery(),
+                    "dbColumn", dbColumn,
+                    "dbDataType", "",
+                    "transformation", "none",
+                    "normalization", "name normalization",
+                    "nullHandling", "compare nulls explicitly",
+                    "operator", "=",
+                    "confidence", "0.90",
+                    "reason", "Normalized API field and DB column names match",
+                    "contextSources", "[\"api_field_knowledge\",\"db_result\"]",
+                    "status", "Suggested"));
+        }
+    }
+
+    private void collectApiMappingCandidates(Map<String, String> candidates, JSONArray values) {
+        if (values == null) {
+            return;
+        }
+        for (Object value : values) {
+            if (!(value instanceof JSONObject item)) {
+                continue;
+            }
+            String jsonPath = firstNonBlank(item.optString("jsonPath"), item.optString("field"),
+                    item.optString("apiField"));
+            String fieldName = firstNonBlank(item.optString("apiField"), lastJsonPathSegment(jsonPath),
+                    item.optString("variable").replace("$" + "{", "").replace("}", ""));
+            addApiMappingCandidate(candidates, fieldName, jsonPath);
+        }
+    }
+
+    private void addApiMappingCandidate(Map<String, String> candidates, String fieldName, String jsonPath) {
+        String normalized = normalizeMappingName(fieldName);
+        if (!normalized.isBlank()) {
+            candidates.putIfAbsent(normalized, firstNonBlank(jsonPath, fieldName));
+        }
+    }
+
+    private String lastJsonPathSegment(String jsonPath) {
+        String value = nullToBlank(jsonPath).replaceAll("\\[\\d+]", "");
+        int separator = Math.max(value.lastIndexOf('.'), value.lastIndexOf('/'));
+        return separator >= 0 && separator + 1 < value.length() ? value.substring(separator + 1) : value;
+    }
+
+    private String normalizeMappingName(String value) {
+        String normalized = nullToBlank(value);
+        int dot = normalized.lastIndexOf('.');
+        if (dot >= 0 && dot + 1 < normalized.length()) {
+            normalized = normalized.substring(dot + 1);
+        }
+        return normalized.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+    }
+
+    private String dbResultValueForColumnReference(String reference) {
+        if (dbQueryResultRows == null || dbQueryResultRows.isEmpty() || reference == null || reference.isBlank()) {
+            return "";
+        }
+        String column = reference;
+        int rowIndex = 0;
+        Matcher matcher = Pattern.compile("^(.*)\\[(\\d+)]$").matcher(reference);
+        if (matcher.matches()) {
+            column = matcher.group(1);
+            rowIndex = Integer.parseInt(matcher.group(2));
+        }
+        if (rowIndex < 0 || rowIndex >= dbQueryResultRows.size()) {
+            rowIndex = 0;
+        }
+        return dbQueryResultRows.get(rowIndex).getOrDefault(column, "");
+    }
+
+    private void showDbAiSuggestionWindow(DbAiSuggestion suggestion) {
+        ObservableList<Map<String, String>> mappingRows = FXCollections.observableArrayList(suggestion.apiDbMappings);
+        ObservableList<Map<String, String>> validationRows = FXCollections.observableArrayList(suggestion.dbValidations);
+        ObservableList<Map<String, String>> variableRows = FXCollections.observableArrayList(suggestion.variables);
+        TableView<Map<String, String>> mappingsTable = mapTable(mappingRows,
+                "Select", "selected", "API Field", "apiField", "JSONPath", "jsonPath",
+                "DB Table", "dbTable", "DB Column", "dbColumn", "Transformation", "transformation",
+                "Comparison", "operator", "Confidence", "confidence", "Reason", "reason",
+                "Status", "status");
+        TableView<Map<String, String>> validationsTable = mapTable(validationRows,
+                "Select", "selected", "Table", "table", "Column", "dbColumnName", "Rule", "rule",
+                "Expected Value", "expectedValueOrVariable", "Confidence", "confidence",
+                "Reason", "reason", "Status", "status");
+        TableView<Map<String, String>> variablesTable = mapTable(variableRows,
+                "Save", "selected", "Variable", "variable", "DB Column Name", "dbColumnName",
+                "Value", "value", "Type", "type", "Description", "description");
+        mappingsTable.setPrefHeight(230);
+        validationsTable.setPrefHeight(260);
+        variablesTable.setPrefHeight(210);
+        Button selectAll = secondary("Select All");
+        Button deselectAll = secondary("Deselect");
+        Button accept = secondary("Accept");
+        Button reject = secondary("Reject");
+        Button edit = secondary("Edit");
+        Button viewDetails = secondary("View Reason / Confidence / Context");
+        Button save = primary("Save");
+        Button saveMemory = primary("Save Selected");
+        Button addKnowledge = primary("Add to Knowledge Repository");
+        Button apply = primary("Apply");
+        Button importSuggestion = primary("Apply Selected");
+        Button close = secondary("Close");
+        Stage suggestionStage = new Stage();
+        if (stage != null) {
+            suggestionStage.initOwner(stage);
+        }
+        selectAll.setOnAction(e -> {
+            setAllRowsSelected(mappingRows, mappingsTable, true);
+            setAllRowsSelected(validationRows, validationsTable, true);
+            setAllRowsSelected(variableRows, variablesTable, true);
+        });
+        deselectAll.setOnAction(e -> {
+            setAllRowsSelected(mappingRows, mappingsTable, false);
+            setAllRowsSelected(validationRows, validationsTable, false);
+            setAllRowsSelected(variableRows, variablesTable, false);
+        });
+        accept.setOnAction(e -> updateDbSuggestionStatus(mappingRows, validationRows, "Accepted"));
+        reject.setOnAction(e -> {
+            updateDbSuggestionStatus(mappingRows, validationRows, "Rejected");
+            rememberDbSuggestionDecision(mappingRows, validationRows, "rejected");
+        });
+        edit.setOnAction(e -> editSelectedDbSuggestion(mappingsTable, validationsTable));
+        viewDetails.setOnAction(e -> showSelectedDbSuggestionDetails(mappingsTable, validationsTable));
+        saveMemory.setOnAction(e -> {
+            markSavableDbSuggestionsAccepted(mappingRows, validationRows);
+            saveDbAiSuggestionMemory(suggestion, mappingRows, validationRows, variableRows);
+        });
+        save.setOnAction(saveMemory.getOnAction());
+        addKnowledge.setOnAction(saveMemory.getOnAction());
+        apply.setOnAction(e -> {
+            for (Map<String, String> row : mappingRows) {
+                if (!"Rejected".equalsIgnoreCase(row.getOrDefault("status", ""))) row.put("selected", "true");
+            }
+            for (Map<String, String> row : validationRows) {
+                if (!"Rejected".equalsIgnoreCase(row.getOrDefault("status", ""))) row.put("selected", "true");
+            }
+            importDbAiSuggestionToTabs(mappingRows, validationRows, variableRows);
+        });
+        importSuggestion.setOnAction(e -> importDbAiSuggestionToTabs(mappingRows, validationRows, variableRows));
+        close.setOnAction(e -> suggestionStage.close());
+        VBox content = new VBox(14,
+                sectionTitle("DB AI Suggestion"),
+                new Label(selectedDbAiAgentName() + " used the DB ResultSet and API Agent knowledge repository to suggest API-DB auto-mappings, DB validations, and reusable variables."),
+                card("API-DB Quality Suggestions", mappingsTable),
+                card("DB Validation Suggestions", validationsTable),
+                card("Variable Suggestions", variablesTable));
+        content.setPadding(new Insets(16));
+        VBox.setVgrow(mappingsTable, Priority.ALWAYS);
+        VBox.setVgrow(validationsTable, Priority.ALWAYS);
+        VBox.setVgrow(variablesTable, Priority.ALWAYS);
+        ScrollPane scroller = new ScrollPane(content);
+        scroller.setFitToWidth(true);
+        scroller.setPannable(true);
+        scroller.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroller.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        FlowPane footer = actionRow(selectAll, deselectAll, accept, reject, edit, viewDetails,
+                save, saveMemory, addKnowledge, apply, importSuggestion, close);
+        footer.setPadding(new Insets(12, 16, 16, 16));
+        footer.getStyleClass().add("card");
+        BorderPane shell = new BorderPane(scroller);
+        shell.setBottom(footer);
+        double[] suggestionSize = apiAiSuggestionWindowSize();
+        Scene scene = new Scene(shell, suggestionSize[0], suggestionSize[1]);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        suggestionStage.setTitle("AI Suggestion - DB Studio");
+        suggestionStage.setScene(scene);
+        suggestionStage.setMinWidth(Math.min(760, suggestionSize[0]));
+        suggestionStage.setMinHeight(Math.min(520, suggestionSize[1]));
+        suggestionStage.setMaxWidth(Screen.getPrimary().getVisualBounds().getWidth());
+        suggestionStage.setMaxHeight(Screen.getPrimary().getVisualBounds().getHeight());
+        if (stage != null) {
+            suggestionStage.setX(stage.getX() + Math.max(0, (stage.getWidth() - suggestionSize[0]) / 2));
+            suggestionStage.setY(stage.getY() + Math.max(0, (stage.getHeight() - suggestionSize[1]) / 2));
+        }
+        suggestionStage.show();
+    }
+
+    private void importDbAiSuggestionToTabs(List<Map<String, String>> mappings, List<Map<String, String>> validations,
+                                            List<Map<String, String>> variables) {
+        dbRuleRows.clear();
+        for (Map<String, String> mapping : mappings) {
+            if (!isKnowledgeEligibleDbSuggestion(mapping)) continue;
+            dbRuleRows.add(row("selected", "true",
+                    "apiField", mapping.getOrDefault("apiField", ""),
+                    "dbTable", mapping.getOrDefault("dbTable", ""),
+                    "dbColumn", mapping.getOrDefault("dbColumn", ""),
+                    "transformation", mapping.getOrDefault("transformation", ""),
+                    "operator", firstNonBlank(mapping.get("operator"), "="),
+                    "confidence", mapping.getOrDefault("confidence", ""),
+                    "description", firstNonBlank(mapping.get("reason"),
+                            mapping.getOrDefault("description", "Imported from DB AI Analysis"))));
+        }
+        dbColumnValidationRows.clear();
+        for (Map<String, String> validation : validations) {
+            if (!isKnowledgeEligibleDbSuggestion(validation)) continue;
+            dbColumnValidationRows.add(row("selected", "true",
+                    "dbColumnName", validation.getOrDefault("dbColumnName", ""),
+                    "value", validation.getOrDefault("value", ""),
+                    "rule", validation.getOrDefault("rule", ""),
+                    "nullValidation", validation.getOrDefault("nullValidation", ""),
+                    "typeValidation", validation.getOrDefault("typeValidation", ""),
+                    "expectedValueOrVariable", validation.getOrDefault("expectedValueOrVariable", ""),
+                    "result", "Imported"));
+        }
+        int variableCount = saveSelectedDbAiVariablesInMemory(variables);
+        dbRulesTable.refresh();
+        dbColumnValidationsTable.refresh();
+        refreshVariablesView();
+        showInfo("DB AI Analysis", "Imported " + dbRuleRows.size() + " API-DB mapping(s), "
+                + dbColumnValidationRows.size() + " DB validation(s), and saved "
+                + variableCount + " variable(s) in memory.");
+    }
+
+    private void updateDbSuggestionStatus(List<Map<String, String>> mappings,
+                                          List<Map<String, String>> validations, String status) {
+        for (List<Map<String, String>> rows : List.of(mappings, validations)) {
+            for (Map<String, String> row : rows) {
+                if (isSelected(row)) {
+                    row.put("status", status);
+                }
+            }
+        }
+        if ("Accepted".equals(status)) {
+            rememberDbSuggestionDecision(mappings, validations, "accepted");
+        }
+    }
+
+    private void rememberDbSuggestionDecision(List<Map<String, String>> mappings,
+                                              List<Map<String, String>> validations, String decision) {
+        if (!isVeyraAIRuntimeSelected()) {
+            return;
+        }
+        JSONArray values = new JSONArray();
+        for (Map<String, String> row : mappings) {
+            if (isSelected(row)) values.put(new JSONObject(row));
+        }
+        for (Map<String, String> row : validations) {
+            if (isSelected(row)) values.put(new JSONObject(row));
+        }
+        saveCustomAgentMemory("suggestion", activeAgentSessionId(), "dbStudio",
+                decision + "DbSuggestion", new JSONObject().put("suggestions", values),
+                capitalize(decision) + " DB Agent suggestions",
+                new JSONArray().put("dbSuggestion").put(decision), 1.0, 2);
+    }
+
+    private void markSavableDbSuggestionsAccepted(List<Map<String, String>> mappings,
+                                                  List<Map<String, String>> validations) {
+        for (List<Map<String, String>> rows : List.of(mappings, validations)) {
+            for (Map<String, String> row : rows) {
+                if (isSelected(row) && !"Rejected".equalsIgnoreCase(row.getOrDefault("status", ""))) {
+                    row.put("status", "Accepted");
+                }
+            }
+        }
+        rememberDbSuggestionDecision(mappings, validations, "accepted");
+    }
+
+    private void editSelectedDbSuggestion(TableView<Map<String, String>> mappingsTable,
+                                          TableView<Map<String, String>> validationsTable) {
+        Map<String, String> selected = mappingsTable.getSelectionModel().getSelectedItem();
+        boolean mapping = selected != null;
+        if (selected == null) {
+            selected = validationsTable.getSelectionModel().getSelectedItem();
+        }
+        if (selected == null) {
+            showWarning("Edit DB Suggestion", "Select a mapping or validation row first.");
+            return;
+        }
+        String key = mapping ? "transformation" : "expectedValueOrVariable";
+        TextInputDialog valueDialog = new TextInputDialog(selected.getOrDefault(key, ""));
+        valueDialog.setTitle("Edit DB Suggestion");
+        valueDialog.setHeaderText(mapping ? "Edit mapping transformation" : "Edit validation expected value");
+        Map<String, String> row = selected;
+        valueDialog.showAndWait().ifPresent(value -> {
+            row.put(key, value);
+            row.put("status", "Edited");
+            row.put("selected", "true");
+            rememberDbSuggestionDecision(mapping ? List.of(row) : List.of(),
+                    mapping ? List.of() : List.of(row), "edited");
+            mappingsTable.refresh();
+            validationsTable.refresh();
+        });
+    }
+
+    private void showSelectedDbSuggestionDetails(TableView<Map<String, String>> mappingsTable,
+                                                 TableView<Map<String, String>> validationsTable) {
+        Map<String, String> selected = mappingsTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            selected = validationsTable.getSelectionModel().getSelectedItem();
+        }
+        if (selected == null) {
+            showWarning("DB Suggestion Details", "Select a mapping or validation row first.");
+            return;
+        }
+        showInfo("DB Suggestion Details",
+                "Confidence: " + selected.getOrDefault("confidence", "") + "\n"
+                        + "Reason: " + selected.getOrDefault("reason", "") + "\n"
+                        + "Context Used: " + selected.getOrDefault("contextSources", ""));
+    }
+
+    private boolean isKnowledgeEligibleDbSuggestion(Map<String, String> row) {
+        if (!isSelected(row)) {
+            return false;
+        }
+        String status = firstNonBlank(row.get("status"), "Suggested");
+        return !"Rejected".equalsIgnoreCase(status);
+    }
+
+    private void saveDbAiSuggestionMemory(DbAiSuggestion suggestion, List<Map<String, String>> mappings,
+                                          List<Map<String, String>> validations, List<Map<String, String>> variables) {
+        long approvedCount = mappings.stream().filter(this::isKnowledgeEligibleDbSuggestion).count()
+                + validations.stream().filter(this::isKnowledgeEligibleDbSuggestion).count();
+        if (approvedCount == 0) {
+            showWarning("DB AI Analysis", "Select and accept or edit at least one non-rejected suggestion before saving.");
+            return;
+        }
+        int variableCount = saveSelectedDbAiVariablesInMemory(variables);
+        JSONObject memory = new JSONObject()
+                .put("id", "db-ai-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                .put("endpoint", "DB ResultSet: " + shorten(dbQueryArea == null ? "" : dbQueryArea.getText(), 180))
+                .put("method", "DB_QUERY")
+                .put("actionName", "dbResultSetAnalysis")
+                .put("hermesSessionId", activeAgentSessionId())
+                .put("provider", activeAgentProviderName())
+                .put("response", new JSONObject()
+                        .put("status", "DB AI Analysis")
+                        .put("body", new JSONObject()
+                                .put("dbType", dbTypeBox == null ? "" : dbTypeBox.getValue())
+                                .put("sqlQuery", dbQueryArea == null ? "" : dbQueryArea.getText())
+                                .put("resultSet", dbResultSetSample()).toString()))
+                .put("variables", selectedRowsJson(variables))
+                .put("validations", selectedDbKnowledgeRowsJson(validations))
+                .put("dbMappings", selectedDbKnowledgeRowsJson(mappings))
+                .put("createdAt", Instant.now().toString());
+        saveApiAiMemory(memory);
+        saveCustomAgentKnowledgeIfActive("dbStudio", "dbValidationAndApiMapping", memory,
+                "Approved DB validations and API-DB auto-mappings for "
+                        + shorten(dbQueryArea == null ? "" : dbQueryArea.getText(), 120),
+                new JSONArray().put("dbValidation").put("dbApiMapping").put("approvedSuggestion"));
+        saveDbSuggestionKnowledgeEntries(mappings, validations);
+        refreshVariablesView();
+        showInfo("DB AI Analysis", "Saved selected DB validations and API-DB auto-mappings to the knowledge repository, plus "
+                + variableCount + " variable(s) in memory.");
+    }
+
+    private JSONArray selectedDbKnowledgeRowsJson(List<Map<String, String>> rows) {
+        JSONArray selected = new JSONArray();
+        for (Map<String, String> row : rows) {
+            if (isKnowledgeEligibleDbSuggestion(row)) {
+                selected.put(new JSONObject(row));
+            }
+        }
+        return selected;
+    }
+
+    private void saveDbSuggestionKnowledgeEntries(List<Map<String, String>> mappings,
+                                                  List<Map<String, String>> validations) {
+        if (!isVeyraAIRuntimeSelected()) {
+            return;
+        }
+        for (Map<String, String> validation : validations) {
+            if (!isKnowledgeEligibleDbSuggestion(validation)) continue;
+            JSONObject knowledge = dbSuggestionKnowledgeService.approvedValidation(
+                    new JSONObject(validation), configCacheKey(), configCacheKey());
+            saveCustomAgentMemory("knowledgeBase", configCacheKey(), "dbStudio", "acceptedDbValidation",
+                    knowledge, "Approved DB validation for " + validation.getOrDefault("dbColumnName", ""),
+                    new JSONArray().put("db").put("validation")
+                            .put(validation.getOrDefault("table", ""))
+                            .put(validation.getOrDefault("dbColumnName", "")), 1.0, 5);
+        }
+        for (Map<String, String> mapping : mappings) {
+            if (!isKnowledgeEligibleDbSuggestion(mapping)) continue;
+            JSONObject knowledge = dbSuggestionKnowledgeService.approvedMapping(
+                    new JSONObject(mapping), configCacheKey(), configCacheKey());
+            saveCustomAgentMemory("knowledgeBase", configCacheKey(), "dbStudio", "acceptedApiDbMapping",
+                    knowledge, "Approved API-DB mapping for " + mapping.getOrDefault("apiField", ""),
+                    new JSONArray().put("api-db").put("mapping")
+                            .put(mapping.getOrDefault("dbTable", "")), 1.0, 5);
+            saveCustomAgentMemory("crossSession", configCacheKey(), "dbStudio", "dbNamingConvention",
+                    new JSONObject()
+                            .put("apiField", mapping.getOrDefault("apiField", ""))
+                            .put("dbColumnPattern", mapping.getOrDefault("dbColumn", ""))
+                            .put("transformation", mapping.getOrDefault("transformation", "none"))
+                            .put("comparisonPreference", mapping.getOrDefault("operator", "=")),
+                    "API field " + mapping.getOrDefault("apiField", "") + " maps to "
+                            + mapping.getOrDefault("dbColumn", ""),
+                    new JSONArray().put("dbNamingConvention").put("comparisonPreference"), 1.0, 4);
+        }
+    }
+
+    private int saveSelectedDbAiVariablesInMemory(List<Map<String, String>> variables) {
+        int count = 0;
+        for (Map<String, String> variable : variables) {
+            if (!isSelected(variable)) continue;
+            String name = variable.getOrDefault("variable", "").replace("${", "").replace("}", "");
+            if (name.isBlank()) {
+                name = normalizeVariableName(variable.getOrDefault("dbColumnName", "dbValue"));
+            }
+            String value = variable.getOrDefault("value", "");
+            String column = variable.getOrDefault("dbColumnName", "");
+            savedVariables.put(name, value);
+            savedVariablePaths.put(name, "db:" + column);
+            savedVariableTypes.put(name, firstNonBlank(variable.get("type"), "DB Result"));
+            count++;
+        }
+        return count;
+    }
+
+    private JSONArray selectedRowsJson(List<Map<String, String>> rows) {
+        JSONArray selected = new JSONArray();
+        for (Map<String, String> row : rows) {
+            if (isSelected(row)) {
+                selected.put(new JSONObject(row));
+            }
+        }
+        return selected;
+    }
+
     private void runDbValidation() {
         List<DbValidationRule> rules = new ArrayList<>();
         for (Map<String, String> row : dbRuleRows) {
@@ -4301,16 +15828,181 @@ public class ApiValidatorFxApp extends Application {
             showWarning("DB Validation", "Add at least one selected validation rule.");
             return;
         }
+        String apiResponseBody = dbValidationApiResponseBody(rules);
+        if (apiResponseBody == null) {
+            return;
+        }
         Task<DbValidationReport> task = new Task<>() {
             @Override
             protected DbValidationReport call() throws Exception {
                 return dbValidationService.validate(buildDbConfig(), dbQueryArea.getText(),
-                        rules, lastResponse == null ? "" : lastResponse.rawBody, savedVariables);
+                        rules, apiResponseBody, savedVariables);
             }
         };
         task.setOnSucceeded(e -> renderDbValidation(task.getValue()));
         task.setOnFailed(e -> showError("DB Validation Failed", task.getException()));
         start(task);
+    }
+
+    private String dbValidationApiResponseBody(List<DbValidationRule> rules) {
+        if (lastResponse != null && !nullToBlank(lastResponse.rawBody).isBlank()) {
+            return lastResponse.rawBody;
+        }
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        if (stage != null) {
+            confirm.initOwner(stage);
+        }
+        confirm.setTitle("Use Project Knowledge?");
+        confirm.setHeaderText("I don't see any live API request being hit.");
+        confirm.setContentText("Shall I use the project knowledge to look for the last saved response and run DB validation?");
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+            return null;
+        }
+        try {
+            ApiResponse saved = loadSavedApiResponseForDbValidation(rules);
+            if (saved == null || nullToBlank(saved.rawBody).isBlank()) {
+                showWarning("DB Validation", "No saved API response memory was found in the selected project knowledge store.");
+                return null;
+            }
+            lastResponse = saved;
+            renderResponse(saved);
+            showInfo("DB Validation", "Loaded saved API response from project knowledge for validation.");
+            return saved.rawBody;
+        } catch (Exception e) {
+            showError("Load Saved Response Failed", e);
+            return null;
+        }
+    }
+
+    private ApiResponse loadSavedApiResponseForDbValidation(List<DbValidationRule> rules) throws Exception {
+        JSONArray memories = apiAiAgentMemoryStorageMode() == StorageMode.LOCAL
+                ? loadSavedApiResponseMemoriesFromSqlite()
+                : loadSavedApiResponseMemoriesFromFirebase();
+        JSONObject best = null;
+        int bestScore = -1;
+        for (int i = 0; i < memories.length(); i++) {
+            JSONObject memory = memories.optJSONObject(i);
+            if (memory == null) continue;
+            JSONObject response = memory.optJSONObject("response");
+            String body = savedResponseBody(response);
+            int score = savedResponseScore(body, rules);
+            if (score > bestScore) {
+                best = memory;
+                bestScore = score;
+            }
+        }
+        if (best == null) {
+            return null;
+        }
+        JSONObject response = best.optJSONObject("response");
+        String body = savedResponseBody(response);
+        if (body.isBlank()) {
+            return null;
+        }
+        ApiResponse apiResponse = new ApiResponse();
+        apiResponse.rawBody = body;
+        apiResponse.prettyBody = body;
+        apiResponse.statusLine = response == null ? "Saved Response" : firstNonBlank(response.optString("status"), "Saved Response");
+        apiResponse.statusCode = response == null ? 0 : response.optInt("statusCode", 0);
+        apiResponse.headersText = response == null ? "" : response.optString("headers");
+        apiResponse.cookiesText = response == null ? "" : response.optString("cookies");
+        apiResponse.sizeBytes = body.getBytes(StandardCharsets.UTF_8).length;
+        apiResponse.timeMs = 0;
+        return apiResponse;
+    }
+
+    private JSONArray loadSavedApiResponseMemoriesFromSqlite() throws Exception {
+        JSONArray memories = new JSONArray();
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        if (!Files.exists(sqliteDbPath)) {
+            return memories;
+        }
+        initializeApiAiMemoryTable(sqliteDbPath);
+        String sql = "SELECT id, endpoint, method, response_json, variables_json, validations_json, db_mappings_json, created_at, action_name "
+                + "FROM " + API_AI_MEMORY_TABLE + " WHERE action_name = ? ORDER BY created_at DESC LIMIT 50";
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, "savedApiResponse");
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    memories.put(new JSONObject()
+                            .put("id", resultSet.getString("id"))
+                            .put("endpoint", resultSet.getString("endpoint"))
+                            .put("method", resultSet.getString("method"))
+                            .put("actionName", resultSet.getString("action_name"))
+                            .put("response", safeJsonObject(resultSet.getString("response_json")))
+                            .put("variables", safeJsonArray(resultSet.getString("variables_json")))
+                            .put("validations", safeJsonArray(resultSet.getString("validations_json")))
+                            .put("dbMappings", safeJsonArray(resultSet.getString("db_mappings_json")))
+                            .put("createdAt", resultSet.getString("created_at")));
+                }
+            }
+        }
+        return memories;
+    }
+
+    private JSONArray loadSavedApiResponseMemoriesFromFirebase() throws Exception {
+        JSONArray memories = new JSONArray();
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_FIREBASE_PATH + ".json")
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 || response.body() == null || response.body().isBlank() || "null".equals(response.body())) {
+            return memories;
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase saved response memory load failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+        JSONObject root = new JSONObject(response.body());
+        List<JSONObject> items = new ArrayList<>();
+        for (String id : root.keySet()) {
+            JSONObject item = root.optJSONObject(id);
+            if (item != null && "savedApiResponse".equals(item.optString("actionName"))) {
+                items.add(item);
+            }
+        }
+        items.sort((left, right) -> right.optString("createdAt").compareTo(left.optString("createdAt")));
+        for (JSONObject item : items) {
+            memories.put(item);
+            if (memories.length() >= 50) {
+                break;
+            }
+        }
+        return memories;
+    }
+
+    private String savedResponseBody(JSONObject response) {
+        if (response == null) {
+            return "";
+        }
+        String pathText = response.optString("savedResponsePath");
+        if (!pathText.isBlank()) {
+            try {
+                Path path = Path.of(pathText).toAbsolutePath().normalize();
+                if (Files.isRegularFile(path)) {
+                    return Files.readString(path, StandardCharsets.UTF_8);
+                }
+            } catch (Exception ignored) {
+                // Fall back to response body captured in memory.
+            }
+        }
+        return response.optString("body");
+    }
+
+    private int savedResponseScore(String body, List<DbValidationRule> rules) {
+        if (body == null || body.isBlank()) {
+            return 0;
+        }
+        int score = 0;
+        for (DbValidationRule rule : rules) {
+            String apiField = nullToBlank(rule.apiField);
+            if (!apiField.isBlank() && extractJsonValue(body, apiField) != null) {
+                score += 3;
+            } else if (!apiField.isBlank() && body.toLowerCase().contains(apiField.replace("$.", "").toLowerCase())) {
+                score++;
+            }
+        }
+        return score;
     }
 
     private void renderDbValidation(DbValidationReport report) {
@@ -4323,6 +16015,9 @@ public class ApiValidatorFxApp extends Application {
         if (report.dbRows != null) {
             renderDbRows(report.dbRows);
         }
+        writeStandaloneValidationReport("DB_VALIDATOR", "DB Studio", "API-DB Validation",
+                localDbValidatorReportsDirectory(), dbResultRows,
+                "field", "expected", "actual", "operator", "result", "message");
     }
 
     private DbConnectionConfig buildDbConfig() {
@@ -4427,11 +16122,11 @@ public class ApiValidatorFxApp extends Application {
         for (Map<String, String> row : dbRuleRows) {
             rules.put(new JSONObject(row));
         }
-        saveTextFile(rules.toString(2), "dbrules.json");
+        saveTextFile(rules.toString(2), "dbrules.json", configuredFolder("DB", "DBRules"));
     }
 
     private void loadDbRules() {
-        File file = chooseOpenFile("JSON Files", "*.json");
+        File file = chooseOpenFile("JSON Files", "*.json", configuredFolder("DB", "DBRules"));
         if (file == null) {
             return;
         }
@@ -4491,14 +16186,22 @@ public class ApiValidatorFxApp extends Application {
             }
             String actual = row.getOrDefault("value", "");
             String expected = resolveVariables(row.getOrDefault("expectedValueOrVariable", ""));
-            boolean passed = compareValues(expected, actual, "equals");
             String nullRule = row.getOrDefault("nullValidation", "");
-            if ("must not be null".equals(nullRule)) {
-                passed = passed && actual != null && !actual.isBlank() && !"null".equalsIgnoreCase(actual);
-            }
+            String normalizedNullRule = "must not be null".equalsIgnoreCase(nullRule) ? "Not Null"
+                    : "must be null".equalsIgnoreCase(nullRule) ? "Null" : nullRule;
+            String typeRule = row.getOrDefault("typeValidation", "");
+            String normalizedTypeRule = "any".equalsIgnoreCase(typeRule) ? "Skip" : typeRule;
+            String actualType = "null".equalsIgnoreCase(actual) || actual == null || actual.isBlank() ? "null" : inferTypeValidation(actual);
+            List<String> reasons = dbColumnValidationErrors(actualType, actual,
+                    normalizedNullRule, normalizedTypeRule, expected);
+            boolean passed = reasons.isEmpty();
             row.put("result", passed ? "Pass" : "Fail");
+            row.put("message", passed ? "Expected checks matched" : String.join(", ", reasons));
         }
         dbColumnValidationsTable.refresh();
+        writeStandaloneValidationReport("DB_VALIDATOR", "DB Studio", "DB Validation",
+                localDbValidatorReportsDirectory(), dbColumnValidationRows,
+                "dbColumnName", "expectedValueOrVariable", "value", "nullValidation", "typeValidation", "result", "message");
     }
 
     private String inferTypeValidation(String value) {
@@ -4579,30 +16282,66 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void appendWebStep(WebTestStep step) {
-        webStepRows.add(row("step", String.valueOf(webStepRows.size() + 1), "action", step.action,
+        String stepName = firstNonBlank(step.stepName, autoWebStepName(step.action, step.selector, step.value, step.note, ""));
+        webStepRows.add(row("step", String.valueOf(webStepRows.size() + 1), "stepName", stepName, "action", step.action,
                 "selector", step.selector, "value", step.value, "note", step.note));
     }
 
+    private String autoWebStepName(String action, String selector, String value, String note, String flowVariableName) {
+        String normalizedAction = firstNonBlank(action, "Step").trim();
+        String subject = firstNonBlank(flowVariableName, readableStepSubject(selector), readableStepSubject(note), readableStepSubject(value));
+        return subject.isBlank() ? normalizedAction : normalizedAction + " " + subject;
+    }
+
+    private String readableStepSubject(String value) {
+        String text = nullToBlank(value)
+                .replaceFirst("(?i)^text=", "")
+                .replaceAll("^[\"']|[\"']$", "")
+                .replaceAll("(?i).*data-testid=[\"']?([^\"'\\]]+)[\"']?.*", "$1")
+                .replaceAll("(?i).*placeholder=[\"']?([^\"'\\]]+)[\"']?.*", "$1")
+                .replaceFirst("^#", "")
+                .replaceFirst("^\\.", "")
+                .replace("\\ ", " ")
+                .replaceAll("[^a-zA-Z0-9 ${}_-]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return text.length() > 42 ? text.substring(0, 42).trim() : text;
+    }
+
     private void addWebStepDialog() {
-        showWebStepDialog("Add Web Step", null).ifPresent(step ->
-                webStepRows.add(row("step", String.valueOf(webStepRows.size() + 1),
+        showWebStepDialog("Add Web Step", null).ifPresent(step -> {
+                Map<String, String> row = row("step", String.valueOf(webStepRows.size() + 1),
+                        "stepName", firstNonBlank(step.getOrDefault("stepName", ""), autoWebStepName(
+                                step.getOrDefault("action", ""), step.getOrDefault("selector", ""),
+                                step.getOrDefault("value", ""), step.getOrDefault("note", ""),
+                                step.getOrDefault("flowVariableName", ""))),
                         "action", step.getOrDefault("action", ""),
                         "selector", step.getOrDefault("selector", ""),
                         "value", step.getOrDefault("value", ""),
-                        "note", step.getOrDefault("note", ""))));
+                        "note", step.getOrDefault("note", ""),
+                        "flowVariableName", step.getOrDefault("flowVariableName", ""));
+                webStepRows.add(row);
+                registerFlowVariableFromRow(row);
+        });
     }
 
     private void editSelectedWebStep() {
         Map<String, String> selected = webStepsTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showWarning("Web Testing", "Select a web step to edit.");
+            showWarning("UI Studio", "Select a web step to edit.");
             return;
         }
         showWebStepDialog("Edit Web Step", selected).ifPresent(step -> {
+            selected.put("stepName", firstNonBlank(step.getOrDefault("stepName", ""), autoWebStepName(
+                    step.getOrDefault("action", ""), step.getOrDefault("selector", ""),
+                    step.getOrDefault("value", ""), step.getOrDefault("note", ""),
+                    step.getOrDefault("flowVariableName", ""))));
             selected.put("action", step.getOrDefault("action", ""));
             selected.put("selector", step.getOrDefault("selector", ""));
             selected.put("value", step.getOrDefault("value", ""));
             selected.put("note", step.getOrDefault("note", ""));
+            selected.put("flowVariableName", step.getOrDefault("flowVariableName", ""));
+            registerFlowVariableFromRow(selected);
             webStepsTable.refresh();
         });
     }
@@ -4611,18 +16350,27 @@ public class ApiValidatorFxApp extends Application {
         Dialog<Map<String, String>> dialog = new Dialog<>();
         dialog.setTitle(title);
         dialog.setHeaderText(null);
+        if (stage != null) {
+            dialog.initOwner(stage);
+        }
+        dialog.initStyle(StageStyle.UNDECORATED);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         dialog.setResizable(true);
+        styleDialogPane(dialog.getDialogPane());
 
-        TextField actionField = new TextField(existing == null ? "" : existing.getOrDefault("action", ""));
+        ComboBox<String> actionField = new ComboBox<>(FXCollections.observableArrayList(WEB_TEST_ACTIONS));
+        actionField.setEditable(true);
+        actionField.setValue(existing == null ? "Navigate" : firstNonBlank(existing.getOrDefault("action", ""), "Navigate"));
         TextField selectorField = new TextField(existing == null ? "" : existing.getOrDefault("selector", ""));
         TextField valueField = new TextField(existing == null ? "" : existing.getOrDefault("value", ""));
+        TextField flowVariableNameField = new TextField(existing == null ? "" : existing.getOrDefault("flowVariableName",
+                flowVariableName(existing)));
         TextArea noteArea = editor(existing == null ? "" : existing.getOrDefault("note", ""));
         noteArea.setPrefRowCount(3);
         noteArea.setMinHeight(90);
 
         ComboBox<String> variableBox = createVariableDropdown();
-        ComboBox<String> targetBox = combo("Selector", "Value", "Note");
+        ComboBox<String> targetBox = combo("Selector", "Value", "Note", "Flow Variable Name");
         Button insertVariable = secondary("Insert Variable");
         insertVariable.setOnAction(e -> {
             if (variableBox.getValue() == null) {
@@ -4635,33 +16383,64 @@ public class ApiValidatorFxApp extends Application {
             } else if ("Value".equals(target)) {
                 insertVariable(valueField, variableBox);
             } else {
-                insertVariable(noteArea, variableBox);
+                if ("Flow Variable Name".equals(target)) {
+                    insertVariable(flowVariableNameField, variableBox);
+                } else {
+                    insertVariable(noteArea, variableBox);
+                }
             }
         });
+        Runnable updateFlowVariableMode = () -> {
+            boolean flowVariable = "Flow Variable".equalsIgnoreCase(nullToBlank(actionField.getValue()));
+            selectorField.setDisable(flowVariable);
+            flowVariableNameField.setDisable(!flowVariable);
+            selectorField.setPromptText(flowVariable ? "Disabled for Flow Variable" : "");
+            valueField.setPromptText(flowVariable ? "Value or ${variable} to store" : "");
+            flowVariableNameField.setPromptText(flowVariable ? "Variable name to create, for example customerName" : "");
+            if (flowVariable) {
+                selectorField.clear();
+            }
+        };
+        actionField.valueProperty().addListener((observable, oldValue, newValue) -> updateFlowVariableMode.run());
+        actionField.getEditor().textProperty().addListener((observable, oldValue, newValue) -> updateFlowVariableMode.run());
+        updateFlowVariableMode.run();
+        TextField stepNameField = new TextField(existing == null ? "" : existing.getOrDefault("stepName", ""));
+        stepNameField.setPromptText("Auto-generated if blank");
 
         GridPane form = grid();
         form.setPrefWidth(720);
-        form.add(labeled("Action", actionField), 0, 0, 2, 1);
-        form.add(labeled("Selector", selectorField), 0, 1, 2, 1);
-        form.add(labeled("Value", valueField), 0, 2, 2, 1);
-        form.add(labeled("Note", noteArea), 0, 3, 2, 1);
-        form.add(labeled("Variables", variableBox), 0, 4);
-        form.add(labeled("Apply To", targetBox), 1, 4);
-        form.add(insertVariable, 0, 5, 2, 1);
+        form.add(labeled("Step Name", stepNameField), 0, 0, 2, 1);
+        form.add(labeled("Action", actionField), 0, 1, 2, 1);
+        form.add(labeled("Selector", selectorField), 0, 2, 2, 1);
+        form.add(labeled("Value", valueField), 0, 3, 2, 1);
+        form.add(labeled("Flow Variable Name", flowVariableNameField), 0, 4, 2, 1);
+        form.add(labeled("Note", noteArea), 0, 5, 2, 1);
+        form.add(labeled("Variables", variableBox), 0, 6);
+        form.add(labeled("Apply To", targetBox), 1, 6);
+        form.add(insertVariable, 0, 7, 2, 1);
         GridPane.setHgrow(actionField, Priority.ALWAYS);
         GridPane.setHgrow(selectorField, Priority.ALWAYS);
         GridPane.setHgrow(valueField, Priority.ALWAYS);
         GridPane.setHgrow(noteArea, Priority.ALWAYS);
 
-        dialog.getDialogPane().setContent(form);
+        VBox shell = new VBox(14, themedSubwindowHeader(title, dialog), form);
+        shell.setMinWidth(0);
+        dialog.getDialogPane().setContent(shell);
         dialog.setResultConverter(button -> {
             if (button != ButtonType.OK) {
                 return null;
             }
-            return row("action", actionField.getText(),
-                    "selector", selectorField.getText(),
+            String action = firstNonBlank(actionField.getEditor().getText(), actionField.getValue());
+            boolean flowVariable = "Flow Variable".equalsIgnoreCase(action);
+            String flowName = flowVariable ? normalizeVariableName(flowVariableNameField.getText()) : "";
+            String selector = flowVariable ? flowName : selectorField.getText();
+            String stepName = firstNonBlank(stepNameField.getText(), autoWebStepName(action, selector, valueField.getText(), noteArea.getText(), flowName));
+            return row("stepName", stepName,
+                    "action", action,
+                    "selector", selector,
                     "value", valueField.getText(),
-                    "note", noteArea.getText());
+                    "note", noteArea.getText(),
+                    "flowVariableName", flowName);
         });
         return dialog.showAndWait();
     }
@@ -4680,7 +16459,7 @@ public class ApiValidatorFxApp extends Application {
 
     private void addWebScreenshotStep() {
         webStepRows.add(row("step", String.valueOf(webStepRows.size() + 1),
-                "action", "screenshot", "selector", "", "value", "", "note", "Capture screenshot"));
+                "stepName", "Screenshot page", "action", "screenshot", "selector", "", "value", "", "note", "Capture screenshot"));
     }
 
     private void clearWebSteps() {
@@ -4690,7 +16469,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void mergeWebRecording() {
-        File file = chooseOpenFile("JSON Files", "*.json");
+        File file = chooseOpenFile("JSON Files", "*.json", configuredFolder("WebUI", "Recording"));
         if (file == null) {
             return;
         }
@@ -4706,17 +16485,1479 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void launchDebugChrome() {
-        showInfo("Launch Debug Chrome", "Start Chrome manually with --remote-debugging-port=9222, then use Attach.");
+        String startUrl = webStartUrlField == null ? "" : webStartUrlField.getText().trim();
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                Path userDataDir = Path.of(System.getProperty("java.io.tmpdir"), "testweave-debug-chrome-profile");
+                Files.createDirectories(userDataDir);
+
+                List<String> command = new ArrayList<>();
+                command.add(resolveChromeExecutable());
+                command.add("--remote-debugging-port=9222");
+                command.add("--user-data-dir=" + userDataDir.toAbsolutePath());
+                command.add("--no-first-run");
+                command.add("--no-default-browser-check");
+                if (!startUrl.isBlank()) {
+                    command.add(startUrl);
+                }
+
+                new ProcessBuilder(command).start();
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> {
+            webCdpEndpointField.setText("http://127.0.0.1:9222");
+            webRecorderStatusLabel.setText("Debug Chrome launched on port 9222. Click Attach to record.");
+        });
+        task.setOnFailed(e -> showError("Launch Debug Chrome Failed", task.getException()));
+        start(task);
+    }
+
+    private String resolveChromeExecutable() {
+        List<String> candidates = chromeExecutableCandidates();
+        for (String candidate : candidates) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            Path path = Path.of(candidate);
+            if (Files.isRegularFile(path)) {
+                return path.toString();
+            }
+        }
+
+        String osName = System.getProperty("os.name", "").toLowerCase();
+        if (osName.contains("win")) {
+            return "chrome.exe";
+        }
+        if (osName.contains("mac")) {
+            return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+        }
+        return "google-chrome";
+    }
+
+    private List<String> chromeExecutableCandidates() {
+        String localAppData = System.getenv("LOCALAPPDATA");
+        String programFiles = System.getenv("PROGRAMFILES");
+        String programFilesX86 = System.getenv("PROGRAMFILES(X86)");
+        String home = System.getProperty("user.home", "");
+        return List.of(
+                localAppData == null ? "" : localAppData + "\\Google\\Chrome\\Application\\chrome.exe",
+                programFiles == null ? "" : programFiles + "\\Google\\Chrome\\Application\\chrome.exe",
+                programFilesX86 == null ? "" : programFilesX86 + "\\Google\\Chrome\\Application\\chrome.exe",
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                home + "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/usr/bin/google-chrome",
+                "/usr/local/bin/google-chrome",
+                "/usr/bin/chromium-browser",
+                "/usr/bin/chromium"
+        );
     }
 
     private void stopWebRecordingWithoutClosingBrowser() {
         playwrightRecorderController.stopRecordingWithoutClosingBrowser();
     }
 
+    private void setupCodexCliDocker() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String image = codexDockerImage();
+                appendCodexLog("Checking Codex CLI Docker image availability: " + image);
+
+                requireDocker();
+                if (!dockerImageExists(image)) {
+                    appendCodexLog("Codex CLI image not found locally. Pulling " + image + ".");
+                    runDockerCommandWithLogs(List.of("pull", image));
+                    appendCodexLog("Codex CLI image installed: " + image);
+                } else {
+                    appendCodexLog("Codex CLI image is already available locally: " + image);
+                }
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendCodexLog("Codex CLI setup failed: " + exceptionMessage(task.getException()));
+            showError("Codex CLI Setup Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void startCodexCliContainer() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String image = codexDockerImage();
+                String containerName = codexContainerName();
+                requireDocker();
+                if (!dockerImageExists(image)) {
+                    throw new IllegalStateException("Codex CLI image was not found locally. Run setup first to pull " + image + ".");
+                }
+                if (!dockerContainerExists(containerName)) {
+                    appendCodexLog("Codex CLI container does not exist. Creating it from image: " + image);
+                    runCodexCliContainer(image, containerName);
+                    appendCodexLog("Codex CLI container started: " + containerName);
+                    verifyCodexCli(containerName);
+                    openCodexCliWindow(containerName);
+                    return null;
+                }
+                if (dockerContainerRunning(containerName)) {
+                    appendCodexLog("Codex CLI container is already running: " + containerName);
+                    verifyCodexCli(containerName);
+                    openCodexCliWindow(containerName);
+                    return null;
+                }
+                runDockerCommand(List.of("start", containerName));
+                appendCodexLog("Codex CLI container started: " + containerName);
+                verifyCodexCli(containerName);
+                openCodexCliWindow(containerName);
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendCodexLog("Codex CLI start failed: " + exceptionMessage(task.getException()));
+            showError("Codex CLI Start Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void stopCodexCliContainer() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String containerName = codexContainerName();
+                requireDocker();
+                if (!dockerContainerExists(containerName)) {
+                    appendCodexLog("Codex CLI container was not found: " + containerName);
+                    return null;
+                }
+                if (!dockerContainerRunning(containerName)) {
+                    appendCodexLog("Codex CLI container is already stopped: " + containerName);
+                    return null;
+                }
+                appendCodexLog("Stopping Codex CLI container: " + containerName);
+                cancelCodexChatProcess();
+                runDockerCommand(List.of("stop", containerName));
+                appendCodexLog("Codex CLI container stopped: " + containerName);
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendCodexLog("Codex CLI stop failed: " + exceptionMessage(task.getException()));
+            showError("Codex CLI Stop Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void setupHermesAgentDocker() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String image = hermesDockerImage();
+                String containerName = hermesContainerName();
+                appendHermesLog("Starting Hermes Agent setup.");
+                appendHermesLog("Checking Hermes Agent Docker image availability: " + image);
+
+                requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+                if (!dockerImageExists(image)) {
+                    appendHermesLog("Hermes Agent image not found locally. Pulling " + image + ".");
+                    runDockerCommandWithLogs(List.of("pull", image), ApiValidatorFxApp.this::appendHermesProcessLine);
+                    appendHermesLog("Hermes Agent image installed: " + image);
+                } else {
+                    appendHermesLog("Hermes Agent image is already available locally: " + image);
+                }
+
+                if (!dockerContainerExists(containerName)) {
+                    appendHermesLog("Creating Hermes Agent container: " + containerName);
+                    runHermesAgentContainer(image, containerName);
+                    appendHermesLog("Hermes Agent container created and started: " + containerName);
+                    appendHermesLog("Opening Hermes setup wizard in a terminal.");
+                    launchHermesCli(containerName, "setup");
+                } else if (!dockerContainerHasExpectedMount(containerName, "/opt/data", hermesDataDirectory())) {
+                    appendHermesLog("Hermes Agent container is using an older AI Agent path. Recreating it.");
+                    recreateHermesAgentContainer(image, containerName);
+                    appendHermesLog("Opening Hermes setup wizard in a terminal.");
+                    launchHermesCli(containerName, "setup");
+                } else {
+                    appendHermesLog("Hermes Agent container is already configured: " + containerName);
+                }
+                appendHermesLog("Hermes Agent setup complete.");
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendHermesLog("Hermes Agent setup failed: " + exceptionMessage(task.getException()));
+            showError("Hermes Agent Setup Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void startHermesAgentContainer() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String image = hermesDockerImage();
+                String containerName = hermesContainerName();
+                requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+                ensureHermesContainerRunning(image, containerName, false);
+                verifyHermesAgent(containerName);
+                launchHermesCli(containerName, null);
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendHermesLog("Hermes Agent start failed: " + exceptionMessage(task.getException()));
+            showError("Hermes Agent Start Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void startEmbeddedHermesCli() {
+        Task<EmbeddedHermesLaunch> task = new Task<>() {
+            @Override
+            protected EmbeddedHermesLaunch call() throws Exception {
+                String image = hermesDockerImage();
+                String containerName = hermesContainerName();
+                requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+                ensureHermesContainerRunning(image, containerName, false);
+                verifyHermesAgent(containerName);
+                Path aiAgentPath = hermesDataDirectory();
+                List<String> dockerArgs = buildHermesDockerArgs(containerName, null);
+                return new EmbeddedHermesLaunch(containerName, aiAgentPath, dockerArgs);
+            }
+        };
+        task.setOnSucceeded(e -> showEmbeddedHermesTerminal(task.getValue()));
+        task.setOnFailed(e -> {
+            appendHermesLog("Embedded Hermes CLI failed: " + exceptionMessage(task.getException()));
+            showError("Embedded Hermes CLI Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void startEmbeddedCustomAgentModelSignIn() {
+        Task<EmbeddedHermesLaunch> task = new Task<>() {
+            @Override
+            protected EmbeddedHermesLaunch call() throws Exception {
+                String image = hermesDockerImage();
+                String containerName = hermesContainerName();
+                requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+                ensureHermesContainerRunning(image, containerName, false);
+                verifyHermesAgent(containerName);
+                Path aiAgentPath = hermesDataDirectory();
+                List<String> dockerArgs = buildHermesDockerArgs(containerName, "model");
+                return new EmbeddedHermesLaunch(containerName, aiAgentPath, dockerArgs);
+            }
+        };
+        task.setOnSucceeded(e -> showEmbeddedHermesTerminal(task.getValue(), "VeyraAI - Hermes Model Sign In"));
+        task.setOnFailed(e -> {
+            appendHermesLog("Hermes model sign-in terminal failed: " + exceptionMessage(task.getException()));
+            showError("Hermes Model Sign In Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void showEmbeddedHermesTerminal(EmbeddedHermesLaunch launch) {
+        showEmbeddedHermesTerminal(launch, "VeyraAI - Embedded Hermes CLI");
+    }
+
+    private void showEmbeddedHermesTerminal(EmbeddedHermesLaunch launch, String title) {
+        if (launch == null) {
+            return;
+        }
+        Stage terminalStage = new Stage();
+        terminalStage.setTitle(title);
+        loadApplicationIcon(terminalStage);
+
+        SwingNode terminalNode = new SwingNode();
+        AtomicReference<PtyProcess> processRef = new AtomicReference<>();
+        AtomicReference<JediTermWidget> widgetRef = new AtomicReference<>();
+        Label status = new Label("Starting embedded Hermes terminal...");
+        status.getStyleClass().add("muted");
+        Button cancelSession = secondary("Cancel Session");
+        cancelSession.setDisable(true);
+        cancelSession.setOnAction(e -> {
+            PtyProcess process = processRef.get();
+            if (process == null || !process.isAlive()) {
+                status.setText("No embedded Hermes session is currently running.");
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    process.getOutputStream().write(3);
+                    process.getOutputStream().flush();
+                    Platform.runLater(() -> {
+                        status.setText("Cancel signal sent to embedded Hermes session.");
+                        appendHermesLog("Sent Ctrl+C to embedded Hermes terminal session.");
+                    });
+                } catch (Exception ex) {
+                    process.destroy();
+                    Platform.runLater(() -> {
+                        status.setText("Embedded Hermes session was closed.");
+                        appendHermesLog("Could not send Ctrl+C; closed embedded Hermes session: " + exceptionMessage(ex));
+                    });
+                }
+            });
+        });
+        Button close = secondary("Close Terminal");
+        close.setOnAction(e -> terminalStage.close());
+        BorderPane content = new BorderPane();
+        content.setCenter(terminalNode);
+        content.setBottom(actionRow(status, cancelSession, close));
+        BorderPane.setMargin(content.getBottom(), new Insets(10));
+        content.setPadding(new Insets(12));
+
+        Scene scene = new Scene(content, 1120, 720);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        terminalStage.setScene(scene);
+        terminalStage.show();
+
+        terminalStage.setOnCloseRequest(event -> {
+            JediTermWidget widget = widgetRef.get();
+            if (widget != null) {
+                SwingUtilities.invokeLater(widget::close);
+            }
+            PtyProcess process = processRef.get();
+            if (process != null && process.isAlive()) {
+                process.destroy();
+            }
+        });
+
+        SwingUtilities.invokeLater(() -> {
+            try {
+                List<String> command = new ArrayList<>();
+                command.add("docker");
+                command.addAll(launch.dockerArgs());
+                Map<String, String> environment = new HashMap<>(System.getenv());
+                environment.put("TERM", "xterm-256color");
+                PtyProcess process = new PtyProcessBuilder(command.toArray(String[]::new))
+                        .setEnvironment(environment)
+                        .setDirectory(launch.aiAgentPath().toString())
+                        .setInitialColumns(120)
+                        .setInitialRows(32)
+                        .setRedirectErrorStream(true)
+                        .setWindowsAnsiColorEnabled(true)
+                        .setUseWinConPty(true)
+                        .start();
+                processRef.set(process);
+
+                JediTermWidget widget = new JediTermWidget(120, 32, new DefaultSettingsProvider());
+                widget.setTtyConnector(new EmbeddedPtyTtyConnector(process, StandardCharsets.UTF_8, command));
+                widget.start();
+                widgetRef.set(widget);
+                terminalNode.setContent(widget.getComponent());
+                Platform.runLater(() -> {
+                    status.setText("Embedded Hermes CLI running in container: " + launch.containerName());
+                    cancelSession.setDisable(false);
+                    appendHermesLog("Opened embedded Hermes CLI for container: " + launch.containerName());
+                    appendHermesLog("Embedded Hermes CLI command: " + String.join(" ", command));
+                });
+                process.onExit().thenRun(() -> Platform.runLater(() -> {
+                    cancelSession.setDisable(true);
+                    status.setText("Embedded Hermes session ended. Terminal window remains open.");
+                }));
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    status.setText("Embedded Hermes CLI failed");
+                    cancelSession.setDisable(true);
+                    appendHermesLog("Embedded Hermes CLI failed: " + exceptionMessage(ex));
+                    showError("Embedded Hermes CLI Failed", ex);
+                });
+            }
+        });
+    }
+
+    private void launchHermesAgentBrowser() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String image = hermesDockerImage();
+                String containerName = hermesContainerName();
+                requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+                ensureHermesContainerRunning(image, containerName, true);
+                startHermesDashboard(containerName);
+                waitForHermesDashboard();
+                Platform.runLater(() -> getHostServices().showDocument(HERMES_DASHBOARD_URL));
+                appendHermesLog("Opened Hermes dashboard in browser: " + HERMES_DASHBOARD_URL);
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendHermesLog("Hermes browser launch failed: " + exceptionMessage(task.getException()));
+            showError("Hermes Browser Launch Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void stopHermesAgentContainer() {
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String containerName = hermesContainerName();
+                requireDocker(ApiValidatorFxApp.this::appendHermesLog);
+                if (!dockerContainerExists(containerName)) {
+                    appendHermesLog("Hermes Agent container was not found: " + containerName);
+                    return null;
+                }
+                if (!dockerContainerRunning(containerName)) {
+                    appendHermesLog("Hermes Agent container is already stopped: " + containerName);
+                    return null;
+                }
+                appendHermesLog("Stopping Hermes Agent container: " + containerName);
+                runDockerCommandWithLogs(List.of("stop", containerName), ApiValidatorFxApp.this::appendHermesProcessLine);
+                appendHermesLog("Hermes Agent container stopped: " + containerName);
+                return null;
+            }
+        };
+        task.setOnFailed(e -> {
+            appendHermesLog("Hermes Agent stop failed: " + exceptionMessage(task.getException()));
+            showError("Hermes Agent Stop Failed", task.getException());
+        });
+        start(task);
+    }
+
+    private void appendCodexLog(String message) {
+        if (codexLogArea == null) {
+            return;
+        }
+        Platform.runLater(() -> {
+            String timestamp = LocalTime.now().withNano(0).toString();
+            codexLogArea.appendText("[" + timestamp + "] " + message + System.lineSeparator());
+        });
+    }
+
+    private void appendHermesLog(String message) {
+        if (hermesLogArea == null && configHermesLogArea == null) {
+            return;
+        }
+        Platform.runLater(() -> {
+            String timestamp = LocalTime.now().withNano(0).toString();
+            String line = "[" + timestamp + "] " + message + System.lineSeparator();
+            if (hermesLogArea != null) {
+                hermesLogArea.appendText(line);
+            }
+            if (configHermesLogArea != null) {
+                configHermesLogArea.appendText(line);
+            }
+        });
+    }
+
+    private String codexDockerImage() {
+        String image = System.getenv(CODEX_DOCKER_IMAGE_ENV);
+        return image == null || image.isBlank() ? CODEX_DOCKER_IMAGE_DEFAULT : image.trim();
+    }
+
+    private String codexContainerName() {
+        String name = System.getenv(CODEX_CONTAINER_NAME_ENV);
+        return name == null || name.isBlank() ? CODEX_CONTAINER_NAME_DEFAULT : name.trim();
+    }
+
+    private String hermesDockerImage() {
+        String image = System.getenv(HERMES_DOCKER_IMAGE_ENV);
+        return image == null || image.isBlank() ? HERMES_DOCKER_IMAGE_DEFAULT : image.trim();
+    }
+
+    private String hermesContainerName() {
+        String name = System.getenv(HERMES_CONTAINER_NAME_ENV);
+        return name == null || name.isBlank() ? HERMES_CONTAINER_NAME_DEFAULT : name.trim();
+    }
+
+    private void requireDocker() throws Exception {
+        requireDocker(this::appendCodexLog);
+    }
+
+    private void requireDocker(java.util.function.Consumer<String> logConsumer) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "version", "--format", "{{.Server.Version}}"));
+        if (!result.success()) {
+            throw new IllegalStateException("Docker is not available or the Docker daemon is not running. "
+                    + result.output.trim());
+        }
+        logConsumer.accept("Docker is available: " + firstOutputLine(result.output));
+    }
+
+    private boolean dockerContainerExists(String containerName) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "ps", "-a", "--filter", "name=^/" + containerName + "$",
+                "--format", "{{.Names}}"));
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+        return result.output.lines().anyMatch(line -> containerName.equals(line.trim()));
+    }
+
+    private boolean dockerContainerRunning(String containerName) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "ps", "--filter", "name=^/" + containerName + "$",
+                "--filter", "status=running", "--format", "{{.Names}}"));
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+        return result.output.lines().anyMatch(line -> containerName.equals(line.trim()));
+    }
+
+    private boolean dockerImageExists(String image) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "image", "inspect", image));
+        return result.success();
+    }
+
+    private void ensureHermesContainerRunning(String image, String containerName, boolean requireDashboardPort) throws Exception {
+        if (!dockerImageExists(image)) {
+            throw new IllegalStateException("Hermes Agent image was not found locally. Run setup first to pull " + image + ".");
+        }
+        if (dockerContainerExists(containerName)
+                && (!dockerContainerHasExpectedMount(containerName, "/opt/data", hermesDataDirectory())
+                || (requireDashboardPort && (!dockerContainerPublishesPort(containerName, "9119/tcp")
+                || dockerContainerHasEnv(containerName, "HERMES_DASHBOARD")
+                || !dockerContainerHasMount(containerName, hermesContainerUserDirectory()))))) {
+            appendHermesLog("Hermes container needs an AI Agent path, mount, or dashboard port update. Recreating it.");
+            recreateHermesAgentContainer(image, containerName);
+            return;
+        }
+        if (!dockerContainerExists(containerName)) {
+            appendHermesLog("Hermes Agent container does not exist. Creating it from image: " + image);
+            runHermesAgentContainer(image, containerName);
+            appendHermesLog("Hermes Agent container started: " + containerName);
+        } else if (!dockerContainerRunning(containerName)) {
+            appendHermesLog("Starting Hermes Agent container: " + containerName);
+            runDockerCommandWithLogs(List.of("start", containerName), this::appendHermesProcessLine);
+            appendHermesLog("Hermes Agent container started: " + containerName);
+        } else {
+            appendHermesLog("Hermes Agent container is already running: " + containerName);
+        }
+    }
+
+    private boolean dockerContainerPublishesPort(String containerName, String containerPort) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "port", containerName, containerPort));
+        return result.success() && !result.output.trim().isBlank();
+    }
+
+    private boolean dockerContainerHasEnv(String containerName, String envName) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", containerName));
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+        return result.output.lines().anyMatch(line -> line.startsWith(envName + "="));
+    }
+
+    private boolean dockerContainerHasMount(String containerName, String destination) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "inspect", "--format", "{{range .Mounts}}{{println .Destination}}{{end}}", containerName));
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+        return result.output.lines().anyMatch(line -> destination.equals(line.trim()));
+    }
+
+    private boolean dockerContainerHasExpectedMount(String containerName, String destination, Path expectedSource) throws Exception {
+        ProcessResult result = runCommand(List.of("docker", "inspect", containerName));
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+        String expected = expectedSource.toAbsolutePath().normalize().toString();
+        String expectedForward = expected.replace('\\', '/');
+        String expectedLower = expectedForward.toLowerCase();
+        String dockerDesktopPath = dockerDesktopHostPath(expectedForward).toLowerCase();
+        JSONArray containers = new JSONArray(result.output);
+        for (int i = 0; i < containers.length(); i++) {
+            JSONArray mounts = containers.getJSONObject(i).optJSONArray("Mounts");
+            if (mounts == null) {
+                continue;
+            }
+            for (int j = 0; j < mounts.length(); j++) {
+                JSONObject mount = mounts.getJSONObject(j);
+                if (!destination.equals(mount.optString("Destination"))) {
+                    continue;
+                }
+                String source = mount.optString("Source").replace('\\', '/').toLowerCase();
+                if (source.equals(expectedLower) || source.equals(dockerDesktopPath) || source.endsWith("/" + dockerDesktopPath)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String dockerDesktopHostPath(String hostPath) {
+        if (hostPath.length() > 2 && hostPath.charAt(1) == ':') {
+            char drive = Character.toLowerCase(hostPath.charAt(0));
+            String remainder = hostPath.substring(2);
+            if (!remainder.startsWith("/")) {
+                remainder = "/" + remainder;
+            }
+            return "/run/desktop/mnt/host/" + drive + remainder;
+        }
+        return hostPath;
+    }
+
+    private void recreateHermesAgentContainer(String image, String containerName) throws Exception {
+        if (dockerContainerRunning(containerName)) {
+            appendHermesLog("Stopping existing Hermes container before updating it: " + containerName);
+            runDockerCommandWithLogs(List.of("stop", containerName), this::appendHermesProcessLine);
+        }
+        appendHermesLog("Removing existing Hermes container. Data remains in " + hermesDataDirectory() + ".");
+        runDockerCommandWithLogs(List.of("rm", containerName), this::appendHermesProcessLine);
+        runHermesAgentContainer(image, containerName);
+        appendHermesLog("Hermes Agent container recreated with dashboard port and Windows home mount: " + containerName);
+    }
+
+    private void runCodexCliContainer(String image, String containerName) throws Exception {
+        Path workspaceDirectory = Path.of("").toAbsolutePath().normalize();
+        String workspaceVolume = workspaceDirectory + ":/workspace";
+        String configVolume = codexConfigDirectory() + ":/root/.codex";
+        appendCodexLog("Mounting project workspace into Codex CLI container: " + workspaceVolume);
+        appendCodexLog("Mounting Codex config into Codex CLI container: " + configVolume);
+        runDockerCommand(List.of("run", "-d",
+                "--name", containerName,
+                "-v", workspaceVolume,
+                "-v", configVolume,
+                "-w", "/workspace",
+                "--entrypoint", "sleep",
+                image,
+                "infinity"));
+    }
+
+    private void runHermesAgentContainer(String image, String containerName) throws Exception {
+        String dataVolume = hermesDataDirectory() + ":/opt/data";
+        String userHomeVolume = hermesHostUserDirectory() + ":" + hermesContainerUserDirectory();
+        appendHermesLog("Mounting Hermes data into container: " + dataVolume);
+        appendHermesLog("Mounting Windows user home into container: " + userHomeVolume);
+        runDockerCommandWithLogs(List.of("run", "-d",
+                "--name", containerName,
+                "--restart", "unless-stopped",
+                "-v", dataVolume,
+                "-v", userHomeVolume,
+                "-p", "8642:8642",
+                "-p", "127.0.0.1:9119:9119",
+                image,
+                "sleep",
+                "infinity"), this::appendHermesProcessLine);
+    }
+
+    private Path codexConfigDirectory() throws Exception {
+        Path directory = Path.of(System.getProperty("user.home"), ".codex").toAbsolutePath().normalize();
+        Files.createDirectories(directory);
+        return directory;
+    }
+
+    private Path hermesDataDirectory() throws Exception {
+        Path directory = hermesAiAgentPathField != null && hermesAiAgentPathField.getText() != null
+                && !hermesAiAgentPathField.getText().trim().isBlank()
+                ? Path.of(hermesAiAgentPathField.getText().trim()).toAbsolutePath().normalize()
+                : configuredAiAgentDirectory();
+        if (directory == null) {
+            directory = Path.of(System.getProperty("user.home"), ".hermes").toAbsolutePath().normalize();
+        }
+        Files.createDirectories(directory);
+        updateHermesAiAgentPathField();
+        return directory;
+    }
+
+    private Path hermesHostUserDirectory() {
+        return Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+    }
+
+    private String hermesContainerUserDirectory() {
+        return "/opt/data/Users/" + System.getProperty("user.name");
+    }
+
+    private void verifyCodexCli(String containerName) {
+        try {
+            ProcessResult result = runDockerCommand(List.of("exec", containerName, "codex", "--version"));
+            appendCodexLog("Codex CLI is available in container: " + firstOutputLine(result.output));
+        } catch (Exception e) {
+            appendCodexLog("Codex CLI container started, but CLI verification failed: " + exceptionMessage(e));
+        }
+    }
+
+    private void verifyHermesAgent(String containerName) {
+        try {
+            ProcessResult result = runDockerCommand(List.of("exec", containerName, "hermes", "--version"));
+            appendHermesLog("Hermes Agent CLI is available in container: " + firstOutputLine(result.output));
+        } catch (Exception e) {
+            appendHermesLog("Hermes Agent container started, but CLI verification failed: " + exceptionMessage(e));
+        }
+    }
+
+    private void startHermesDashboard(String containerName) throws Exception {
+        if (isHermesDashboardReachable()) {
+            appendHermesLog("Hermes dashboard is already running: " + HERMES_DASHBOARD_URL);
+            return;
+        }
+        appendHermesLog("Starting Hermes dashboard on " + HERMES_DASHBOARD_URL + ".");
+        stopHermesDashboardProcess(containerName);
+        runDockerCommandWithLogs(List.of("exec", "-d",
+                containerName,
+                "hermes",
+                "dashboard",
+                "--host", "0.0.0.0",
+                "--port", "9119",
+                "--no-open",
+                "--insecure"), this::appendHermesProcessLine);
+    }
+
+    private void stopHermesDashboardProcess(String containerName) {
+        try {
+            runDockerCommand(List.of("exec", containerName, "pkill", "-f", "hermes dashboard"));
+        } catch (Exception e) {
+            appendHermesLog("No existing Hermes dashboard process needed cleanup.");
+        }
+    }
+
+    private void waitForHermesDashboard() throws Exception {
+        for (int attempt = 0; attempt < 30; attempt++) {
+            if (isHermesDashboardReachable()) {
+                return;
+            }
+            Thread.sleep(500);
+        }
+        throw new IllegalStateException("Hermes dashboard did not respond at " + HERMES_DASHBOARD_URL + ".");
+    }
+
+    private boolean isHermesDashboardReachable() {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(HERMES_DASHBOARD_URL))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            return response.statusCode() > 0 && response.statusCode() < 500;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void launchHermesCli(String containerName, String hermesCommand) throws Exception {
+        Path aiAgentPath = hermesDataDirectory();
+        Files.createDirectories(aiAgentPath);
+        Path sessionDirectory = aiAgentPath.resolve("Sessions");
+        Files.createDirectories(sessionDirectory);
+        List<String> dockerArgs = buildHermesDockerArgs(containerName, hermesCommand);
+
+        String timestamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").format(java.time.LocalDateTime.now());
+        Path transcriptPath = sessionDirectory.resolve("hermes-session-" + timestamp + ".log");
+        Path runnerPath = sessionDirectory.resolve("launch-hermes-" + timestamp + ".ps1");
+        Files.writeString(runnerPath, powerShellHermesScript(containerName, aiAgentPath, transcriptPath, dockerArgs), StandardCharsets.UTF_8);
+
+        String parentCommand = "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoExit','-NoProfile','-ExecutionPolicy','Bypass','-File',"
+                + powershellQuote(runnerPath.toString()) + ") -Wait";
+        Process watcherProcess = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", parentCommand)
+                .redirectErrorStream(true)
+                .start();
+        watcherProcess.onExit().thenRun(() -> appendHermesLog("Hermes PowerShell window closed. Transcript: " + transcriptPath));
+        appendHermesLog("Opened Hermes CLI in PowerShell for container: " + containerName);
+        appendHermesLog("AI Agent output path: " + aiAgentPath);
+        appendHermesLog("Hermes transcript path: " + transcriptPath);
+        appendHermesLog("Hermes CLI command: docker " + String.join(" ", dockerArgs));
+    }
+
+    private List<String> buildHermesDockerArgs(String containerName, String hermesCommand) {
+        String selectedSession = hermesSessionBox == null ? HERMES_NEW_SESSION : hermesSessionBox.getValue();
+        HermesSessionRecord selectedRecord = hermesSessionRecords.get(selectedSession);
+        List<String> dockerArgs = new ArrayList<>(List.of("exec", "-it",
+                "-w", "/opt/data",
+                "-e", "TERM=xterm-256color",
+                "-e", "AI_AGENT_PATH=/opt/data",
+                "-e", "TESTWEAVE_AI_AGENT_PATH=/opt/data",
+                containerName, "hermes"));
+        if ((hermesCommand == null || hermesCommand.isBlank()) && selectedRecord != null && !nullToBlank(selectedRecord.sessionId()).isBlank()) {
+            dockerArgs.add("--resume");
+            dockerArgs.add(selectedRecord.sessionId());
+        } else if (hermesCommand != null && !hermesCommand.isBlank()) {
+            dockerArgs.addAll(splitShellWords(hermesCommand));
+        }
+        return dockerArgs;
+    }
+
+    private String powerShellHermesScript(String containerName, Path aiAgentPath, Path transcriptPath, List<String> dockerArgs) {
+        StringBuilder command = new StringBuilder();
+        command.append("$Host.UI.RawUI.WindowTitle = 'VeyraAI - Powered by VeyraAI'; ");
+        command.append("$ErrorActionPreference = 'Continue'; ");
+        command.append("Start-Transcript -Path '").append(psSingleQuoteContent(transcriptPath.toString())).append("' -Force | Out-Null; ");
+        command.append("Write-Host 'Powered by VeyraAI'; ");
+        command.append("Write-Host 'AI Agent Path: ").append(psSingleQuoteContent(aiAgentPath.toString())).append("'; ");
+        command.append("Write-Host 'Container: ").append(psSingleQuoteContent(containerName)).append("'; ");
+        command.append("Write-Host 'Container working directory: /opt/data'; ");
+        command.append("Write-Host ''; ");
+        command.append("$dockerArgs = @(");
+        for (int i = 0; i < dockerArgs.size(); i++) {
+            if (i > 0) {
+                command.append(",");
+            }
+            command.append("'").append(psSingleQuoteContent(dockerArgs.get(i))).append("'");
+        }
+        command.append("); ");
+        command.append("try { & docker @dockerArgs } finally { ");
+        command.append("Write-Host ''; ");
+        command.append("Write-Host '[VeyraAI process exited. Close this PowerShell window to return to VeyraAI.]'; ");
+        command.append("try { Stop-Transcript | Out-Null } catch {} }");
+        return command.toString();
+    }
+
+    private List<String> splitShellWords(String command) {
+        List<String> words = new ArrayList<>();
+        Matcher matcher = Pattern.compile("\"([^\"]*)\"|'([^']*)'|(\\S+)").matcher(nullToBlank(command));
+        while (matcher.find()) {
+            words.add(firstNonBlank(matcher.group(1), matcher.group(2), matcher.group(3)));
+        }
+        return words;
+    }
+
+    private void watchHermesPowerShellSession(Process watcherProcess, String containerName, Path aiAgentPath, Path transcriptPath) {
+        Task<HermesSessionCapture> task = new Task<>() {
+            @Override
+            protected HermesSessionCapture call() throws Exception {
+                watcherProcess.waitFor();
+                return parseHermesSessionTranscript(transcriptPath, containerName, aiAgentPath);
+            }
+        };
+        task.setOnSucceeded(e -> promptToSaveHermesSession(task.getValue()));
+        task.setOnFailed(e -> appendHermesLog("Could not capture Hermes session: " + exceptionMessage(rootCause(task.getException()))));
+        start(task);
+    }
+
+    private HermesSessionCapture parseHermesSessionTranscript(Path transcriptPath, String containerName, Path aiAgentPath) {
+        try {
+            if (!Files.exists(transcriptPath)) {
+                return HermesSessionCapture.empty(transcriptPath, containerName, aiAgentPath);
+            }
+            String transcript = Files.readString(transcriptPath, StandardCharsets.UTF_8);
+            Matcher sessionMatcher = Pattern.compile("(?m)^\\s*Session:\\s*(\\S+)\\s*$").matcher(transcript);
+            Matcher sessionIdMatcher = Pattern.compile("(?im)^\\s*session_id:\\s*(\\S+)\\s*$").matcher(transcript);
+            Matcher titleMatcher = Pattern.compile("(?m)^\\s*Title:\\s*(.+?)\\s*$").matcher(transcript);
+            Matcher resumeMatcher = Pattern.compile("(?m)^\\s*hermes\\s+--resume\\s+(\\S+)\\s*$").matcher(transcript);
+            String sessionId = lastMatch(sessionMatcher, 1);
+            String explicitSessionId = lastMatch(sessionIdMatcher, 1);
+            String title = lastMatch(titleMatcher, 1);
+            String resumeSessionId = lastMatch(resumeMatcher, 1);
+            if (sessionId.isBlank()) {
+                sessionId = explicitSessionId;
+            }
+            if (sessionId.isBlank()) {
+                sessionId = resumeSessionId;
+            }
+            String resumeCommand = sessionId.isBlank() ? "" : "hermes --resume " + sessionId;
+            return new HermesSessionCapture(sessionId, title, resumeCommand, transcriptPath.toString(), aiAgentPath.toString(),
+                    containerName, transcript);
+        } catch (Exception e) {
+            appendHermesLog("Hermes transcript parse failed: " + exceptionMessage(e));
+            return HermesSessionCapture.empty(transcriptPath, containerName, aiAgentPath);
+        }
+    }
+
+    private String lastMatch(Matcher matcher, int group) {
+        String value = "";
+        while (matcher.find()) {
+            value = nullToBlank(matcher.group(group)).trim();
+        }
+        return value;
+    }
+
+    private void promptToSaveHermesSession(HermesSessionCapture capture) {
+        if (capture == null || nullToBlank(capture.sessionId()).isBlank()) {
+            appendHermesLog("Hermes PowerShell session closed. No resume session id was found in the transcript.");
+            return;
+        }
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.initOwner(stage);
+        confirm.setTitle("Save Hermes Session");
+        confirm.setHeaderText("Save this Hermes session to SQLite cache?");
+        String title = firstNonBlank(capture.title(), "Hermes Session");
+        confirm.setContentText("Session: " + capture.sessionId() + System.lineSeparator()
+                + "Title: " + title + System.lineSeparator()
+                + "Resume: " + capture.resumeCommand());
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+            saveHermesSessionCapture(capture);
+        } else {
+            appendHermesLog("Hermes session was not saved: " + capture.sessionId());
+        }
+    }
+
+    private void saveHermesSessionCapture(HermesSessionCapture capture) {
+        try {
+            String title = firstNonBlank(capture.title(), "Hermes Session");
+            String sessionName = title + " (" + capture.sessionId() + ")";
+            saveHermesSessionCaptureToSqlite(capture, sessionName, title);
+            refreshHermesSessionOptions();
+            if (hermesSessionBox != null) {
+                String display = title + " (" + capture.sessionId() + ")";
+                hermesSessionBox.setValue(display);
+            }
+            appendHermesLog("Saved Hermes session to SQLite cache: " + capture.sessionId());
+            showInfo("Hermes Session Saved", "Saved session: " + title);
+        } catch (Exception e) {
+            showError("Save Hermes Session Failed", e);
+        }
+    }
+
+    private void saveApiAiHermesSession(HermesSessionCapture capture) throws Exception {
+        String title = firstNonBlank(capture.title(), selectedApiAiAgentName() + " Session");
+        String sessionName = title + " (" + capture.sessionId() + ")";
+        if (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL) {
+            saveHermesSessionCaptureToSqlite(capture, sessionName, title);
+        } else {
+            saveHermesSessionCaptureToFirebase(capture, sessionName, title);
+        }
+    }
+
+    private void saveHermesSessionCaptureToSqlite(HermesSessionCapture capture, String sessionName, String title) throws Exception {
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        initializeHermesSessionTable(sqliteDbPath);
+        String now = Instant.now().toString();
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement("INSERT INTO " + HERMES_SESSION_TABLE
+                     + " (system_user_key, session_name, transcript, updated_at, session_id, title, resume_command, transcript_path, ai_agent_path, container_name, created_at) "
+                     + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                     + "ON CONFLICT(system_user_key, session_name) DO UPDATE SET "
+                     + "transcript = excluded.transcript, updated_at = excluded.updated_at, session_id = excluded.session_id, "
+                     + "title = excluded.title, resume_command = excluded.resume_command, transcript_path = excluded.transcript_path, "
+                     + "ai_agent_path = excluded.ai_agent_path, container_name = excluded.container_name")) {
+            statement.setString(1, configCacheKey());
+            statement.setString(2, sessionName);
+            statement.setString(3, capture.transcript());
+            statement.setString(4, now);
+            statement.setString(5, capture.sessionId());
+            statement.setString(6, title);
+            statement.setString(7, capture.resumeCommand());
+            statement.setString(8, capture.transcriptPath());
+            statement.setString(9, capture.aiAgentPath());
+            statement.setString(10, capture.containerName());
+            statement.setString(11, now);
+            statement.executeUpdate();
+        }
+    }
+
+    private void saveHermesSessionCaptureToFirebase(HermesSessionCapture capture, String sessionName, String title) throws Exception {
+        JSONObject payload = hermesSessionJson(capture, sessionName, title);
+        String id = URLEncoder.encode(capture.sessionId(), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_HERMES_FIREBASE_PATH
+                        + "/" + URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20")
+                        + "/" + id + ".json")
+                        .PUT(HttpRequest.BodyPublishers.ofString(payload.toString(), StandardCharsets.UTF_8))
+                        .header("Content-Type", "application/json")
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase Hermes session save failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+    }
+
+    private JSONObject hermesSessionJson(HermesSessionCapture capture, String sessionName, String title) {
+        return new JSONObject()
+                .put("systemUserKey", configCacheKey())
+                .put("sessionName", sessionName)
+                .put("sessionId", capture.sessionId())
+                .put("title", title)
+                .put("resumeCommand", capture.resumeCommand())
+                .put("transcriptPath", capture.transcriptPath())
+                .put("aiAgentPath", capture.aiAgentPath())
+                .put("containerName", capture.containerName())
+                .put("dashboardUrl", activeApiAiHermesDashboardUrl)
+                .put("transcript", capture.transcript())
+                .put("updatedAt", Instant.now().toString());
+    }
+
+    private void refreshApiAiHermesSessionOptions() {
+        if (apiAiHermesSessionBox == null) {
+            return;
+        }
+        String selected = apiAiHermesSessionBox.getValue();
+        List<String> sessions = new ArrayList<>();
+        apiAiHermesSessionRecords.clear();
+        sessions.add(HERMES_NEW_SESSION);
+        if (activeApiAiHermesSession != null && !nullToBlank(activeApiAiHermesSession.sessionId()).isBlank()) {
+            addApiAiHermesSessionOption(sessions, activeApiAiHermesSession);
+        }
+        try {
+            if (apiAiAgentMemoryStorageMode() == StorageMode.LOCAL) {
+                addLocalHermesSessionsToList(sessions);
+            } else {
+                addCloudHermesSessionsToList(sessions);
+            }
+        } catch (Exception e) {
+            appendHermesLog("Could not refresh API AI Hermes sessions: " + exceptionMessage(e));
+        }
+        List<String> distinct = sessions.stream().filter(value -> value != null && !value.isBlank()).distinct().toList();
+        apiAiHermesSessionBox.setItems(FXCollections.observableArrayList(distinct));
+        apiAiHermesSessionBox.setValue(selected != null && distinct.contains(selected) ? selected
+                : activeApiAiHermesSession == null ? HERMES_NEW_SESSION : hermesSessionDisplayName(activeApiAiHermesSession));
+    }
+
+    private void addLocalHermesSessionsToList(List<String> sessions) throws Exception {
+        Path sqliteDbPath = configCacheDatabasePathFromField();
+        if (!Files.exists(sqliteDbPath)) {
+            return;
+        }
+        initializeHermesSessionTable(sqliteDbPath);
+        try (Connection connection = openConfigCacheConnection(sqliteDbPath);
+             PreparedStatement statement = connection.prepareStatement("SELECT session_name, session_id, title, resume_command, transcript_path, ai_agent_path, container_name FROM "
+                     + HERMES_SESSION_TABLE + " WHERE system_user_key = ? ORDER BY updated_at DESC")) {
+            statement.setString(1, configCacheKey());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    addApiAiHermesSessionOption(sessions, new HermesSessionRecord(
+                            resultSet.getString("session_name"),
+                            resultSet.getString("session_id"),
+                            resultSet.getString("title"),
+                            resultSet.getString("resume_command"),
+                            resultSet.getString("transcript_path"),
+                            resultSet.getString("ai_agent_path"),
+                            resultSet.getString("container_name")));
+                }
+            }
+        }
+    }
+
+    private void addCloudHermesSessionsToList(List<String> sessions) throws Exception {
+        String key = URLEncoder.encode(configCacheKey(), StandardCharsets.UTF_8).replace("+", "%20");
+        HttpResponse<String> response = HttpClient.newHttpClient().send(apiAiFirebaseRequest(API_AI_HERMES_FIREBASE_PATH + "/" + key + ".json")
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 || response.body() == null || response.body().isBlank() || "null".equals(response.body())) {
+            return;
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("Firebase Hermes sessions load failed: HTTP " + response.statusCode() + " " + response.body());
+        }
+        JSONObject root = new JSONObject(response.body());
+        for (String id : root.keySet()) {
+            JSONObject item = root.optJSONObject(id);
+            if (item == null) continue;
+            addApiAiHermesSessionOption(sessions, new HermesSessionRecord(
+                    item.optString("sessionName"),
+                    item.optString("sessionId", id),
+                    item.optString("title"),
+                    item.optString("resumeCommand"),
+                    item.optString("transcriptPath"),
+                    item.optString("aiAgentPath"),
+                    item.optString("containerName")));
+        }
+    }
+
+    private void addApiAiHermesSessionOption(List<String> sessions, HermesSessionRecord record) {
+        if (record == null || nullToBlank(record.sessionId()).isBlank()) {
+            return;
+        }
+        String display = hermesSessionDisplayName(record);
+        sessions.add(display);
+        apiAiHermesSessionRecords.put(display, record);
+    }
+
+    private void selectApiAiHermesSession(String sessionId) {
+        if (apiAiHermesSessionBox == null || sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        for (String item : apiAiHermesSessionBox.getItems()) {
+            if (item != null && item.contains(sessionId)) {
+                apiAiHermesSessionBox.setValue(item);
+                return;
+            }
+        }
+    }
+
+    private String psSingleQuoteContent(String value) {
+        return value == null ? "" : value.replace("'", "''");
+    }
+
+    private String hermesDataDirectoryText() {
+        try {
+            return hermesDataDirectory().toString();
+        } catch (Exception e) {
+            return hermesAiAgentPathField == null ? "" : hermesAiAgentPathField.getText();
+        }
+    }
+
+    private void openCodexCliWindow(String containerName) {
+        Platform.runLater(() -> {
+            if (codexCliStage == null) {
+                codexCliStage = new Stage();
+                codexCliStage.setTitle(APP_NAME + " - Codex CLI");
+                loadApplicationIcon(codexCliStage);
+
+                codexChatArea = editor("");
+                codexChatArea.setEditable(false);
+                codexChatArea.setWrapText(true);
+                codexChatArea.setMinHeight(420);
+
+                codexPromptArea = editor("");
+                codexPromptArea.setPromptText("Ask Codex to generate test cases, heal Playwright scripts, map DB fields, review logs, or analyze this project.");
+                codexPromptArea.setWrapText(true);
+                codexPromptArea.setMinHeight(90);
+                codexPromptArea.setPrefHeight(110);
+
+                codexSendButton = primary("Send");
+                codexSendButton.setOnAction(e -> sendCodexPrompt(containerName));
+                codexCancelButton = secondary("Stop Response");
+                codexCancelButton.setOnAction(e -> cancelCodexChatProcess());
+
+                Label status = new Label("Connected to container: " + containerName);
+                status.getStyleClass().add("muted");
+                FlowPane actions = spacedActionRow(status, codexSendButton, codexCancelButton);
+                VBox content = new VBox(12, card("Conversation", codexChatArea), card("Prompt", new VBox(10, codexPromptArea, actions)));
+                content.setPadding(new Insets(14));
+                VBox.setVgrow(content.getChildren().get(0), Priority.ALWAYS);
+
+                Scene scene = new Scene(content, 960, 720);
+                scene.getStylesheets().add(createInlineStylesheet());
+                addApplicationStylesheet(scene);
+                codexCliStage.setScene(scene);
+                codexCliStage.setOnCloseRequest(e -> cancelCodexChatProcess());
+            }
+            codexCliStage.show();
+            codexCliStage.toFront();
+            if (codexChatArea != null && codexChatArea.getText().isBlank()) {
+                appendCodexChat("Codex CLI is ready. Type a request below and click Send." + System.lineSeparator());
+            }
+        });
+    }
+
+    private void sendCodexPrompt(String containerName) {
+        String prompt = codexPromptArea == null ? "" : codexPromptArea.getText().trim();
+        if (prompt.isBlank()) {
+            showWarning("Codex CLI", "Enter a prompt before sending.");
+            return;
+        }
+        if (codexChatProcess != null && codexChatProcess.isAlive()) {
+            showWarning("Codex CLI", "Codex is still responding. Stop the current response before sending another prompt.");
+            return;
+        }
+        codexPromptArea.clear();
+        appendCodexChat(System.lineSeparator() + "You:" + System.lineSeparator() + prompt + System.lineSeparator());
+        appendCodexChat(System.lineSeparator() + "Codex:" + System.lineSeparator());
+        setCodexChatRunning(true);
+
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                if (!dockerContainerRunning(containerName)) {
+                    throw new IllegalStateException("Codex CLI container is not running. Click Start Codex CLI first.");
+                }
+                List<String> command = codexExecCommand(containerName, translateHostWorkspacePathsForCodex(prompt));
+                Process process = new ProcessBuilder(command)
+                        .redirectErrorStream(true)
+                        .start();
+                codexChatProcess = process;
+                try (java.io.Reader reader = new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)) {
+                    char[] buffer = new char[1024];
+                    int count;
+                    while ((count = reader.read(buffer)) != -1) {
+                        appendCodexChat(new String(buffer, 0, count));
+                    }
+                }
+                int exitCode = process.waitFor();
+                if (exitCode != 0) {
+                    throw new IllegalStateException("Codex CLI exited with code " + exitCode + ".");
+                }
+                codexExecSessionStarted = true;
+                return null;
+            }
+        };
+        task.setOnSucceeded(e -> {
+            codexChatProcess = null;
+            setCodexChatRunning(false);
+            appendCodexChat(System.lineSeparator());
+        });
+        task.setOnFailed(e -> {
+            codexChatProcess = null;
+            setCodexChatRunning(false);
+            appendCodexChat(System.lineSeparator() + "Codex CLI failed: " + exceptionMessage(task.getException()) + System.lineSeparator());
+            appendCodexLog("Codex CLI chat failed: " + exceptionMessage(task.getException()));
+        });
+        start(task);
+    }
+
+    private List<String> codexExecCommand(String containerName, String prompt) {
+        List<String> command = new ArrayList<>();
+        command.add("docker");
+        command.add("exec");
+        command.add("-w");
+        command.add("/workspace");
+        command.add(containerName);
+        command.add("codex");
+        command.add("exec");
+        command.add("--skip-git-repo-check");
+        command.add("--sandbox");
+        command.add("workspace-write");
+        command.add("--color");
+        command.add("never");
+        if (codexExecSessionStarted) {
+            command.add("resume");
+            command.add("--last");
+            command.add(prompt);
+        } else {
+            command.add(prompt);
+        }
+        return command;
+    }
+
+    private String translateHostWorkspacePathsForCodex(String prompt) {
+        if (prompt == null || prompt.isBlank()) {
+            return "";
+        }
+        Path workspaceDirectory = Path.of("").toAbsolutePath().normalize();
+        String workspacePath = workspaceDirectory.toString();
+        String workspaceForwardPath = workspacePath.replace('\\', '/');
+        String result = prompt.replace('\\', '/');
+        for (String hostPath : List.of(workspaceForwardPath, workspacePath.replace('/', '\\'))) {
+            if (hostPath == null || hostPath.isBlank()) {
+                continue;
+            }
+            String normalizedHostPath = hostPath.replace('\\', '/');
+            result = Pattern.compile(Pattern.quote(normalizedHostPath), Pattern.CASE_INSENSITIVE)
+                    .matcher(result)
+                    .replaceAll(Matcher.quoteReplacement("/workspace"));
+        }
+        return result;
+    }
+
+    private void cancelCodexChatProcess() {
+        Process process = codexChatProcess;
+        if (process != null && process.isAlive()) {
+            process.destroy();
+            appendCodexChat(System.lineSeparator() + "Codex response stopped." + System.lineSeparator());
+            appendCodexLog("Codex CLI response stopped.");
+        }
+        codexChatProcess = null;
+        setCodexChatRunning(false);
+    }
+
+    private void appendCodexChat(String text) {
+        if (codexChatArea == null || text == null || text.isEmpty()) {
+            return;
+        }
+        Platform.runLater(() -> codexChatArea.appendText(text));
+    }
+
+    private void setCodexChatRunning(boolean running) {
+        Platform.runLater(() -> {
+            if (codexSendButton != null) {
+                codexSendButton.setDisable(running);
+            }
+            if (codexCancelButton != null) {
+                codexCancelButton.setDisable(!running);
+            }
+        });
+    }
+
+    private ProcessResult runDockerCommand(List<String> dockerArgs) throws Exception {
+        List<String> command = new ArrayList<>();
+        command.add("docker");
+        command.addAll(dockerArgs);
+        ProcessResult result = runCommand(command);
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+        return result;
+    }
+
+    private void runDockerCommandWithLogs(List<String> dockerArgs) throws Exception {
+        runDockerCommandWithLogs(dockerArgs, this::appendCodexProcessLine);
+    }
+
+    private void runDockerCommandWithLogs(List<String> dockerArgs, java.util.function.Consumer<String> lineConsumer) throws Exception {
+        List<String> command = new ArrayList<>();
+        command.add("docker");
+        command.addAll(dockerArgs);
+        ProcessResult result = runCommandWithLogStreaming(command, lineConsumer);
+        if (!result.success()) {
+            throw new IllegalStateException(result.output.trim());
+        }
+    }
+
+    private ProcessResult runCommand(List<String> command) throws Exception {
+        try {
+            Process process = new ProcessBuilder(command)
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exitCode = process.waitFor();
+            return new ProcessResult(exitCode, output);
+        } catch (java.io.IOException e) {
+            return new ProcessResult(127, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+    }
+
+    private ProcessResult runCommandWithLogStreaming(List<String> command) throws Exception {
+        return runCommandWithLogStreaming(command, this::appendCodexProcessLine);
+    }
+
+    private ProcessResult runCommandWithLogStreaming(List<String> command, java.util.function.Consumer<String> lineConsumer) throws Exception {
+        StringBuilder output = new StringBuilder();
+        try {
+            Process process = new ProcessBuilder(command)
+                    .redirectErrorStream(true)
+                    .start();
+            StringBuilder chunk = new StringBuilder();
+            try (java.io.Reader reader = new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)) {
+                int value;
+                while ((value = reader.read()) != -1) {
+                    char character = (char) value;
+                    output.append(character);
+                    if (character == '\n' || character == '\r') {
+                        lineConsumer.accept(chunk.toString());
+                        chunk.setLength(0);
+                    } else {
+                        chunk.append(character);
+                    }
+                }
+            }
+            if (!chunk.isEmpty()) {
+                lineConsumer.accept(chunk.toString());
+            }
+            int exitCode = process.waitFor();
+            return new ProcessResult(exitCode, output.toString());
+        } catch (java.io.IOException e) {
+            return new ProcessResult(127, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+    }
+
+    private void appendCodexProcessLine(String line) {
+        String text = line == null ? "" : line.trim();
+        if (!text.isBlank()) {
+            appendCodexLog(text);
+        }
+    }
+
+    private void appendHermesProcessLine(String line) {
+        String text = line == null ? "" : line.trim();
+        if (!text.isBlank()) {
+            appendHermesLog(text);
+        }
+    }
+
+    private String powershellQuote(String value) {
+        return "'" + (value == null ? "" : value.replace("'", "''")) + "'";
+    }
+
+    private String firstOutputLine(String output) {
+        return output == null ? "" : output.lines()
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .findFirst()
+                .orElse("");
+    }
+
+    private String exceptionMessage(Throwable throwable) {
+        if (throwable == null) {
+            return "Unknown error";
+        }
+        return throwable.getMessage() == null ? throwable.getClass().getSimpleName() : throwable.getMessage();
+    }
+
+    private void logApiAiConsole(String message) {
+        System.err.println("[API AI Analysis] " + Instant.now() + " - " + message);
+    }
+
+    private void logApiAiConsole(String message, Throwable throwable) {
+        logApiAiConsole(message);
+        if (throwable != null) {
+            throwable.printStackTrace(System.err);
+        }
+    }
+
+    private Throwable rootCause(Throwable throwable) {
+        Throwable current = throwable;
+        while (current instanceof InvocationTargetException invocation && invocation.getTargetException() != null) {
+            current = invocation.getTargetException();
+        }
+        while (current != null && current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current == null ? throwable : current;
+    }
+
+    private void startWebFlowExecutionPolling() {
+        if (webFlowExecutionPollTimeline != null) {
+            webFlowExecutionPollTimeline.stop();
+        }
+        pollLatestWebFlowExecution();
+        webFlowExecutionPollTimeline = new Timeline(new KeyFrame(
+                javafx.util.Duration.seconds(2), event -> pollLatestWebFlowExecution()));
+        webFlowExecutionPollTimeline.setCycleCount(Timeline.INDEFINITE);
+        webFlowExecutionPollTimeline.play();
+    }
+
+    private void pollLatestWebFlowExecution() {
+        if (webResultRows == null || !webFlowExecutionPollActive.compareAndSet(false, true)) {
+            return;
+        }
+        Thread poller = new Thread(() -> {
+            try {
+                HttpRequest request = HttpRequest.newBuilder(
+                                URI.create(WEB_FLOW_STUDIO_API_URL + "/api/workflow-builder/executions/latest"))
+                        .timeout(Duration.ofSeconds(3))
+                        .GET()
+                        .build();
+                HttpResponse<String> response = HttpClient.newHttpClient().send(
+                        request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    return;
+                }
+                JSONObject execution = new JSONObject(response.body()).optJSONObject("data");
+                if (execution == null) {
+                    return;
+                }
+                String runId = execution.optString("runId", "");
+                if (runId.isBlank() || runId.equals(lastImportedWebFlowRunId)) {
+                    return;
+                }
+                lastImportedWebFlowRunId = runId;
+                Platform.runLater(() -> importWebFlowExecution(execution));
+            } catch (Exception ignored) {
+                // Workflow Builder is optional and may not be running while UI Studio is open.
+            } finally {
+                webFlowExecutionPollActive.set(false);
+            }
+        }, "veyraai-web-flow-result-import");
+        poller.setDaemon(true);
+        poller.start();
+    }
+
+    private void importWebFlowExecution(JSONObject execution) {
+        if (webResultRows == null) {
+            return;
+        }
+        JSONArray steps = execution.optJSONArray("steps");
+        if (steps == null) {
+            return;
+        }
+        webResultRows.clear();
+        int passed = 0;
+        int failed = 0;
+        for (int index = 0; index < steps.length(); index++) {
+            JSONObject step = steps.optJSONObject(index);
+            if (step == null) continue;
+            String status = step.optString("status", "failed");
+            String result = "passed".equalsIgnoreCase(status) ? "Pass"
+                    : "failed".equalsIgnoreCase(status) ? "Fail" : status;
+            if ("Pass".equals(result)) passed++;
+            if ("Fail".equals(result)) failed++;
+            String message = step.optString("errorMessage", "");
+            if (message.isBlank() && "Pass".equals(result)) {
+                message = "Step completed successfully";
+            }
+            webResultRows.add(row(
+                    "stepIndex", String.valueOf(index),
+                    "result", result,
+                    "stepName", step.optString("label", step.optString("stepId", "Step " + (index + 1))),
+                    "action", step.optString("type", ""),
+                    "selector", step.optString("selector", ""),
+                    "expected", step.optString("expected", ""),
+                    "message", message,
+                    "duration", step.optLong("durationMs", 0) + " ms"));
+        }
+        if (webResultsTable != null) {
+            webResultsTable.refresh();
+        }
+        if (webRunSummaryLabel != null) {
+            webRunSummaryLabel.setText(passed + " passed / " + failed + " failed (Canvas run)");
+        }
+        writeStandaloneValidationReport("WEB_TESTING", "UI Studio", "Web Flow Studio Canvas",
+                localWebTestingReportsDirectory(), webResultRows,
+                "stepName", "action", "selector", "expected", "duration", "result", "message");
+    }
+
     private void runWebTest() {
         WebTestCase testCase = buildWebTestCase();
         if (testCase.steps.isEmpty()) {
-            showWarning("Web Testing", "Record, load, or add at least one step before running.");
+            showWarning("UI Studio", "Record, load, or add at least one step before running.");
             return;
         }
         Task<WebTestRunReport> task = new Task<>() {
@@ -4733,45 +17974,887 @@ public class ApiValidatorFxApp extends Application {
     private WebTestCase buildWebTestCase() {
         WebTestCase testCase = new WebTestCase();
         testCase.testName = webTestNameField.getText();
-        testCase.startUrl = webStartUrlField.getText();
+        testCase.startUrl = resolveVariables(webStartUrlField.getText());
+        Map<String, String> runVariables = new LinkedHashMap<>(savedVariables);
         for (Map<String, String> row : webStepRows) {
             WebTestStep step = new WebTestStep();
+            step.stepName = firstNonBlank(row.get("stepName"), autoWebStepName(row.get("action"), row.get("selector"),
+                    row.get("value"), row.get("note"), flowVariableName(row)));
             step.action = row.get("action");
-            step.selector = row.get("selector");
-            step.value = row.get("value");
-            step.note = row.get("note");
+            step.timeoutMs = (int) parseDouble(row.getOrDefault("timeout", "0"), 0);
+            if ("Flow Variable".equalsIgnoreCase(step.action)) {
+                String variableName = flowVariableName(row);
+                String value = resolveWebRunVariables(row.get("value"), runVariables);
+                if (!variableName.isBlank()) runVariables.put(variableName, value);
+                step.selector = "";
+                step.value = value;
+                step.note = variableName;
+            } else {
+                step.selector = resolveWebRunVariables(row.get("selector"), runVariables);
+                if ("Get Text".equalsIgnoreCase(step.action)) {
+                    configureGetTextExpectation(step, row.get("value"), runVariables);
+                } else {
+                    step.value = resolveWebRunVariables(row.get("value"), runVariables);
+                }
+                step.note = resolveWebRunVariables(row.get("note"), runVariables);
+            }
             testCase.steps.add(step);
         }
         return testCase;
     }
 
+    private void configureGetTextExpectation(WebTestStep step, String rawValue,
+                                             Map<String, String> runVariables) {
+        String expression = nullToBlank(rawValue).trim();
+        String referencedVariable = expectedVariableName(expression);
+        String plainVariable = normalizeVariableName(expression);
+        String variableName = firstNonBlank(referencedVariable,
+                runVariables.containsKey(plainVariable) ? plainVariable : "");
+        step.value = expression;
+        step.expectedVariableName = variableName;
+        if (variableName.isBlank()) {
+            step.expectedVariablePresent = true;
+            step.expectedVariableValue = resolveWebRunVariables(expression, runVariables);
+        } else {
+            step.expectedVariablePresent = runVariables.containsKey(variableName);
+            step.expectedVariableValue = step.expectedVariablePresent ? runVariables.getOrDefault(variableName, "") : "";
+        }
+    }
+
+    private String resolveWebRunVariables(String text, Map<String, String> runVariables) {
+        String resolved = nullToBlank(text);
+        if (runVariables != null) {
+            for (Map.Entry<String, String> entry : runVariables.entrySet()) {
+                resolved = resolved.replace("${" + entry.getKey() + "}", nullToBlank(entry.getValue()))
+                        .replace("{{" + entry.getKey() + "}}", nullToBlank(entry.getValue()));
+            }
+        }
+        return resolveVariables(resolved);
+    }
+
+    private String flowVariableName(Map<String, String> row) {
+        String explicit = row == null ? "" : row.getOrDefault("flowVariableName", "");
+        if (!explicit.isBlank()) {
+            return normalizeVariableName(explicit);
+        }
+        String selector = row == null ? "" : row.getOrDefault("selector", "");
+        if ("Flow Variable".equalsIgnoreCase(row == null ? "" : row.getOrDefault("action", "")) && !selector.isBlank()) {
+            return normalizeVariableName(selector);
+        }
+        String note = row == null ? "" : row.getOrDefault("note", "");
+        String value = row == null ? "" : row.getOrDefault("value", "");
+        String candidate = firstNonBlank(note, value);
+        if (candidate.startsWith("${") && candidate.endsWith("}")) {
+            candidate = candidate.substring(2, candidate.length() - 1);
+        }
+        return normalizeVariableName(candidate);
+    }
+
+    private void registerFlowVariableFromRow(Map<String, String> row) {
+        normalizeFlowVariableRow(row);
+        if (row == null || !"Flow Variable".equalsIgnoreCase(row.getOrDefault("action", ""))) return;
+        String name = flowVariableName(row);
+        if (name.isBlank()) return;
+        savedVariables.put(name, row.getOrDefault("value", ""));
+        savedVariableTypes.put(name, "Web Flow Variable");
+        savedVariablePaths.put(name, "web-flow:" + row.getOrDefault("step", ""));
+        loadedWebRecordingFlowVariables.remove(name);
+        refreshVariablesView();
+    }
+
+    private void normalizeFlowVariableRow(Map<String, String> row) {
+        if (row == null || !"Flow Variable".equalsIgnoreCase(row.getOrDefault("action", ""))) {
+            return;
+        }
+        String name = flowVariableName(row);
+        if (name.isBlank()) {
+            return;
+        }
+        row.put("flowVariableName", name);
+        row.put("selector", name);
+    }
+
+    private void syncFlowStepsFromVariable(String name, String value) {
+        String normalizedName = normalizeVariableName(name);
+        if (normalizedName.isBlank() || webStepRows == null) return;
+        for (Map<String, String> step : webStepRows) {
+            if ("Flow Variable".equalsIgnoreCase(step.getOrDefault("action", ""))
+                    && normalizedName.equals(flowVariableName(step))) {
+                step.put("value", nullToBlank(value));
+                step.put("selector", normalizedName);
+                step.put("flowVariableName", normalizedName);
+            }
+        }
+        if (webStepsTable != null) webStepsTable.refresh();
+    }
+
+    private void syncAllFlowStepsFromVariables() {
+        if (webStepRows == null) return;
+        for (Map<String, String> step : webStepRows) {
+            if (!"Flow Variable".equalsIgnoreCase(step.getOrDefault("action", ""))) continue;
+            String name = flowVariableName(step);
+            if (!name.isBlank() && savedVariables.containsKey(name)) {
+                step.put("value", savedVariables.getOrDefault(name, ""));
+            }
+        }
+        if (webStepsTable != null) webStepsTable.refresh();
+    }
+
     private void renderWebReport(WebTestRunReport report) {
         webResultRows.clear();
+        int index = 0;
         for (WebTestExecutionResult result : report.results) {
-            webResultRows.add(row("result", result.passed ? "Pass" : "Fail", "action", result.action,
-                    "selector", result.selector, "expected", result.expectedValue, "message", result.message,
-                    "duration", result.durationMs + " ms"));
+            webResultRows.add(row("stepIndex", String.valueOf(index++),
+                    "result", result.passed ? "Pass" : "Fail", "stepName", firstNonBlank(result.stepName,
+                            autoWebStepName(result.action, result.selector, result.expectedValue, result.message, "")),
+                    "action", result.action,
+                    "selector", result.selector, "expected", result.expectedValue,
+                    "actualValue", nullToBlank(result.actualValue),
+                    "observedVariableName", nullToBlank(result.observedVariableName),
+                    "observedVariableValue", nullToBlank(result.observedVariableValue),
+                    "message", result.message,
+                    "duration", result.durationMs + " ms",
+                    "pageUrl", nullToBlank(result.pageUrl), "pageTitle", nullToBlank(result.pageTitle),
+                    "screenshotPath", nullToBlank(result.screenshotPath),
+                    "ariaSnapshot", nullToBlank(result.ariaSnapshot), "domSnapshot", nullToBlank(result.domSnapshot),
+                    "consoleMessages", nullToBlank(result.consoleMessages),
+                    "networkFailures", nullToBlank(result.networkFailures)));
         }
         webRunSummaryLabel.setText(report.passed + " passed / " + report.failed + " failed");
-        if (report.lastScreenshotPath != null) {
-            webTipsArea.appendText("\nLast screenshot: " + report.lastScreenshotPath);
+        writeStandaloneValidationReport("WEB_TESTING", "UI Studio", "Web Test",
+                localWebTestingReportsDirectory(), webResultRows,
+                "action", "expected", "selector", "duration", "result", "message");
+    }
+
+    private void runWebAiAnalysisForFailures() {
+        if (!apiAiAgentConnected()) {
+            showWarning(selectedWebAiAgentName(), isHermesRuntimeSelected()
+                    ? "Hermes Agent is not connected."
+                    : "No Agentic AI session is connected.");
+            updateApiAiConnectionLabels();
+            return;
         }
+        if (isVeyraAIRuntimeSelected() && !agenticAIConnectionManager.getConnectedAgents().contains("webAgent")) {
+            showWarning("Web Agent", "Web Agent is not connected to the active session.");
+            return;
+        }
+        List<Map<String, String>> failures = webFailureRows();
+        if (failures.isEmpty()) {
+            showWarning("Web AI Analysis", webResultRows == null || webResultRows.isEmpty()
+                    ? "Run Web Test before requesting AI Analysis."
+                    : "No failed Web test steps were found.");
+            return;
+        }
+        if (webStepRows == null || webStepRows.isEmpty()) {
+            showWarning("Web AI Analysis", "Captured step context is unavailable.");
+            return;
+        }
+        String agentName = selectedWebAiAgentName();
+        webRunSummaryLabel.setText(agentName + " healing failed steps...");
+        updateApiAiConnectionLabels(agentName + " analyzing WebUI failures with " + apiAiConnectedModel);
+        Task<WebAiSuggestion> task = new Task<>() {
+            @Override protected WebAiSuggestion call() {
+                return requestWebAiModelSuggestion(failures);
+            }
+        };
+        task.setOnSucceeded(e -> {
+            webRunSummaryLabel.setText("Web AI suggestions ready");
+            updateApiAiConnectionLabels(agentName + " connected: " + apiAiConnectedModel);
+            WebAiSuggestion suggestion = task.getValue();
+            if (suggestion.fixes.isEmpty()) {
+                showWarning("Web AI Analysis", "The connected model did not return any recommended fixes.");
+            } else {
+                showWebAiSuggestionWindow(suggestion);
+            }
+        });
+        task.setOnFailed(e -> {
+            logApiAiConsole("Web AI Analysis task failed", task.getException());
+            webRunSummaryLabel.setText("Web AI suggestion failed");
+            updateApiAiConnectionLabels(agentName + " connected: " + apiAiConnectedModel
+                    + " (last Web analysis failed: " + exceptionMessage(rootCause(task.getException())) + ")");
+            showError(isHermesRuntimeSelected() ? "Hermes WebUI Analysis Failed" : "Web Agent Analysis Failed",
+                    new IllegalStateException(isHermesRuntimeSelected()
+                            ? "Hermes WebUI analysis failed. Review the Hermes connection and session, then retry."
+                            : "Web Agent analysis failed. Review the Agentic AI connection and diagnostics, then retry.",
+                            task.getException()));
+        });
+        start(task);
+    }
+
+    private List<Map<String, String>> webFailureRows() {
+        if (webResultRows == null) {
+            return List.of();
+        }
+        return webResultRows.stream()
+                .filter(row -> !isPassingStatus(row.getOrDefault("result", "")))
+                .toList();
+    }
+
+    private WebAiSuggestion requestWebAiModelSuggestion(List<Map<String, String>> failures) {
+        try {
+            JSONObject root;
+            if (isHermesRuntimeSelected()) {
+                String prompt = webAiSuggestionPrompt(failures);
+                logApiAiConsole("Hermes Web AI Analysis prompt built, characters=" + prompt.length());
+                String output = runApiAiPrompt(prompt);
+                logApiAiConsole("Hermes Web AI Analysis output received, characters=" + (output == null ? 0 : output.length()));
+                root = extractJsonObject(output).put("agentUsed", "hermes").put("modelCalled", true)
+                        .put("knownFixesUsed", 0);
+            } else {
+                JSONObject context = buildWebAgentContext(failures);
+                root = webAnalysisAgent.analyze(context, this::invokeWebAgentModel);
+                webAgentLastAnalysis = Instant.now();
+                if (root.optBoolean("modelCalled", false)) webAgentLastModelCall = webAgentLastAnalysis;
+                if (root.optInt("knownFixesUsed", 0) > 0) webAgentLastKnownFixResolution = webAgentLastAnalysis;
+                Platform.runLater(this::refreshWebAgentDiagnostics);
+                logApiAiConsole("Web Agent response: agentUsed=" + root.optString("agentUsed")
+                        + ", modelCalled=" + root.optBoolean("modelCalled")
+                        + ", knownFixesUsed=" + root.optInt("knownFixesUsed"));
+            }
+            return webAiSuggestionFromModelJson(root, failures);
+        } catch (Exception e) {
+            logApiAiConsole("Web AI Analysis failed while preparing, running, or parsing model suggestion", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    private JSONObject buildWebAgentContext(List<Map<String, String>> failures) throws Exception {
+        JSONObject variablesRegistry = webVariablesRegistryForAnalysis();
+        JSONObject payload = new JSONObject()
+                .put("testName", webTestNameField == null ? "" : webTestNameField.getText())
+                .put("startUrl", webStartUrlField == null ? "" : webStartUrlField.getText())
+                .put("capturedSteps", webStepsJson())
+                .put("failedResults", new JSONArray(failures))
+                .put("savedVariables", variablesRegistry)
+                .put("variablesRegistry", variablesRegistry)
+                .put("variableSources", webVariableSourcesForAnalysis())
+                .put("supportedActions", new JSONArray(WEB_TEST_ACTIONS))
+                .put("supportedRuntimeVariables", new JSONArray(List.of("${randomString}", "${randomInt}", "${randomDate}")));
+        JSONArray apiKnowledge = searchCustomAgentMemory("apiExecutor", "", 12, true);
+        appendJsonArray(apiKnowledge, searchCustomAgentMemory("apiValidator", "", 8, true), 20);
+        appendJsonArray(apiKnowledge, searchCustomAgentMemory("apiCollection", "", 8, true), 24);
+        JSONArray dbKnowledge = searchCustomAgentMemory("dbStudio", "", 16, true);
+        JSONArray uiKnowledge = searchCustomAgentMemory("uiStudio", "", 24, true);
+        appendJsonArray(uiKnowledge, loadApiAiMemoryRepositorySample(), 32);
+        JSONArray crossSession = searchCustomAgentMemory("uiStudio", "", 24, false);
+        String scope = configCacheKey();
+        JSONObject context = webAgentContextBuilder.build(scope, scope,
+                firstNonBlank(webTestingTestCaseField == null ? "" : webTestingTestCaseField.getText(),
+                        webTestNameField == null ? "" : webTestNameField.getText()),
+                activeAgentSessionId(), payload, apiKnowledge, dbKnowledge, uiKnowledge, crossSession);
+        JSONObject liveEvidence = playwrightRecorderController.inspectActiveBrowserForMcp(
+                webCdpEndpointField == null ? "" : webCdpEndpointField.getText(),
+                payload.getJSONArray("failedResults"), payload.getJSONArray("capturedSteps"));
+        context.put("mcpServers", new JSONObject()
+                .put("webui", webUiMcpServer.expose(context))
+                .put("playwright", playwrightMcpServer.expose(context, liveEvidence)));
+        return context;
+    }
+
+    private String invokeWebAgentModel(String prompt) throws Exception {
+        if (activeVeyraAIModelConfig == null || activeVeyraAIAgentSession == null) {
+            throw new IllegalStateException("No Agentic AI session is connected.");
+        }
+        if (!agenticAIConnectionManager.getConnectedAgents().contains("webAgent")) {
+            throw new IllegalStateException("Web Agent is not connected to the active session.");
+        }
+        agentSessionManager.touch();
+        saveVeyraAIMessage(activeVeyraAIAgentSession.sessionId(), "user", "UiScriptHealingSkill", prompt);
+        saveCustomAgentMemory("session", activeVeyraAIAgentSession.sessionId(), "uiStudio", "prompt",
+                new JSONObject().put("action", "healFailedScript").put("prompt", shorten(prompt, 1800)),
+                "uiStudio/healFailedScript", new JSONArray().put("healFailedScript"), 1.0, 1);
+        String output = callVeyraAIModel(activeVeyraAIModelConfig, prompt);
+        saveVeyraAIMessage(activeVeyraAIAgentSession.sessionId(), "assistant", "UiScriptHealingSkill", output);
+        return output;
+    }
+
+    private String webAiSuggestionPrompt(List<Map<String, String>> failures) throws Exception {
+        JSONObject input = new JSONObject()
+                .put("testName", webTestNameField == null ? "" : webTestNameField.getText())
+                .put("startUrl", webStartUrlField == null ? "" : webStartUrlField.getText())
+                .put("capturedSteps", webStepsJson())
+                .put("failedResults", new JSONArray(failures))
+                .put("availableSavedVariables", webVariablesRegistryForAnalysis())
+                .put("supportedActions", new JSONArray(WEB_TEST_ACTIONS))
+                .put("supportedRuntimeVariables", new JSONArray(RUNTIME_VARIABLES))
+                .put("knowledgeRepositoryMode", apiAiAgentMemoryStorageMode().name())
+                .put("knowledgeRepository", loadApiAiMemoryRepositorySample());
+        return """
+                You are VeyraAI WebUI Healer.
+                Analyze failed WebUI Step Results and suggest concrete repairs for the Captured Steps.
+                Return ONLY strict JSON. No markdown, no prose.
+
+                Required JSON shape:
+                {
+                  "fixes": [
+                    {
+                      "stepIndex": 0,
+                      "stepName":"Click login-btn",
+                      "cause":"Selector no longer matches the login button.",
+                      "recommendedFix":"Use a stable text locator.",
+                      "action":"Click",
+                      "selector":"button:has-text(\\"Login\\")",
+                      "value":"",
+                      "expectedValue":"",
+                      "actualValue":"",
+                      "expectedVariableName":"",
+                      "expectedUpdateMode":"none|staticValue|updateVariable",
+                      "expectedVariableValue":"",
+                      "note":"Healed selector after failed click",
+                      "flowVariableName":""
+                    }
+                  ]
+                }
+
+                Rules:
+                - stepIndex is zero-based and must point to the Captured Steps row that should be changed.
+                - stepName must be copied exactly from that Captured Steps row. Never create or rename a step name.
+                - Return the full replacement action, selector, value, and note for each fix.
+                - Prefer stable selectors: data-testid, id, name, aria-label, role/text, then CSS.
+                - Use supported runtime variables when helpful: ${randomString}, ${randomInt}, ${randomDate}.
+                - Runtime variables may be used in selector, value, or note when the failure is caused by duplicate/static data.
+                - Inspect upstream Captured Steps as well as failed rows. A passed upstream data step may be the root cause of a later failure.
+                - If registration returns HTTP 400 because the email is static or duplicated, include a separate fix for the original email Flow Variable step. Keep its exact stepName and flowVariableName and change its Value to a supported unique expression such as sai${randomInt}@live.in. Do not only describe that change in a downstream fix.
+                - Use saved variables as ${name} when a captured value should be reused.
+                - Flow Variable stores Value into flowVariableName; preserve its existing variable identity fields.
+                - For Get Text, Value is an existing ${variableName}, an existing plain variable name, or static expected text.
+                - Get Text compares browser text without creating or updating variables during Run Web Test.
+                - For Validate Text or any failure message showing actual text differs from expected, include a fix that updates Value/expected to the actual text or a variable such as ${capturedName}; explain that the webpage actual was updated and expected should be updated.
+                - Treat Get Text, Validate Text, Wait For Text, Wait For URL, Assert URL Contains, and Visual Compare values as expected results. Type and Click values are inputs.
+                - Resolve expected ${name} or {{name}} expressions using availableSavedVariables and compare the resolved value with the actual value reported in the failed result message.
+                - For a mismatch, set expectedUpdateMode=staticValue to replace the step expected value, or expectedUpdateMode=updateVariable to keep the variable expression and update the existing saved variable to expectedVariableValue.
+                - Use expectedUpdateMode=none when the expected result needs no correction. Never propose updateVariable for a variable that is not present in availableSavedVariables.
+                - Only use actions from supportedActions.
+                - Keep fixes minimal. Do not propose unrelated steps.
+
+                Input:
+                """ + input.toString(2);
+    }
+
+    private JSONArray webStepsJson() {
+        JSONArray steps = new JSONArray();
+        if (webStepRows == null) {
+            return steps;
+        }
+        for (int i = 0; i < webStepRows.size(); i++) {
+            steps.put(new JSONObject(webStepRows.get(i)).put("stepIndex", i));
+        }
+        return steps;
+    }
+
+    private JSONObject savedVariablesJson() {
+        JSONObject variables = new JSONObject();
+        for (Map.Entry<String, String> entry : savedVariables.entrySet()) {
+            variables.put(entry.getKey(), entry.getValue());
+        }
+        return variables;
+    }
+
+    private JSONObject webVariablesRegistryForAnalysis() {
+        return webVariablesAnalysisBundle().getJSONObject("values");
+    }
+
+    private JSONObject webVariableSourcesForAnalysis() {
+        return webVariablesAnalysisBundle().getJSONObject("sources");
+    }
+
+    private JSONObject webVariablesAnalysisBundle() {
+        JSONObject values = savedVariablesJson();
+        JSONObject sources = new JSONObject();
+        for (String name : savedVariables.keySet()) {
+            sources.put(name, new JSONObject()
+                    .put("source", "loadedVariablesTab")
+                    .put("type", savedVariableTypes.getOrDefault(name, "Manual"))
+                    .put("path", savedVariablePaths.getOrDefault(name, "")));
+        }
+        for (Path document : webVariableDocumentsForAnalysis()) {
+            try {
+                Object parsed = new JSONTokener(Files.readString(document, StandardCharsets.UTF_8)).nextValue();
+                JSONArray variables = parsed instanceof JSONArray array ? array
+                        : parsed instanceof JSONObject object && object.optJSONArray("variables") != null
+                        ? object.getJSONArray("variables") : new JSONArray().put(parsed);
+                for (int i = 0; i < variables.length(); i++) {
+                    JSONObject item = variables.optJSONObject(i);
+                    if (item == null) continue;
+                    String name = importedVariableName(item);
+                    if (name.isBlank()) continue;
+                    if (!values.has(name)) values.put(name, item.optString("value"));
+                    if (!sources.has(name)) {
+                        sources.put(name, new JSONObject()
+                                .put("source", "persistedVariablesFile")
+                                .put("type", item.optString("type", "Persisted"))
+                                .put("path", document.toAbsolutePath().normalize().toString()));
+                    }
+                }
+            } catch (Exception exception) {
+                logApiAiConsole("WebUI MCP could not read variables from " + document, exception);
+            }
+        }
+        return new JSONObject().put("values", values).put("sources", sources);
+    }
+
+    private List<Path> webVariableDocumentsForAnalysis() {
+        Set<Path> documents = new LinkedHashSet<>();
+        List<Path> candidates = new ArrayList<>();
+        if (variablesPathField != null && !nullToBlank(variablesPathField.getText()).isBlank()) {
+            try { candidates.add(Path.of(variablesPathField.getText())); } catch (Exception ignored) {}
+        }
+        Path configured = configuredFolder("Variables");
+        if (configured != null) candidates.add(configured);
+        candidates.add(Path.of("APIVariables").toAbsolutePath().normalize());
+        for (Path candidate : candidates) {
+            try {
+                Path normalized = candidate.toAbsolutePath().normalize();
+                if (Files.isRegularFile(normalized) && normalized.toString().toLowerCase(Locale.ROOT).endsWith(".json")) {
+                    documents.add(normalized);
+                } else if (Files.isDirectory(normalized)) {
+                    try (Stream<Path> entries = Files.list(normalized)) {
+                        entries.filter(Files::isRegularFile)
+                                .filter(path -> path.toString().toLowerCase(Locale.ROOT).endsWith(".json"))
+                                .limit(20).forEach(documents::add);
+                    }
+                }
+            } catch (Exception ignored) {
+                // Optional persisted variable sources must not block WebUI analysis.
+            }
+        }
+        return new ArrayList<>(documents);
+    }
+
+    private WebAiSuggestion webAiSuggestionFromModelJson(JSONObject root, List<Map<String, String>> failures) {
+        WebAiSuggestion suggestion = new WebAiSuggestion();
+        suggestion.agentUsed = firstNonBlank(root.optString("agentUsed"), isHermesRuntimeSelected() ? "hermes" : "webAgent");
+        suggestion.modelCalled = root.optBoolean("modelCalled", true);
+        suggestion.knownFixesUsed = root.optInt("knownFixesUsed", 0);
+        suggestion.failures.addAll(failures);
+        JSONArray fixes = root.optJSONArray("fixes");
+        if (fixes != null) for (int i = 0; i < fixes.length(); i++) {
+            JSONObject item = fixes.optJSONObject(i);
+            if (item == null) continue;
+            int stepIndex = item.optInt("stepIndex", -1);
+            if (stepIndex < 0 || stepIndex >= webStepRows.size()) {
+                continue;
+            }
+            Map<String, String> current = webStepRows.get(stepIndex);
+            Map<String, String> failure = failures.stream()
+                    .filter(row -> String.valueOf(stepIndex).equals(row.getOrDefault("stepIndex", "")))
+                    .findFirst().orElse(Map.of());
+            String currentAction = current.getOrDefault("action", "");
+            boolean expectedAction = isWebExpectedValueAction(currentAction);
+            String currentExpected = expectedAction ? current.getOrDefault("value", "") : "";
+            String expectedVariableName = expectedAction ? firstNonBlank(item.optString("expectedVariableName"),
+                    expectedVariableName(currentExpected)) : "";
+            String resolvedExpected = expectedVariableName.isBlank()
+                    ? currentExpected : savedVariables.getOrDefault(expectedVariableName, "");
+            String actualValue = firstNonBlank(item.optString("actualValue"),
+                    webAgentContextBuilder.actualValue(failure.getOrDefault("message", "")));
+            boolean expectedMismatch = !currentExpected.isBlank() && !actualValue.isBlank()
+                    && !Objects.equals(resolvedExpected, actualValue);
+            String expectedUpdateMode = expectedAction ? firstNonBlank(item.optString("expectedUpdateMode"),
+                    expectedMismatch ? (!expectedVariableName.isBlank() && savedVariables.containsKey(expectedVariableName)
+                            ? "updateVariable" : "staticValue") : "none") : "none";
+            String suggestedExpected = !expectedAction ? "" : item.has("expectedValue") ? item.optString("expectedValue")
+                    : expectedMismatch ? actualValue : currentExpected;
+            suggestion.fixes.add(row("selected", "true",
+                    "stepIndex", String.valueOf(stepIndex),
+                    "step", String.valueOf(stepIndex + 1),
+                    "cause", item.optString("cause"),
+                    "recommendedFix", item.optString("recommendedFix"),
+                    "failureType", item.optString("failureType", "scriptFailure"),
+                    "currentAction", currentAction,
+                    "currentSelector", current.getOrDefault("selector", ""),
+                    "currentValue", current.getOrDefault("value", ""),
+                    "currentNote", current.getOrDefault("note", ""),
+                    "currentFlowVariableName", current.getOrDefault("flowVariableName", ""),
+                    "stepName", current.getOrDefault("stepName", ""),
+                    "action", firstNonBlank(item.optString("action"), current.getOrDefault("action", "")),
+                    "selector", firstNonBlank(item.optString("selector"), current.getOrDefault("selector", "")),
+                    "value", item.has("value") ? item.optString("value") : current.getOrDefault("value", ""),
+                    "currentExpected", currentExpected,
+                    "resolvedExpected", resolvedExpected,
+                    "actualValue", actualValue,
+                    "expectedMismatch", expectedMismatch ? "Mismatch" : currentExpected.isBlank() ? "N/A" : "Match",
+                    "expectedValue", suggestedExpected,
+                    "expectedVariableName", expectedVariableName,
+                    "expectedUpdateMode", expectedUpdateMode,
+                    "expectedVariableValue", expectedAction
+                            ? firstNonBlank(item.optString("expectedVariableValue"), actualValue) : "",
+                    "note", firstNonBlank(item.optString("note"), current.getOrDefault("note", "")),
+                    "flowVariableName", firstNonBlank(item.optString("flowVariableName"), current.getOrDefault("flowVariableName", "")),
+                    "confidence", String.format(Locale.ROOT, "%.2f", item.optDouble("confidence", 0.5)),
+                    "resolutionSource", item.optString("resolutionSource", suggestion.agentUsed.equals("hermes") ? "model" : "model"),
+                    "sourceLabel", webFixSourceLabel(suggestion.agentUsed, item.optString("resolutionSource")),
+                    "contextSources", item.optJSONArray("contextSources") == null ? "" : item.optJSONArray("contextSources").toString(),
+                    "knowledgeEntryId", item.optString("knowledgeEntryId"),
+                    "failureSignature", item.optString("failureSignature"),
+                    "fallbackSelectors", item.optJSONArray("fallbackSelectors") == null ? "" : item.optJSONArray("fallbackSelectors").toString(),
+                    "variableCorrection", item.optJSONObject("variableCorrection") == null ? "" : item.optJSONObject("variableCorrection").toString(),
+                    "waitSuggestion", item.optJSONObject("waitSuggestion") == null ? "" : item.optJSONObject("waitSuggestion").toString(),
+                    "reasoningSummary", item.optString("reasoningSummary"),
+                    "status", "Suggested"));
+        }
+        return suggestion;
+    }
+
+    private String webFixSourceLabel(String agentUsed, String source) {
+        if ("hermes".equals(agentUsed)) return "Hermes Analysis";
+        return switch (nullToBlank(source)) {
+            case "knowledgeBase" -> "Known Fix";
+            case "crossSessionMemory" -> "Cross-Session Memory";
+            case "projectMemory", "workflowMemory" -> "Project Knowledge";
+            case "model" -> "Model Analysis";
+            default -> "Shared Agent Knowledge";
+        };
+    }
+
+    private boolean isWebExpectedValueAction(String action) {
+        String normalized = nullToBlank(action).toLowerCase(Locale.ROOT);
+        return normalized.equals("validate text") || normalized.equals("wait for text")
+                || normalized.equals("wait for url") || normalized.equals("assert url contains")
+                || normalized.equals("visual compare") || normalized.equals("get text");
+    }
+
+    private String expectedVariableName(String expression) {
+        String value = nullToBlank(expression).trim();
+        if (value.startsWith("${") && value.endsWith("}")) {
+            return normalizeVariableName(value.substring(2, value.length() - 1));
+        }
+        if (value.startsWith("{{") && value.endsWith("}}")) {
+            return normalizeVariableName(value.substring(2, value.length() - 2));
+        }
+        return "";
+    }
+
+    private void showWebAiSuggestionWindow(WebAiSuggestion suggestion) {
+        ObservableList<Map<String, String>> fixRows = FXCollections.observableArrayList(suggestion.fixes);
+        TableView<Map<String, String>> fixesTable = mapTable(fixRows,
+                "Apply", "selected", "Step", "step", "Step Name", "stepName", "Failure Type", "failureType", "Cause", "cause", "Recommended Fix", "recommendedFix",
+                "Current Action", "currentAction", "Current Selector", "currentSelector", "Current Value", "currentValue",
+                "Action", "action", "Selector", "selector", "Value", "value",
+                "Current Expected", "currentExpected", "Resolved Expected", "resolvedExpected", "Actual", "actualValue",
+                "Expected Check", "expectedMismatch", "Suggested Expected", "expectedValue",
+                "Expected Variable", "expectedVariableName", "Expected Update", "expectedUpdateMode",
+                "Variable New Value", "expectedVariableValue", "Flow Variable Name", "flowVariableName", "Note", "note",
+                "Confidence", "confidence", "Source", "sourceLabel", "Context Used", "contextSources", "Status", "status");
+        fixesTable.setPrefHeight(430);
+        fixesTable.setMinHeight(260);
+        configureWebFixesTable(fixesTable);
+        ScrollPane fixesTableScroller = new ScrollPane(fixesTable);
+        fixesTableScroller.setFitToHeight(true);
+        fixesTableScroller.setFitToWidth(false);
+        fixesTableScroller.setPannable(true);
+        fixesTableScroller.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        fixesTableScroller.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        fixesTableScroller.setPrefHeight(460);
+        Button selectAll = secondary("Select All");
+        Button deselectAll = secondary("Deselect All");
+        Button saveKnowledge = primary("Save to Project Knowledge store");
+        Button applyFix = primary("Apply Fix");
+        Button close = secondary("Close");
+        Stage suggestionStage = new Stage();
+        if (stage != null) {
+            suggestionStage.initOwner(stage);
+        }
+        selectAll.setOnAction(e -> setAllRowsSelected(fixRows, fixesTable, true));
+        deselectAll.setOnAction(e -> setAllRowsSelected(fixRows, fixesTable, false));
+        saveKnowledge.setOnAction(e -> {
+            saveWebAiSuggestionMemory(suggestion, fixRows);
+            fixesTable.refresh();
+        });
+        applyFix.setOnAction(e -> {
+            applyWebAiFixes(fixRows);
+            fixesTable.refresh();
+        });
+        close.setOnAction(e -> suggestionStage.close());
+        VBox content = new VBox(14,
+                sectionTitle("WebUI Healer Suggestions"),
+                new Label(("webAgent".equals(suggestion.agentUsed) ? "Web Agent" : "Hermes Agent")
+                        + " analyzed failed Step Results and suggested repairs for Captured Steps. "
+                        + "Model called: " + suggestion.modelCalled + ", known fixes used: " + suggestion.knownFixesUsed + "."),
+                card("Recommended Fixes", fixesTableScroller));
+        content.setPadding(new Insets(16));
+        VBox.setVgrow(fixesTableScroller, Priority.ALWAYS);
+        ScrollPane scroller = new ScrollPane(content);
+        scroller.setFitToWidth(true);
+        scroller.setPannable(true);
+        scroller.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        FlowPane footer = actionRow(selectAll, deselectAll, saveKnowledge, applyFix, close);
+        footer.setPadding(new Insets(12, 16, 16, 16));
+        footer.getStyleClass().add("card");
+        BorderPane shell = new BorderPane(scroller);
+        shell.setBottom(footer);
+        double[] suggestionSize = apiAiSuggestionWindowSize();
+        Scene scene = new Scene(shell, suggestionSize[0], suggestionSize[1]);
+        scene.getStylesheets().add(createInlineStylesheet());
+        addApplicationStylesheet(scene);
+        suggestionStage.setTitle("AI Suggestion - WebUI Healer");
+        suggestionStage.setScene(scene);
+        suggestionStage.setMinWidth(Math.min(820, suggestionSize[0]));
+        suggestionStage.setMinHeight(Math.min(560, suggestionSize[1]));
+        suggestionStage.show();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void configureWebFixesTable(TableView<Map<String, String>> table) {
+        table.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
+        double totalWidth = 0;
+        for (TableColumn<Map<String, String>, ?> rawColumn : table.getColumns()) {
+            String key = rawColumn.getId();
+            double width = switch (nullToBlank(key)) {
+                case "selected", "step" -> 80;
+                case "failureType", "confidence", "sourceLabel", "status", "expectedMismatch" -> 145;
+                case "cause", "recommendedFix", "contextSources", "note" -> 260;
+                case "currentSelector", "selector", "currentValue", "value", "currentExpected",
+                     "resolvedExpected", "actualValue", "expectedValue", "expectedVariableValue" -> 220;
+                case "currentAction", "action", "expectedVariableName", "expectedUpdateMode", "flowVariableName", "stepName" -> 175;
+                default -> 150;
+            };
+            rawColumn.setMinWidth(width);
+            rawColumn.setPrefWidth(width);
+            totalWidth += width;
+        }
+        table.setMinWidth(totalWidth + 24);
+        table.setPrefWidth(totalWidth + 24);
+        configureEditableWebFixColumn(table, "selector");
+        configureEditableWebFixColumn(table, "value");
+        configureEditableWebFixColumn(table, "expectedValue");
+        configureEditableWebFixColumn(table, "expectedVariableName");
+        configureEditableWebFixColumn(table, "expectedVariableValue");
+        configureEditableWebFixColumn(table, "flowVariableName");
+        configureEditableWebFixColumn(table, "note");
+        configureChoiceWebFixColumn(table, "action", WEB_TEST_ACTIONS);
+        configureChoiceWebFixColumn(table, "expectedUpdateMode", List.of("none", "staticValue", "updateVariable"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void configureEditableWebFixColumn(TableView<Map<String, String>> table, String key) {
+        TableColumn<Map<String, String>, String> column = (TableColumn<Map<String, String>, String>) table.getColumns().stream()
+                .filter(candidate -> key.equals(candidate.getId())).findFirst().orElse(null);
+        if (column == null) return;
+        column.setEditable(true);
+        column.setCellFactory(TextFieldTableCell.forTableColumn());
+        column.setOnEditCommit(event -> event.getRowValue().put(key, nullToBlank(event.getNewValue())));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void configureChoiceWebFixColumn(TableView<Map<String, String>> table, String key, List<String> values) {
+        TableColumn<Map<String, String>, String> column = (TableColumn<Map<String, String>, String>) table.getColumns().stream()
+                .filter(candidate -> key.equals(candidate.getId())).findFirst().orElse(null);
+        if (column == null) return;
+        column.setEditable(true);
+        column.setCellFactory(ComboBoxTableCell.forTableColumn(FXCollections.observableArrayList(values)));
+        column.setOnEditCommit(event -> event.getRowValue().put(key, nullToBlank(event.getNewValue())));
+    }
+
+    private void applyWebAiFixes(List<Map<String, String>> fixes) {
+        int applied = 0;
+        int expectedVariablesUpdated = 0;
+        for (Map<String, String> fix : fixes) {
+            if (!isSelected(fix)) continue;
+            int index = webFixTargetIndex(fix);
+            if (index < 0 || index >= webStepRows.size()) {
+                fix.put("status", "Skipped: step name not uniquely found");
+                continue;
+            }
+            // Replace the captured row at the model-provided step index. Mutating the
+            // existing row map in place does not represent a list replacement to
+            // JavaFX and previously allowed healed rows to appear as newly appended
+            // table content after refresh/renumbering.
+            Map<String, String> target = new LinkedHashMap<>(webStepRows.get(index));
+            target.put("stepName", fix.getOrDefault("stepName", target.getOrDefault("stepName", "")));
+            target.put("action", fix.getOrDefault("action", target.getOrDefault("action", "")));
+            target.put("selector", fix.getOrDefault("selector", target.getOrDefault("selector", "")));
+            String replacementValue = fix.getOrDefault("value", target.getOrDefault("value", ""));
+            String expectedValue = fix.getOrDefault("expectedValue", "");
+            String expectedUpdateMode = fix.getOrDefault("expectedUpdateMode", "none");
+            if (isWebExpectedValueAction(target.getOrDefault("action", ""))) {
+                if ("updateVariable".equals(expectedUpdateMode)) {
+                    String variableName = normalizeVariableName(fix.getOrDefault("expectedVariableName", ""));
+                    String newVariableValue = firstNonBlank(fix.get("expectedVariableValue"),
+                            fix.get("actualValue"), expectedValue);
+                    JSONObject analysisVariables = webVariablesRegistryForAnalysis();
+                    if (!variableName.isBlank() && analysisVariables.has(variableName) && !newVariableValue.isBlank()) {
+                savedVariables.put(variableName, newVariableValue);
+                        syncFlowStepsFromVariable(variableName, newVariableValue);
+                        savedVariablePaths.put(variableName, "web-healer:expected-step-" + (index + 1));
+                        savedVariableTypes.put(variableName, "Web Expected Variable");
+                        String currentExpression = fix.getOrDefault("currentExpected", "");
+                        replacementValue = variableName.equals(expectedVariableName(currentExpression))
+                                ? currentExpression : "${" + variableName + "}";
+                        expectedVariablesUpdated++;
+                    } else {
+                        replacementValue = firstNonBlank(expectedValue, fix.get("actualValue"),
+                                fix.get("expectedVariableValue"), replacementValue);
+                        fix.put("expectedUpdateMode", "staticValue");
+                    }
+                } else if ("staticValue".equals(expectedUpdateMode)) {
+                    replacementValue = firstNonBlank(expectedValue, fix.get("actualValue"),
+                            fix.get("expectedVariableValue"), replacementValue);
+                } else if (!expectedValue.isBlank()) {
+                    replacementValue = expectedValue;
+                }
+            }
+            target.put("value", replacementValue);
+            target.put("note", fix.getOrDefault("note", target.getOrDefault("note", "")));
+            target.put("flowVariableName", fix.getOrDefault("flowVariableName", target.getOrDefault("flowVariableName", "")));
+            String waitJson = fix.getOrDefault("waitSuggestion", "");
+            if (!waitJson.isBlank()) {
+                JSONObject wait = safeJsonObject(waitJson);
+                if (wait.optInt("timeoutMs", 0) > 0) target.put("timeout", String.valueOf(wait.optInt("timeoutMs")));
+            }
+            registerFlowVariableFromRow(target);
+            webStepRows.set(index, target);
+            fix.put("status", "Applied");
+            applied++;
+        }
+        renumberWebSteps();
+        webStepsTable.refresh();
+        refreshVariablesView();
+        showInfo("WebUI Healer", "Selected fixes were applied (" + applied + "). Expected variables updated: "
+                + expectedVariablesUpdated + ". Run Web Test again to verify the healing.");
+    }
+
+    private int webFixTargetIndex(Map<String, String> fix) {
+        String stepName = nullToBlank(fix.get("stepName")).trim();
+        if (!stepName.isBlank()) {
+            int match = -1;
+            int matches = 0;
+            for (int i = 0; i < webStepRows.size(); i++) {
+                if (!stepName.equals(webStepRows.get(i).getOrDefault("stepName", ""))) continue;
+                matches++;
+                match = i;
+            }
+            if (matches == 1) return match;
+            try {
+                int indexed = Integer.parseInt(fix.getOrDefault("stepIndex", "-1"));
+                return matches > 1 && indexed >= 0 && indexed < webStepRows.size()
+                        && stepName.equals(webStepRows.get(indexed).getOrDefault("stepName", "")) ? indexed : -1;
+            } catch (NumberFormatException ignored) {
+                return -1;
+            }
+        }
+        try {
+            return Integer.parseInt(fix.getOrDefault("stepIndex", "-1"));
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
+    }
+
+    private void saveWebAiSuggestionMemory(WebAiSuggestion suggestion, List<Map<String, String>> fixes) {
+        JSONArray selectedFixes = new JSONArray();
+        for (Map<String, String> fix : fixes) {
+            if (isSelected(fix)) selectedFixes.put(webFixJson(fix));
+        }
+        if (selectedFixes.isEmpty()) {
+            showWarning("WebUI Healer", "Select at least one fix before saving.");
+            return;
+        }
+        JSONObject memory = new JSONObject()
+                .put("id", "web-ai-healer-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                .put("endpoint", webStartUrlField == null ? "" : webStartUrlField.getText())
+                .put("method", "WEB_TEST")
+                .put("actionName", "webUiHealing")
+                .put("hermesSessionId", activeAgentSessionId())
+                .put("provider", activeAgentProviderName())
+                .put("response", new JSONObject()
+                        .put("status", "WebUI Healer Suggestions")
+                        .put("body", new JSONObject()
+                                .put("testName", webTestNameField == null ? "" : webTestNameField.getText())
+                                .put("startUrl", webStartUrlField == null ? "" : webStartUrlField.getText())
+                                .put("capturedSteps", webStepsJson())
+                                .put("failedResults", new JSONArray(suggestion.failures))
+                                .put("fixes", selectedFixes)
+                                .put("runtimeVariables", new JSONArray(RUNTIME_VARIABLES))
+                                .toString()))
+                .put("variables", new JSONArray())
+                .put("validations", selectedFixes)
+                .put("dbMappings", new JSONArray())
+                .put("agentUsed", suggestion.agentUsed)
+                .put("createdAt", Instant.now().toString());
+        saveApiAiMemory(memory);
+        if ("webAgent".equals(suggestion.agentUsed) && isVeyraAIRuntimeSelected()) {
+            saveApprovedWebAgentFixes(suggestion, fixes);
+        }
+        showInfo("WebUI Healer", "Saved WebUI healing suggestions to project knowledge.");
+    }
+
+    private void saveApprovedWebAgentFixes(WebAiSuggestion suggestion, List<Map<String, String>> fixes) {
+        JSONObject scope = new JSONObject()
+                .put("workspaceId", configCacheKey())
+                .put("projectId", configCacheKey())
+                .put("workflowId", firstNonBlank(webTestingTestCaseField == null ? "" : webTestingTestCaseField.getText(),
+                        webTestNameField == null ? "" : webTestNameField.getText()))
+                .put("testName", webTestNameField == null ? "" : webTestNameField.getText())
+                .put("startUrl", webStartUrlField == null ? "" : webStartUrlField.getText());
+        for (Map<String, String> row : fixes) {
+            if (!isSelected(row)) continue;
+            int index;
+            try { index = Integer.parseInt(row.getOrDefault("stepIndex", "-1")); }
+            catch (NumberFormatException exception) { continue; }
+            if (index < 0 || index >= webStepRows.size()) continue;
+            JSONObject original = new JSONObject()
+                    .put("stepIndex", index)
+                    .put("stepName", row.getOrDefault("stepName", ""))
+                    .put("action", row.getOrDefault("currentAction", ""))
+                    .put("selector", row.getOrDefault("currentSelector", ""))
+                    .put("value", row.getOrDefault("currentValue", ""))
+                    .put("note", row.getOrDefault("currentNote", ""))
+                    .put("flowVariableName", row.getOrDefault("currentFlowVariableName", ""));
+            JSONObject failed = suggestion.failures.stream()
+                    .filter(item -> String.valueOf(index).equals(item.getOrDefault("stepIndex", "")))
+                    .findFirst().map(JSONObject::new).orElseGet(JSONObject::new);
+            JSONObject finalFix = webFixJson(row);
+            String signature = firstNonBlank(row.get("failureSignature"),
+                    webFailureSignatureService.signature(scope, original, failed));
+            JSONObject knowledge = webAgentKnowledgeService.approvedFix(scope, original, failed, finalFix, signature);
+            JSONObject content = knowledge.getJSONObject("content");
+            JSONArray tags = knowledge.optJSONArray("tags");
+            double confidence = knowledge.optDouble("confidence", 1.0);
+            saveCustomAgentMemory("knowledgeBase", configCacheKey(), "uiStudio", knowledge.optString("type"),
+                    content, "Approved Web Agent correction for step " + (index + 1), tags, confidence, 5);
+            saveCustomAgentMemory("suggestion", activeAgentSessionId(), "uiStudio", "acceptedHealingSuggestion",
+                    content, "Accepted Web Agent correction for step " + (index + 1), tags, confidence, 4);
+            row.put("status", "Saved");
+        }
+        refreshWebAgentDiagnostics();
+    }
+
+    private JSONObject webFixJson(Map<String, String> row) {
+        JSONObject fix = new JSONObject(row);
+        fix.put("confidence", parseDouble(row.getOrDefault("confidence", "0.5"), 0.5));
+        for (String key : List.of("variableCorrection", "waitSuggestion")) {
+            String value = row.getOrDefault(key, "");
+            if (!value.isBlank()) fix.put(key, safeJsonObject(value));
+            else fix.put(key, JSONObject.NULL);
+        }
+        for (String key : List.of("fallbackSelectors", "contextSources")) {
+            String value = row.getOrDefault(key, "");
+            try { fix.put(key, value.isBlank() ? new JSONArray() : new JSONArray(value)); }
+            catch (Exception ignored) { fix.put(key, new JSONArray()); }
+        }
+        return fix;
     }
 
     private void saveWebRecording() {
         JSONArray steps = new JSONArray();
         for (Map<String, String> row : webStepRows) {
-            steps.put(new JSONObject(row));
+            JSONObject item = new JSONObject(row);
+            item.put("stepName", firstNonBlank(row.getOrDefault("stepName", ""),
+                    autoWebStepName(row.get("action"), row.get("selector"), row.get("value"), row.get("note"), flowVariableName(row))));
+            if ("Flow Variable".equalsIgnoreCase(row.getOrDefault("action", ""))) {
+                item.put("flowVariableName", flowVariableName(row));
+            }
+            steps.put(item);
         }
         JSONObject root = new JSONObject();
         root.put("testName", webTestNameField.getText());
         root.put("startUrl", webStartUrlField.getText());
         root.put("steps", steps);
-        saveTextFile(root.toString(2), "web-recording.json");
+        saveTextFile(root.toString(2), "web-recording.json", configuredFolder("WebUI", "Recording"));
     }
 
     private void loadWebRecording() {
-        File file = chooseOpenFile("JSON Files", "*.json");
+        File file = chooseOpenFile("JSON Files", "*.json", legacyConfiguredFolder("WebUI", "Recording"));
         if (file == null) {
             return;
         }
@@ -4785,18 +18868,81 @@ public class ApiValidatorFxApp extends Application {
             webStartUrlField.setText(root.optString("startUrl", ""));
             if (!merge) {
                 webStepRows.clear();
+                clearLoadedWebRecordingFlowVariables();
             }
             JSONArray steps = root.optJSONArray("steps");
             if (steps != null) {
                 for (int i = 0; i < steps.length(); i++) {
                     JSONObject item = steps.getJSONObject(i);
-                    webStepRows.add(row("step", String.valueOf(webStepRows.size() + 1), "action", item.optString("action"),
-                            "selector", item.optString("selector"), "value", item.optString("value"), "note", item.optString("note")));
+                    String action = item.optString("action");
+                    String selector = item.optString("selector");
+                    String value = item.optString("value");
+                    String note = item.optString("note");
+                    String flowVariableName = item.optString("flowVariableName");
+                    webStepRows.add(row("step", String.valueOf(webStepRows.size() + 1),
+                            "stepName", firstNonBlank(item.optString("stepName"), autoWebStepName(action, selector, value, note, flowVariableName)),
+                            "action", action,
+                            "selector", selector, "value", value, "note", note,
+                            "flowVariableName", flowVariableName,
+                            "timeout", item.optString("timeout")));
+                    Map<String, String> loadedRow = webStepRows.get(webStepRows.size() - 1);
+                    normalizeFlowVariableRow(loadedRow);
+                    importLoadedRecordingFlowVariable(loadedRow, file.toPath(), i + 1);
                 }
             }
+            refreshVariablesView();
         } catch (Exception e) {
             showError("Load Recording Failed", e);
         }
+    }
+
+    private void importLoadedRecordingFlowVariable(Map<String, String> row, Path recordingPath, int sourceStep) {
+        if (row == null || !"Flow Variable".equalsIgnoreCase(row.getOrDefault("action", ""))) return;
+        String name = flowVariableName(row);
+        if (name.isBlank()) return;
+        if (savedVariables.containsKey(name)) {
+            row.put("value", savedVariables.getOrDefault(name, ""));
+            return;
+        }
+        savedVariables.put(name, row.getOrDefault("value", ""));
+        savedVariableTypes.put(name, "Web Flow Variable (Loaded Recording)");
+        savedVariablePaths.put(name, "web-recording:" + recordingPath.toAbsolutePath().normalize()
+                + "#step-" + sourceStep);
+        loadedWebRecordingFlowVariables.add(name);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void configureVariableValueEditing() {
+        if (variablesTable == null) return;
+        TableColumn<Map<String, String>, String> valueColumn =
+                (TableColumn<Map<String, String>, String>) variablesTable.getColumns().stream()
+                        .filter(column -> "value".equals(column.getId()))
+                        .findFirst().orElse(null);
+        if (valueColumn == null) return;
+        valueColumn.setEditable(true);
+        valueColumn.setCellFactory(TextFieldTableCell.forTableColumn());
+        valueColumn.setOnEditCommit(event -> {
+            Map<String, String> variable = event.getRowValue();
+            String name = normalizeVariableName(variable.getOrDefault("name", ""));
+            String value = nullToBlank(event.getNewValue());
+            variable.put("value", value);
+            if (!name.isBlank()) {
+                savedVariables.put(name, value);
+                syncFlowStepsFromVariable(name, value);
+            }
+            variablesTable.refresh();
+        });
+    }
+
+    private void clearLoadedWebRecordingFlowVariables() {
+        for (String name : new ArrayList<>(loadedWebRecordingFlowVariables)) {
+            if ("Web Flow Variable (Loaded Recording)".equals(savedVariableTypes.getOrDefault(name, ""))) {
+                savedVariables.remove(name);
+                savedVariableTypes.remove(name);
+                savedVariablePaths.remove(name);
+            }
+        }
+        loadedWebRecordingFlowVariables.clear();
     }
 
     private void saveSelectedResponseVariables() {
@@ -4805,6 +18951,7 @@ public class ApiValidatorFxApp extends Application {
             if (isSelected(row)) {
                 String name = normalizeVariableName(row.getOrDefault("variableName", row.get("field")));
                 savedVariables.put(name, row.get("value"));
+                syncFlowStepsFromVariable(name, row.get("value"));
                 savedVariablePaths.put(name, row.get("jsonPath"));
                 savedVariableTypes.put(name, row.get("type"));
                 count++;
@@ -4827,20 +18974,25 @@ public class ApiValidatorFxApp extends Application {
             String name = normalizeVariableName(text.substring(0, equals));
             savedVariables.put(name, text.substring(equals + 1));
             savedVariableTypes.put(name, "Manual");
+            syncFlowStepsFromVariable(name, text.substring(equals + 1));
             refreshVariablesView();
         });
     }
 
     private void removeSelectedVariables() {
         for (Map<String, String> row : new ArrayList<>(variablesTable.getSelectionModel().getSelectedItems())) {
-            savedVariables.remove(row.get("name"));
-            savedVariablePaths.remove(row.get("name"));
-            savedVariableTypes.remove(row.get("name"));
+            String name = normalizeVariableName(row.getOrDefault("name", ""));
+            savedVariables.remove(name);
+            savedVariablePaths.remove(name);
+            savedVariableTypes.remove(name);
+            loadedWebRecordingFlowVariables.remove(name);
+            syncFlowStepsFromVariable(name, "");
         }
         refreshVariablesView();
     }
 
     private void refreshVariablesView() {
+        syncAllFlowStepsFromVariables();
         if (variableRows != null) {
             variableRows.clear();
             savedVariables.keySet().stream().sorted().forEach(name ->
@@ -4860,7 +19012,7 @@ public class ApiValidatorFxApp extends Application {
             item.put("path", savedVariablePaths.getOrDefault(name, ""));
             array.put(item);
         }
-        saveTextFile(array.toString(2), "api-validator-variables.json");
+        saveTextFile(array.toString(2), "api-validator-variables.json", configuredFolder("Variables"));
     }
 
     private String importedVariableName(JSONObject item) {
@@ -4868,11 +19020,14 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void importVariablesFromFile() {
-        File file = chooseOpenFile("JSON Files", "*.json");
+        File file = chooseOpenFile("JSON Files", "*.json", configuredFolder("Variables"));
         if (file == null) {
             return;
         }
         try {
+            if (variablesPathField != null) {
+                variablesPathField.setText(file.getAbsolutePath());
+            }
             Object parsed = new JSONTokener(Files.readString(file.toPath(), StandardCharsets.UTF_8)).nextValue();
             JSONArray array;
             if (parsed instanceof JSONArray parsedArray) {
@@ -4896,6 +19051,7 @@ public class ApiValidatorFxApp extends Application {
                 savedVariableTypes.put(name, item.optString("type", "Imported"));
                 savedVariablePaths.put(name, item.optString("path", item.optString("jsonPath", "")));
             }
+            syncAllFlowStepsFromVariables();
             refreshVariablesView();
         } catch (Exception e) {
             showError("Import Variables Failed", e);
@@ -4942,11 +19098,21 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void clearApiForm() {
+        currentPostmanRequestNode = null;
+        currentPostmanBodyMode = "";
+        currentPostmanMultipartParts = new ArrayList<>();
+        currentPostmanBinaryFilePath = "";
         endpointField.clear();
         tokenField.clear();
         visibleTokenField.clear();
         headersArea.clear();
         bodyArea.clear();
+        if (preRequestScriptArea != null) {
+            preRequestScriptArea.clear();
+        }
+        if (testScriptArea != null) {
+            testScriptArea.clear();
+        }
         prettyResponseArea.clear();
         rawResponseArea.clear();
         responseHeadersArea.clear();
@@ -4958,12 +19124,17 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void saveRequest() {
-        JSONObject root = new JSONObject();
-        root.put("url", endpointField.getText());
-        root.put("method", methodBox.getValue());
-        root.put("headers", new JSONObject(parseHeaders(headersArea.getText())));
-        root.put("body", bodyArea.getText());
-        saveTextFile(root.toString(2), "request.json");
+        JSONObject root = savedApiRequestContext();
+        File file = chooseSaveFile("JSON Files", "*.json", "request.json", configuredFolder("API", "SavedRequest"));
+        if (file == null) {
+            return;
+        }
+        try {
+            Files.writeString(file.toPath(), root.toString(2), StandardCharsets.UTF_8);
+            showInfo("Save Request", "Saved API request to " + file.toPath().toAbsolutePath().normalize());
+        } catch (Exception e) {
+            showError("Save Request Failed", e);
+        }
     }
 
     private void saveResponse() {
@@ -4971,7 +19142,91 @@ public class ApiValidatorFxApp extends Application {
             showWarning("Save Response", "No response is available to save.");
             return;
         }
-        saveTextFile(lastResponse.rawBody, "response.json");
+        File file = chooseSaveFile("JSON Files", "*.json", "response.json", configuredFolder("API", "SavedResponse"));
+        if (file == null) {
+            return;
+        }
+        try {
+            Files.writeString(file.toPath(), nullToBlank(lastResponse.rawBody), StandardCharsets.UTF_8);
+            JSONObject memory = savedApiResponseMemory(file.toPath());
+            saveApiAiMemory(memory);
+            showInfo("Save Response", "Saved API response to " + file.toPath().toAbsolutePath().normalize()
+                    + " and queued project knowledge memory.");
+        } catch (Exception e) {
+            showError("Save Response Failed", e);
+        }
+    }
+
+    private JSONObject savedApiRequestContext() {
+        String url = endpointField == null ? "" : endpointField.getText();
+        return new JSONObject()
+                .put("url", url)
+                .put("method", methodBox == null ? "" : methodBox.getValue())
+                .put("headers", new JSONObject(parseHeaders(headersArea == null ? "" : headersArea.getText())))
+                .put("body", bodyArea == null ? "" : bodyArea.getText())
+                .put("authType", authTypeBox == null ? "" : authTypeBox.getValue())
+                .put("oauth2", new JSONObject()
+                        .put("grantType", oauthGrantTypeBox == null ? "" : oauthGrantTypeBox.getValue())
+                        .put("tokenUrl", oauthTokenUrlField == null ? "" : oauthTokenUrlField.getText())
+                        .put("clientId", oauthClientIdField == null ? "" : oauthClientIdField.getText())
+                        .put("scope", oauthScopeField == null ? "" : oauthScopeField.getText()))
+                .put("transport", new JSONObject()
+                        .put("sslVerificationDisabled", sslVerificationDisabledCheck != null && sslVerificationDisabledCheck.isSelected())
+                        .put("trustStorePath", trustStorePathField == null ? "" : trustStorePathField.getText())
+                        .put("keyStorePath", keyStorePathField == null ? "" : keyStorePathField.getText())
+                        .put("proxyEnabled", proxyEnabledCheck != null && proxyEnabledCheck.isSelected())
+                        .put("proxyScheme", proxySchemeBox == null ? "" : proxySchemeBox.getValue())
+                        .put("proxyHost", proxyHostField == null ? "" : proxyHostField.getText())
+                        .put("proxyPort", proxyPortField == null ? "" : proxyPortField.getText()))
+                .put("resolvedUrl", endpointField == null ? "" : resolveVariables(endpointField.getText()))
+                .put("queryParams", queryParamsJson(url))
+                .put("savedAt", Instant.now().toString());
+    }
+
+    private JSONObject savedApiResponseMemory(Path savedResponsePath) {
+        JSONObject request = savedApiRequestContext();
+        return new JSONObject()
+                .put("id", "saved-response-" + System.currentTimeMillis() + "-" + UUID.randomUUID())
+                .put("endpoint", request.optString("url"))
+                .put("method", request.optString("method"))
+                .put("actionName", "savedApiResponse")
+                .put("hermesSessionId", activeAgentSessionId())
+                .put("provider", "VeyraAI")
+                .put("response", new JSONObject()
+                        .put("status", lastResponse == null ? "" : lastResponse.statusLine)
+                        .put("statusCode", lastResponse == null ? 0 : lastResponse.statusCode)
+                        .put("headers", lastResponse == null ? "" : nullToBlank(lastResponse.headersText))
+                        .put("cookies", lastResponse == null ? "" : nullToBlank(lastResponse.cookiesText))
+                        .put("body", lastResponse == null ? "" : nullToBlank(lastResponse.rawBody))
+                        .put("prettyBody", lastResponse == null ? "" : nullToBlank(lastResponse.prettyBody))
+                        .put("savedResponsePath", savedResponsePath.toAbsolutePath().normalize().toString())
+                        .put("savedResponseName", savedResponsePath.getFileName() == null ? "" : savedResponsePath.getFileName().toString())
+                        .put("request", request))
+                .put("variables", new JSONArray())
+                .put("validations", new JSONArray())
+                .put("dbMappings", new JSONArray())
+                .put("createdAt", Instant.now().toString());
+    }
+
+    private JSONObject queryParamsJson(String url) {
+        JSONObject params = new JSONObject();
+        try {
+            String query = URI.create(resolveVariables(nullToBlank(url))).getRawQuery();
+            if (query == null || query.isBlank()) {
+                return params;
+            }
+            for (String part : query.split("&")) {
+                if (part.isBlank()) continue;
+                int equals = part.indexOf('=');
+                String key = equals >= 0 ? part.substring(0, equals) : part;
+                String value = equals >= 0 ? part.substring(equals + 1) : "";
+                params.put(java.net.URLDecoder.decode(key, StandardCharsets.UTF_8),
+                        java.net.URLDecoder.decode(value, StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) {
+            // Keep request context saving resilient even for templated URLs.
+        }
+        return params;
     }
 
     private Map<String, String> parseHeaders(String text) {
@@ -4986,6 +19241,81 @@ public class ApiValidatorFxApp extends Application {
             }
         }
         return headers;
+    }
+
+    private JSONObject maskedHeadersJson(Map<String, String> headers) {
+        JSONObject object = new JSONObject();
+        if (headers == null) {
+            return object;
+        }
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            object.put(entry.getKey(), maskIfSensitive(entry.getKey(), entry.getValue()));
+        }
+        return object;
+    }
+
+    private String maskIfSensitive(String key, String value) {
+        String normalized = nullToBlank(key).toLowerCase();
+        if (normalized.contains("authorization") || normalized.contains("token")
+                || normalized.contains("secret") || normalized.contains("password")
+                || normalized.contains("api-key") || normalized.contains("apikey")
+                || normalized.contains("cookie") || normalized.contains("clientid")) {
+            return nullToBlank(value).isBlank() ? "" : "***";
+        }
+        return nullToBlank(value);
+    }
+
+    private JSONArray mcpMultipartParts(List<ApiRequestBodyPart> parts) {
+        JSONArray array = new JSONArray();
+        if (parts == null) {
+            return array;
+        }
+        for (ApiRequestBodyPart part : parts) {
+            if (part == null) continue;
+            array.put(new JSONObject()
+                    .put("name", nullToBlank(part.name))
+                    .put("file", part.file)
+                    .put("value", part.file ? "" : shorten(nullToBlank(part.value), 500))
+                    .put("filePath", part.file ? nullToBlank(part.filePath) : "")
+                    .put("contentType", nullToBlank(part.contentType)));
+        }
+        return array;
+    }
+
+    private JSONObject mcpPostmanRequest(PostmanCollectionNode node) {
+        if (node == null || !node.isRequest()) {
+            return new JSONObject().put("available", false);
+        }
+        return new JSONObject()
+                .put("available", true)
+                .put("name", node.name)
+                .put("method", firstNonBlank(node.request.optString("method"), "GET"))
+                .put("url", postmanRequestUrl(node))
+                .put("auth", postmanAuthType(node.request.optJSONObject("auth")))
+                .put("bodyMode", nullToBlank(currentPostmanBodyMode))
+                .put("preRequestScriptPresent", preRequestScriptArea != null && !nullToBlank(preRequestScriptArea.getText()).isBlank())
+                .put("testScriptPresent", testScriptArea != null && !nullToBlank(testScriptArea.getText()).isBlank())
+                .put("description", node.source.optString("description"));
+    }
+
+    private String inferJsonRootType(String rawBody) {
+        try {
+            Object parsed = new JSONTokener(nullToBlank(rawBody)).nextValue();
+            if (parsed instanceof JSONObject) return "object";
+            if (parsed instanceof JSONArray) return "array";
+            return parsed == null || parsed == JSONObject.NULL ? "null" : parsed.getClass().getSimpleName().toLowerCase();
+        } catch (Exception ignored) {
+            return nullToBlank(rawBody).isBlank() ? "empty" : "text";
+        }
+    }
+
+    private URI safeUri(String value) {
+        try {
+            String resolved = resolveVariables(nullToBlank(value));
+            return resolved.isBlank() ? null : URI.create(resolved);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private Map<String, String> resolveHeaderVariables(Map<String, String> headers) {
@@ -5004,14 +19334,40 @@ public class ApiValidatorFxApp extends Application {
         resolved = resolved.replace("${randomString}", randomString());
         resolved = resolved.replace("${randomInt}", String.valueOf(ThreadLocalRandom.current().nextInt(10000, 999999)));
         resolved = resolved.replace("${randomDate}", LocalDate.now().toString());
-        for (Map.Entry<String, String> entry : savedVariables.entrySet()) {
-            resolved = resolved.replace("${" + entry.getKey() + "}", entry.getValue());
+        resolved = resolved.replace("${$guid}", UUID.randomUUID().toString());
+        resolved = resolved.replace("${$timestamp}", String.valueOf(Instant.now().getEpochSecond()));
+        resolved = resolved.replace("${$randomInt}", String.valueOf(ThreadLocalRandom.current().nextInt(0, 100000)));
+        Matcher matcher = Pattern.compile("\\$\\{([^}]+)}").matcher(resolved);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String variableName = matcher.group(1);
+            String value = postmanVariableValue(variableName);
+            matcher.appendReplacement(buffer, value == null ? Matcher.quoteReplacement(matcher.group(0)) : Matcher.quoteReplacement(value));
         }
-        return resolved;
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     private String randomString() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+    }
+
+    private String postmanVariableValue(String variableName) {
+        if (variableName == null || variableName.isBlank()) {
+            return null;
+        }
+        String savedType = savedVariableTypes.getOrDefault(variableName, "");
+        String savedValue = savedVariables.get(variableName);
+        if (savedValue != null && !"Postman Collection".equals(savedType) && !"Postman Environment".equals(savedType)) {
+            return savedValue;
+        }
+        if (postmanEnvironmentVariables.containsKey(variableName)) {
+            return postmanEnvironmentVariables.get(variableName);
+        }
+        if (postmanCollectionVariables.containsKey(variableName)) {
+            return postmanCollectionVariables.get(variableName);
+        }
+        return savedValue;
     }
 
     private String extractJsonValue(String json, String path) {
@@ -5019,20 +19375,19 @@ public class ApiValidatorFxApp extends Application {
             if (json == null || json.isBlank() || path == null || path.isBlank()) {
                 return "";
             }
-            Object current = new JSONTokener(json).nextValue();
-            String normalized = path.startsWith("$.") ? path.substring(2) : path;
-            for (String part : normalized.split("\\.")) {
-                if (part.isBlank()) {
-                    continue;
-                }
-                if (current instanceof JSONObject object) {
-                    current = object.opt(part);
-                } else if (current instanceof JSONArray array) {
-                    int index = Integer.parseInt(part.replace("[", "").replace("]", ""));
-                    current = array.opt(index);
-                }
+            Object value = extractJsonPathValue(new JSONTokener(json).nextValue(), path);
+            return value == null ? "" : String.valueOf(value);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String extractJsonValueType(String json, String path) {
+        try {
+            if (json == null || json.isBlank() || path == null || path.isBlank()) {
+                return "";
             }
-            return current == null ? "" : String.valueOf(current);
+            return jsonValueType(extractJsonPathValue(new JSONTokener(json).nextValue(), path));
         } catch (Exception e) {
             return "";
         }
@@ -5127,7 +19482,10 @@ public class ApiValidatorFxApp extends Application {
             errors.add("expected null");
         }
         if (!typeRule.isBlank() && !"Skip".equals(typeRule) && !typeRule.equals(actualType)) {
-            if (!("number".equals(typeRule) && "integer".equals(actualType))) {
+            String expectedType = typeRule.toLowerCase();
+            String normalizedActualType = actualType == null ? "" : actualType.toLowerCase();
+            if (!expectedType.equals(normalizedActualType)
+                    && !("number".equals(expectedType) && "integer".equals(normalizedActualType))) {
                 errors.add("expected " + typeRule);
             }
         }
@@ -5187,22 +19545,24 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private boolean dbTypeMatches(String expectedType, String actualType, String actualValue) {
-        if (expectedType.equals(actualType)) {
+        String expected = expectedType == null ? "" : expectedType.toLowerCase();
+        String actual = actualType == null ? "" : actualType.toLowerCase();
+        if (expected.equals(actual)) {
             return true;
         }
-        if ("number".equals(expectedType) && ("integer".equals(actualType) || "decimal".equals(actualType))) {
+        if ("number".equals(expected) && ("integer".equals(actual) || "decimal".equals(actual))) {
             return true;
         }
-        if ("datetime".equals(expectedType) && "timestamp".equals(actualType)) {
+        if ("datetime".equals(expected) && "timestamp".equals(actual)) {
             return true;
         }
-        if ("timestamp".equals(expectedType) && "datetime".equals(actualType)) {
+        if ("timestamp".equals(expected) && "datetime".equals(actual)) {
             return true;
         }
-        if ("uuid".equals(expectedType)) {
+        if ("uuid".equals(expected)) {
             return actualValue.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
         }
-        if ("json".equals(expectedType)) {
+        if ("json".equals(expected)) {
             String trimmed = actualValue.trim();
             try {
                 if (trimmed.startsWith("{")) {
@@ -5284,13 +19644,25 @@ public class ApiValidatorFxApp extends Application {
 
     private TableView<Map<String, String>> mapTable(ObservableList<Map<String, String>> rows, String... columnPairs) {
         TableView<Map<String, String>> table = new TableView<>(rows);
+        table.setEditable(true);
+        table.setFixedCellSize(38);
+        table.setMinHeight(220);
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         for (int i = 0; i + 1 < columnPairs.length; i += 2) {
             String title = columnPairs[i];
             String key = columnPairs[i + 1];
             if ("selected".equals(key) || "jsonPath".equals(key) && "Add".equals(title)) {
                 TableColumn<Map<String, String>, Boolean> column = new TableColumn<>(title);
-                column.setCellValueFactory(data -> new SimpleBooleanProperty(isSelected(data.getValue())));
+                column.setId(key);
+                column.setEditable(true);
+                column.setCellValueFactory(data -> {
+                    Map<String, String> row = data.getValue();
+                    SimpleBooleanProperty selected = new SimpleBooleanProperty(isSelected(row));
+                    selected.addListener((observable, oldValue, newValue) ->
+                            row.put("selected", String.valueOf(Boolean.TRUE.equals(newValue))));
+                    return selected;
+                });
+                column.setCellFactory(CheckBoxTableCell.forTableColumn(column));
                 table.getColumns().add(column);
             } else {
                 table.getColumns().add(stringColumn(title, key));
@@ -5303,7 +19675,42 @@ public class ApiValidatorFxApp extends Application {
         TableColumn<Map<String, String>, String> column = new TableColumn<>(title);
         column.setId(key);
         column.setCellValueFactory(data -> new SimpleStringProperty(data.getValue().getOrDefault(key, "")));
+        column.setCellFactory(col -> new TableCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                getStyleClass().removeAll("status-badge-pass", "status-badge-fail");
+                setText(null);
+                setGraphic(null);
+                if (empty || item == null) {
+                    return;
+                }
+                if (isStatusColumn(key, title) && isPassFail(item)) {
+                    Label badge = new Label(item.toUpperCase());
+                    badge.getStyleClass().add(isPassingStatus(item) ? "status-badge-pass" : "status-badge-fail");
+                    setGraphic(badge);
+                } else {
+                    setText(item);
+                }
+            }
+        });
         return column;
+    }
+
+    private boolean isStatusColumn(String key, String title) {
+        String normalized = (key + " " + title).toLowerCase();
+        return normalized.contains("result") || normalized.contains("status");
+    }
+
+    private boolean isPassFail(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase();
+        return normalized.equals("pass") || normalized.equals("passed")
+                || normalized.equals("fail") || normalized.equals("failed");
+    }
+
+    private boolean isPassingStatus(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase();
+        return normalized.equals("pass") || normalized.equals("passed");
     }
 
     private boolean isSelected(Map<String, String> row) {
@@ -5368,6 +19775,152 @@ public class ApiValidatorFxApp extends Application {
         String actual;
         boolean passed;
         String message;
+    }
+
+    private static class ApiAiSuggestion {
+        final ApiRequest request;
+        final ApiResponse response;
+        final String actionName;
+        final List<Map<String, String>> variables = new ArrayList<>();
+        final List<Map<String, String>> validations = new ArrayList<>();
+        final List<Map<String, String>> dbMappings = new ArrayList<>();
+
+        ApiAiSuggestion(ApiRequest request, ApiResponse response, String actionName) {
+            this.request = request;
+            this.response = response;
+            this.actionName = actionName;
+        }
+    }
+
+    private static class DbAiSuggestion {
+        final List<Map<String, String>> apiDbMappings = new ArrayList<>();
+        final List<Map<String, String>> dbValidations = new ArrayList<>();
+        final List<Map<String, String>> variables = new ArrayList<>();
+    }
+
+    private static class WebAiSuggestion {
+        String agentUsed = "hermes";
+        boolean modelCalled = true;
+        int knownFixesUsed;
+        final List<Map<String, String>> failures = new ArrayList<>();
+        final List<Map<String, String>> fixes = new ArrayList<>();
+    }
+
+    private static class PostmanCollectionRunResult {
+        final String name;
+        final int total;
+        int passed;
+        int failed;
+        int errors;
+        final List<String> lines = new ArrayList<>();
+
+        PostmanCollectionRunResult(String name, int total) {
+            this.name = name;
+            this.total = total;
+        }
+
+        void add(String requestName, int statusCode, String status, String message) {
+            if ("PASS".equals(status)) {
+                passed++;
+            } else if ("FAIL".equals(status)) {
+                failed++;
+            } else {
+                errors++;
+            }
+            String httpStatus = statusCode > 0 ? " HTTP " + statusCode : "";
+            lines.add(status + httpStatus + " - " + requestName
+                    + (message == null || message.isBlank() ? "" : " - " + message));
+        }
+
+        String summary() {
+            return "Ran " + total + " request(s) from " + name + ": "
+                    + passed + " passed, " + failed + " failed, " + errors + " error(s).";
+        }
+
+        String details() {
+            return summary() + System.lineSeparator() + System.lineSeparator() + String.join(System.lineSeparator(), lines);
+        }
+    }
+
+    private static class PostmanCollectionNode {
+        final String name;
+        final JSONObject request;
+        final JSONObject source;
+        final String kind;
+
+        private PostmanCollectionNode(String name, JSONObject request, JSONObject source, String kind) {
+            this.name = name;
+            this.request = request;
+            this.source = source == null ? new JSONObject() : source;
+            this.kind = kind;
+        }
+
+        static PostmanCollectionNode collection(String name, JSONObject source) {
+            return new PostmanCollectionNode(name, null, source, "collection");
+        }
+
+        static PostmanCollectionNode folder(String name, JSONObject source) {
+            return new PostmanCollectionNode(name, null, source, "folder");
+        }
+
+        static PostmanCollectionNode request(String name, JSONObject request, JSONObject source) {
+            return new PostmanCollectionNode(name, request, source, "request");
+        }
+
+        static PostmanCollectionNode placeholder(String name) {
+            return new PostmanCollectionNode(name, null, new JSONObject(), "placeholder");
+        }
+
+        boolean isRequest() {
+            return request != null;
+        }
+
+        @Override
+        public String toString() {
+            if (isRequest()) {
+                return request.optString("method", "GET") + "  " + name;
+            }
+            return name;
+        }
+    }
+
+    private static class ProcessResult {
+        final int exitCode;
+        final String output;
+
+        ProcessResult(int exitCode, String output) {
+            this.exitCode = exitCode;
+            this.output = output == null ? "" : output;
+        }
+
+        boolean success() {
+            return exitCode == 0;
+        }
+    }
+
+    private record HermesSessionRecord(
+            String sessionName,
+            String sessionId,
+            String title,
+            String resumeCommand,
+            String transcriptPath,
+            String aiAgentPath,
+            String containerName) {
+    }
+
+    private record HermesSessionCapture(
+            String sessionId,
+            String title,
+            String resumeCommand,
+            String transcriptPath,
+            String aiAgentPath,
+            String containerName,
+            String transcript) {
+
+        static HermesSessionCapture empty(Path transcriptPath, String containerName, Path aiAgentPath) {
+            return new HermesSessionCapture("", "", "", transcriptPath == null ? "" : transcriptPath.toString(),
+                    aiAgentPath == null ? "" : aiAgentPath.toString(), containerName == null ? "" : containerName, "");
+        }
     }
 
     private static class WorkbookSheet {
@@ -5441,6 +19994,18 @@ public class ApiValidatorFxApp extends Application {
         return value == null ? "" : value;
     }
 
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
     private String valueAt(Object[] values, int index) {
         return values != null && index < values.length && values[index] != null ? String.valueOf(values[index]) : "";
     }
@@ -5450,9 +20015,23 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void start(Task<?> task) {
+        showGlobalLoading(true);
+        task.addEventHandler(WorkerStateEvent.WORKER_STATE_SUCCEEDED, event -> showGlobalLoading(false));
+        task.addEventHandler(WorkerStateEvent.WORKER_STATE_FAILED, event -> showGlobalLoading(false));
+        task.addEventHandler(WorkerStateEvent.WORKER_STATE_CANCELLED, event -> showGlobalLoading(false));
         Thread thread = new Thread(task);
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private void showGlobalLoading(boolean active) {
+        Platform.runLater(() -> {
+            int count = active ? activeTaskCount.incrementAndGet() : Math.max(0, activeTaskCount.decrementAndGet());
+            if (globalLoadingBar != null) {
+                globalLoadingBar.setVisible(count > 0);
+                globalLoadingBar.setManaged(count > 0);
+            }
+        });
     }
 
     private double clamp(double value, double min, double max) {
@@ -5507,13 +20086,43 @@ public class ApiValidatorFxApp extends Application {
     private Button primary(String text) {
         Button button = new Button(text);
         button.getStyleClass().add("primary-button");
+        decorateButton(button, text);
         return button;
     }
 
     private Button secondary(String text) {
         Button button = new Button(text);
         button.getStyleClass().add("secondary-button");
+        decorateButton(button, text);
+        if (isDangerAction(text)) {
+            button.getStyleClass().add("danger-button");
+        }
         return button;
+    }
+
+    private Button windowControl(String iconLiteral, String accessibleText) {
+        Button button = new Button();
+        FontIcon icon = new FontIcon(iconLiteral);
+        icon.setIconSize(15);
+        button.setGraphic(icon);
+        button.setAccessibleText(accessibleText);
+        button.getStyleClass().add("window-control-button");
+        button.setFocusTraversable(false);
+        return button;
+    }
+
+    private void decorateButton(Button button, String text) {
+        button.setGraphic(iconFor(text));
+        button.setGraphicTextGap(8);
+        button.setMinHeight(36);
+    }
+
+    private boolean isDangerAction(String text) {
+        String normalized = text == null ? "" : text.toLowerCase();
+        return normalized.contains("delete")
+                || normalized.contains("remove")
+                || normalized.contains("clear")
+                || normalized.contains("stop");
     }
 
     private Button primaryButton(String text, EventHandler<ActionEvent> handler) {
@@ -5530,8 +20139,8 @@ public class ApiValidatorFxApp extends Application {
 
     private GridPane grid() {
         GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(10);
+        grid.setHgap(16);
+        grid.setVgap(16);
         grid.setMinWidth(0);
         return grid;
     }
@@ -5539,7 +20148,7 @@ public class ApiValidatorFxApp extends Application {
     private VBox labeled(String label, javafx.scene.Node node) {
         Label title = new Label(label);
         title.getStyleClass().add("field-label");
-        VBox box = new VBox(5, title, node);
+        VBox box = new VBox(8, title, node);
         box.setMinWidth(0);
         if (node instanceof Region region) {
             region.setMaxWidth(Double.MAX_VALUE);
@@ -5582,7 +20191,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private FlowPane actionRow(javafx.scene.Node... children) {
-        FlowPane row = new FlowPane(10, 8, children);
+        FlowPane row = new FlowPane(16, 8, children);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setPrefWrapLength(900);
         row.setMinWidth(0);
@@ -5603,7 +20212,7 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private VBox card(String title, javafx.scene.Node content) {
-        VBox card = new VBox(8, sectionTitle(title), content);
+        VBox card = new VBox(16, sectionTitle(title), content);
         card.getStyleClass().add("card");
         card.setMinWidth(0);
         VBox.setVgrow(content, Priority.ALWAYS);
@@ -5614,20 +20223,34 @@ public class ApiValidatorFxApp extends Application {
         BorderPane pane = new BorderPane(content);
         pane.setBottom(footer);
         pane.setMinWidth(0);
-        BorderPane.setMargin(footer, new Insets(8, 0, 0, 0));
+        BorderPane.setMargin(footer, new Insets(16, 0, 0, 0));
         return pane;
     }
 
     private BorderPane wrap(javafx.scene.Node content) {
         BorderPane pane = new BorderPane(content);
         pane.getStyleClass().add("card");
+        pane.setPadding(new Insets(16));
         pane.setMinWidth(0);
         return pane;
     }
 
+    private ScrollPane verticalSectionScroll(javafx.scene.Node content, double minHeight) {
+        ScrollPane scrollPane = new ScrollPane(content);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(false);
+        scrollPane.setPannable(true);
+        scrollPane.setMinHeight(minHeight);
+        scrollPane.setPrefHeight(minHeight);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.getStyleClass().add("workspace-scroll");
+        return scrollPane;
+    }
+
     private ScrollPane padded(javafx.scene.Node content) {
         BorderPane pane = new BorderPane(content);
-        pane.setPadding(new Insets(14));
+        pane.setPadding(new Insets(24));
         pane.setMinWidth(0);
         ScrollPane scrollPane = new ScrollPane(pane);
         scrollPane.setFitToWidth(true);
@@ -5639,10 +20262,54 @@ public class ApiValidatorFxApp extends Application {
         return scrollPane;
     }
 
+    private ScrollPane paddedVertical(javafx.scene.Node content) {
+        BorderPane pane = new BorderPane(content);
+        pane.setPadding(new Insets(24));
+        pane.setMinWidth(0);
+        ScrollPane scrollPane = new ScrollPane(pane);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(false);
+        scrollPane.setPannable(true);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.getStyleClass().add("workspace-scroll");
+        return scrollPane;
+    }
+
     private File chooseOpenFile(String description, String extension) {
         FileChooser chooser = new FileChooser();
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(description, extension));
         return chooser.showOpenDialog(stage);
+    }
+
+    private File chooseOpenFile(String description, String extension, Path initialDirectory) {
+        FileChooser chooser = new FileChooser();
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(description, extension));
+        applyInitialDirectory(chooser, initialDirectory);
+        return chooser.showOpenDialog(stage);
+    }
+
+    private File chooseSaveFile(String description, String extension, String initialName, Path initialDirectory) {
+        FileChooser chooser = new FileChooser();
+        chooser.setInitialFileName(initialName);
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(description, extension));
+        applyInitialDirectory(chooser, initialDirectory);
+        return chooser.showSaveDialog(stage);
+    }
+
+    private void applyInitialDirectory(FileChooser chooser, Path initialDirectory) {
+        if (chooser == null || initialDirectory == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(initialDirectory);
+            File directory = initialDirectory.toFile();
+            if (directory.isDirectory()) {
+                chooser.setInitialDirectory(directory);
+            }
+        } catch (Exception ignored) {
+            // Fall back to the platform default file chooser location.
+        }
     }
 
     private void saveTextFile(String text, String initialName) {
@@ -5659,8 +20326,32 @@ public class ApiValidatorFxApp extends Application {
         }
     }
 
+    private void saveTextFile(String text, String initialName, Path initialDirectory) {
+        File file = chooseSaveFile("Text Files", "*.*", initialName, initialDirectory);
+        if (file == null) {
+            return;
+        }
+        try {
+            Files.writeString(file.toPath(), text == null ? "" : text, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            showError("Save Failed", e);
+        }
+    }
+
     private void loadTextFile(TextArea target) {
         File file = chooseOpenFile("Text Files", "*.*");
+        if (file == null) {
+            return;
+        }
+        try {
+            target.setText(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            showError("Load Failed", e);
+        }
+    }
+
+    private void loadTextFile(TextArea target, Path initialDirectory) {
+        File file = chooseOpenFile("Text Files", "*.*", initialDirectory);
         if (file == null) {
             return;
         }
@@ -5688,14 +20379,16 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private void showInfo(String title, String message) {
-        alert(Alert.AlertType.INFORMATION, title, message, null);
+        showToast("OK " + message, "toast-success");
     }
 
     private void showWarning(String title, String message) {
+        showToast("Warning " + message, "toast-error");
         alert(Alert.AlertType.WARNING, title, message, null);
     }
 
     private void showError(String title, Throwable throwable) {
+        showToast("Failed " + (throwable == null ? title : exceptionMessage(throwable)), "toast-error");
         alert(Alert.AlertType.ERROR, title, throwable == null ? "Unknown error" : throwable.getMessage(), throwable);
     }
 
@@ -5704,6 +20397,16 @@ public class ApiValidatorFxApp extends Application {
             Alert alert = new Alert(type, message, ButtonType.OK);
             alert.setTitle(title);
             alert.setHeaderText(title);
+            if (type == Alert.AlertType.ERROR || type == Alert.AlertType.WARNING) {
+                Button closeGraphic = windowControl("fth-x", "Close");
+                closeGraphic.getStyleClass().add("window-close-button");
+                closeGraphic.setOnAction(e -> alert.close());
+                alert.setGraphic(closeGraphic);
+            }
+            if (stage != null) {
+                alert.initOwner(stage);
+            }
+            styleDialogPane(alert.getDialogPane());
             if (throwable != null) {
                 TextArea details = new TextArea(String.valueOf(throwable));
                 details.setEditable(false);
@@ -5713,6 +20416,69 @@ public class ApiValidatorFxApp extends Application {
         });
     }
 
+    private void styleDialogPane(javafx.scene.control.DialogPane dialogPane) {
+        if (dialogPane == null) {
+            return;
+        }
+        dialogPane.getStylesheets().add(createInlineStylesheet());
+        URL stylesheetUrl = ApiValidatorFxApp.class.getResource(APP_STYLESHEET_RESOURCE);
+        if (stylesheetUrl != null) {
+            dialogPane.getStylesheets().add(stylesheetUrl.toExternalForm());
+        }
+        dialogPane.getStyleClass().add("testweave-dialog");
+    }
+
+    private HBox themedSubwindowHeader(String titleText, Dialog<?> dialog) {
+        Label title = new Label(titleText);
+        title.getStyleClass().add("app-title");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Button minimize = windowControl("fth-minus", "Minimize");
+        Button maximize = windowControl("fth-square", "Maximize or restore");
+        Button close = windowControl("fth-x", "Close");
+        close.getStyleClass().add("window-close-button");
+        minimize.setOnAction(e -> {
+            if (dialog.getDialogPane().getScene() != null
+                    && dialog.getDialogPane().getScene().getWindow() instanceof Stage dialogStage) {
+                dialogStage.setIconified(true);
+            }
+        });
+        maximize.setOnAction(e -> {
+            if (dialog.getDialogPane().getScene() != null
+                    && dialog.getDialogPane().getScene().getWindow() instanceof Stage dialogStage) {
+                dialogStage.setMaximized(!dialogStage.isMaximized());
+            }
+        });
+        close.setOnAction(e -> {
+            javafx.scene.Node cancel = dialog.getDialogPane().lookupButton(ButtonType.CANCEL);
+            if (cancel instanceof Button button) {
+                button.fire();
+            } else {
+                dialog.close();
+            }
+        });
+        HBox controls = new HBox(8, minimize, maximize, close);
+        controls.getStyleClass().add("window-controls");
+        HBox header = new HBox(12, title, spacer, controls);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.setPadding(new Insets(12, 14, 10, 14));
+        header.getStyleClass().add("top-bar");
+        final double[] offsets = new double[2];
+        header.setOnMousePressed(event -> {
+            offsets[0] = event.getSceneX();
+            offsets[1] = event.getSceneY();
+        });
+        header.setOnMouseDragged(event -> {
+            if (dialog.getDialogPane().getScene() != null
+                    && dialog.getDialogPane().getScene().getWindow() instanceof Stage dialogStage
+                    && !dialogStage.isMaximized()) {
+                dialogStage.setX(event.getScreenX() - offsets[0]);
+                dialogStage.setY(event.getScreenY() - offsets[1]);
+            }
+        });
+        return header;
+    }
+
     private void loadApplicationIcon(Stage stage) {
         URL logoUrl = ApiValidatorFxApp.class.getResource(APP_LOGO_RESOURCE);
         if (logoUrl != null) {
@@ -5720,42 +20486,285 @@ public class ApiValidatorFxApp extends Application {
         }
     }
 
+    private void cleanupBeforeClose() {
+        if (webFlowExecutionPollTimeline != null) {
+            webFlowExecutionPollTimeline.stop();
+        }
+        disconnectApiAiHermesAgentOnExit();
+        cancelTestPlanningGeneration();
+        stopTestPlanningTerminal(null);
+        playwrightRecorderController.stopRecording();
+        playwrightRecorderController.stopRunningWebTest();
+        stopProcess(webFlowBackendProcess);
+        stopProcess(webFlowFrontendProcess);
+        stopProcess(webFlowDesktopProcess);
+    }
+
+    private void stopProcess(Process process) {
+        if (process != null && process.isAlive()) {
+            process.descendants().forEach(child -> {
+                if (child.isAlive()) {
+                    child.destroy();
+                }
+            });
+            process.destroy();
+            try {
+                if (!process.waitFor(3, TimeUnit.SECONDS)) {
+                    process.descendants().forEach(child -> {
+                        if (child.isAlive()) {
+                            child.destroyForcibly();
+                        }
+                    });
+                    process.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+            }
+        }
+    }
+
+    private void addApplicationStylesheet(Scene scene) {
+        URL stylesheetUrl = ApiValidatorFxApp.class.getResource(APP_STYLESHEET_RESOURCE);
+        if (stylesheetUrl != null) {
+            scene.getStylesheets().add(stylesheetUrl.toExternalForm());
+        }
+    }
+
+    private FontIcon iconFor(String text) {
+        FontIcon icon = new FontIcon(iconLiteralFor(text));
+        icon.setIconSize(16);
+        return icon;
+    }
+
+    private String iconLiteralFor(String text) {
+        String normalized = text == null ? "" : text.toLowerCase();
+        if (normalized.contains("api") || normalized.contains("request") || normalized.contains("endpoint")) return "fth-globe";
+        if (normalized.contains("db") || normalized.contains("database") || normalized.contains("query")) return "fth-database";
+        if (normalized.contains("web") || normalized.contains("ui") || normalized.contains("browser")) return "fth-monitor";
+        if (normalized.contains("workflow") || normalized.contains("suite") || normalized.contains("builder")) return "fth-git-branch";
+        if (normalized.contains("run") || normalized.contains("send") || normalized.contains("record") || normalized.contains("start")) return "fth-play";
+        if (normalized.contains("save") || normalized.contains("create") || normalized.contains("import")) return "fth-save";
+        if (normalized.contains("report") || normalized.contains("dashboard") || normalized.contains("result")) return "fth-file-text";
+        if (normalized.contains("delete") || normalized.contains("remove") || normalized.contains("clear")) return "fth-trash-2";
+        if (normalized.contains("copy")) return "fth-copy";
+        if (normalized.contains("load") || normalized.contains("open") || normalized.contains("browse")) return "fth-folder";
+        if (normalized.contains("ai") || normalized.contains("hermes") || normalized.contains("codex")) return "fth-cpu";
+        if (normalized.contains("validation") || normalized.contains("validate") || normalized.contains("compare")) return "fth-check-circle";
+        if (normalized.contains("variables") || normalized.contains("variable")) return "fth-sliders";
+        if (normalized.contains("config")) return "fth-settings";
+        return "fth-circle";
+    }
+
+    private void showToast(String message, String styleClass) {
+        if (stage == null || !stage.isShowing()) {
+            return;
+        }
+        Platform.runLater(() -> {
+            Label toast = new Label(message == null ? "" : message);
+            toast.getStyleClass().add("toast");
+            if (styleClass != null && !styleClass.isBlank()) {
+                toast.getStyleClass().add(styleClass);
+            }
+            Popup popup = new Popup();
+            popup.setAutoFix(true);
+            popup.setAutoHide(true);
+            popup.getContent().add(toast);
+            popup.show(stage);
+            double x = stage.getX() + stage.getWidth() - toast.prefWidth(-1) - 32;
+            double y = stage.getY() + 72;
+            popup.setX(Math.max(stage.getX() + 24, x));
+            popup.setY(y);
+            javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(2.6));
+            delay.setOnFinished(event -> popup.hide());
+            delay.play();
+        });
+    }
+
     private String createInlineStylesheet() {
         return "data:text/css," + """
-                .root { -fx-font-family: 'Segoe UI'; -fx-font-size: 13px; }
-                .top-bar { -fx-background-color: #f5f7fb; -fx-border-color: transparent transparent #d2dceb transparent; }
-                .app-title { -fx-font-size: 19px; -fx-font-weight: 700; -fx-text-fill: #1f2937; }
-                .muted { -fx-text-fill: #5f6778; }
-                .section-title { -fx-font-size: 15px; -fx-font-weight: 700; -fx-text-fill: #263244; }
-                .field-label { -fx-font-size: 12px; -fx-font-weight: 700; -fx-text-fill: #5f6778; }
-                .metric { -fx-font-weight: 700; -fx-text-fill: #1f2937; }
-                .card { -fx-background-color: white; -fx-border-color: #d2dceb; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 12px; }
+                .root { -fx-font-family: 'Segoe UI'; -fx-font-size: 13px; -fx-background-color: %s; }
+                .label { -fx-text-fill: %s; }
+                .top-bar { -fx-background-color: linear-gradient(to right, #06091f, #111b3d, #271052); -fx-border-color: transparent transparent #243b78 transparent; -fx-effect: dropshadow(gaussian, rgba(24,216,232,0.22), 16, 0.22, 0, 2); }
+                .app-title { -fx-font-size: 21px; -fx-font-weight: 800; -fx-text-fill: linear-gradient(to right, #ffffff, #2f7cff, #8b4df6, #18d8e8); }
+                .muted { -fx-text-fill: %s; }
+                .section-title { -fx-font-size: 15px; -fx-font-weight: 800; -fx-text-fill: #ffffff; }
+                .field-label { -fx-font-size: 12px; -fx-font-weight: 800; -fx-text-fill: #74eaff; }
+                .metric { -fx-font-weight: 800; -fx-text-fill: #ffffff; }
+                .dashboard-metric-card { -fx-background-color: linear-gradient(to bottom right, #17265a, #241454); -fx-border-color: #3c62bc; -fx-min-height: 104px; }
+                .dashboard-metric-title { -fx-font-size: 11px; -fx-font-weight: 800; -fx-text-fill: #74eaff; }
+                .dashboard-metric-card .metric { -fx-font-size: 22px; }
+                .weaving-title { -fx-font-size: 52px; -fx-font-weight: 900; -fx-text-fill: linear-gradient(to right, #2f7cff, #8b4df6, #18d8e8); }
+                .chart-title, .axis-label, .chart-legend-item { -fx-text-fill: #f8fbff; }
+                .chart-legend { -fx-background-color: rgba(248,251,255,0.12); -fx-background-radius: 6px; -fx-padding: 8px; }
+                .chart-legend-item .label, .chart-legend-item { -fx-text-fill: #f8fbff; }
+                .chart-pie-label { -fx-fill: #f8fbff; -fx-font-weight: 700; }
+                .chart-pie-label-line { -fx-stroke: #dbe8ff; -fx-stroke-width: 1.2px; }
+                .axis { -fx-tick-label-fill: #c8d7ff; }
+                .chart-plot-background { -fx-background-color: #0d1430; }
+                .chart-vertical-grid-lines, .chart-horizontal-grid-lines { -fx-stroke: #243b78; }
+                .card { -fx-background-color: %s; -fx-border-color: #243b78; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 12px; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.24), 14, 0.18, 0, 3); }
                 .editor { -fx-font-family: 'Consolas'; -fx-font-size: 13px; }
+                .vision-terminal { -fx-font-family: 'Consolas'; -fx-font-size: 14px; -fx-text-fill: #f8fbff; -fx-highlight-fill: #2f7cff; -fx-highlight-text-fill: #ffffff; -fx-prompt-text-fill: #a9bbdf; }
+                .vision-terminal .content { -fx-background-color: #012456; }
+                .vision-terminal:focused .content { -fx-background-color: #012456; }
+                .vision-terminal .text { -fx-fill: #f8fbff; }
+                .vision-terminal .scroll-pane, .vision-terminal .viewport { -fx-background-color: #012456; }
                 .request-editor .scroll-pane { -fx-hbar-policy: as-needed; -fx-vbar-policy: always; }
                 .response-editor { -fx-font-size: 14px; }
                 .response-editor .scroll-pane { -fx-hbar-policy: never; -fx-vbar-policy: always; }
-                .capture-panel { -fx-background-color: #f7f9fd; -fx-padding: 10px; }
-                .capture-toolbar { -fx-background-color: #f7f9fd; -fx-padding: 4px 0 8px 0; }
-                .validation-toolbar { -fx-background-color: #f7f9fd; -fx-padding: 12px; -fx-border-color: #d2dceb; -fx-border-radius: 6px; -fx-background-radius: 6px; }
+                .capture-panel { -fx-background-color: %s; -fx-padding: 10px; }
+                .capture-toolbar { -fx-background-color: %s; -fx-padding: 4px 0 8px 0; }
+                .validation-toolbar { -fx-background-color: %s; -fx-padding: 12px; -fx-border-color: #243b78; -fx-border-radius: 6px; -fx-background-radius: 6px; }
                 .context-panel { -fx-hgap: 20px; -fx-vgap: 10px; }
                 .context-button { -fx-padding: 9px 18px; }
                 .db-workflow { -fx-padding: 0 0 18px 0; }
-                .builder-canvas { -fx-background-color: #eef3f8; }
-                .builder-tree-pane { -fx-background-color: white; -fx-border-color: #d2dceb; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 12px; }
-                .builder-node { -fx-background-color: white; -fx-border-width: 0 0 0 5px; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 10px; -fx-effect: dropshadow(gaussian, rgba(31,41,55,0.15), 10, 0.18, 0, 2); }
-                .builder-node-selected { -fx-border-width: 2px 2px 2px 6px; -fx-border-color: #0ea5e9; }
-                .builder-node-title { -fx-font-size: 14px; -fx-font-weight: 700; -fx-text-fill: #1f2937; }
-                .builder-connector { -fx-stroke: #8ca0bd; -fx-stroke-width: 2px; -fx-opacity: 0.75; }
-                .builder-connector-selected { -fx-stroke: #ef4444; -fx-stroke-width: 4px; -fx-opacity: 1; }
-                .builder-connector-handle { -fx-fill: white; -fx-stroke: #2563eb; -fx-stroke-width: 2px; }
-                .builder-arrow { -fx-fill: #8ca0bd; -fx-opacity: 0.85; }
+                .workspace-scroll, .scroll-pane { -fx-background-color: %s; -fx-border-color: #243b78; }
+                .workspace-scroll > .viewport, .scroll-pane > .viewport { -fx-background-color: %s; }
+                .builder-canvas { -fx-background-color: #080d24; }
+                .builder-tree-pane { -fx-background-color: %s; -fx-border-color: #243b78; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 12px; }
+                .builder-node { -fx-background-color: #f8fbff; -fx-border-width: 0 0 0 5px; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 10px; -fx-effect: dropshadow(gaussian, rgba(24,216,232,0.22), 12, 0.2, 0, 2); }
+                .builder-node .label { -fx-text-fill: #172033; }
+                .builder-node .muted { -fx-text-fill: #4b5d86; }
+                .builder-node .metric { -fx-text-fill: #0f1730; }
+                .builder-node-selected { -fx-border-width: 2px 2px 2px 6px; -fx-border-color: #18d8e8; }
+                .builder-node-title { -fx-font-size: 14px; -fx-font-weight: 800; -fx-text-fill: #0f1730; }
+                .builder-connector { -fx-stroke: #18d8e8; -fx-stroke-width: 2px; -fx-opacity: 0.75; }
+                .builder-connector-selected { -fx-stroke: #ff4fc3; -fx-stroke-width: 4px; -fx-opacity: 1; }
+                .builder-connector-handle { -fx-fill: #ffffff; -fx-stroke: #8b4df6; -fx-stroke-width: 2px; }
+                .builder-arrow { -fx-fill: #18d8e8; -fx-opacity: 0.85; }
                 .builder-progress { -fx-pref-height: 7px; }
-                .builder-progress .bar { -fx-background-color: #eab308; }
-                .primary-button { -fx-background-color: %s; -fx-text-fill: white; -fx-font-weight: 700; -fx-background-radius: 5px; -fx-padding: 8px 16px; }
-                .secondary-button { -fx-background-color: white; -fx-text-fill: #233044; -fx-border-color: #d2dceb; -fx-border-radius: 5px; -fx-background-radius: 5px; -fx-padding: 8px 14px; }
-                .danger-button { -fx-background-color: #c93535; -fx-text-fill: white; -fx-border-color: #a92727; -fx-font-weight: 700; }
-                .tab-pane { -fx-background-color: #f5f7fb; }
-                """.formatted(PRIMARY).replace("\n", "%0A").replace(" ", "%20").replace("#", "%23");
+                .builder-progress .track { -fx-background-color: #d7def4; }
+                .builder-progress .bar { -fx-background-color: linear-gradient(to right, #2f7cff, #8b4df6, #18d8e8); }
+                .primary-button { -fx-background-color: linear-gradient(to right, #2f7cff, #7048ff); -fx-text-fill: #ffffff; -fx-font-weight: 800; -fx-background-radius: 5px; -fx-padding: 8px 16px; }
+                .primary-button:hover { -fx-background-color: linear-gradient(to right, #4b91ff, #8b4df6); }
+                .secondary-button { -fx-background-color: #151f45; -fx-text-fill: #f8fbff; -fx-border-color: #3454a4; -fx-border-radius: 5px; -fx-background-radius: 5px; -fx-padding: 8px 14px; }
+                .secondary-button:hover { -fx-background-color: #1b2b61; -fx-border-color: #18d8e8; }
+                .danger-button { -fx-background-color: #d8385e; -fx-text-fill: #ffffff; -fx-border-color: #ff7aa0; -fx-font-weight: 800; }
+                .storage-toggle { -fx-min-width: 126px; -fx-pref-width: 126px; -fx-background-radius: 999px; -fx-border-radius: 999px; -fx-padding: 9px 22px; -fx-background-color: linear-gradient(to bottom, #2d3347, #111827); -fx-border-color: #d7deea; -fx-border-width: 2px; -fx-text-fill: #ffffff; -fx-font-weight: 900; -fx-effect: innershadow(gaussian, rgba(0,0,0,0.55), 9, 0.35, 0, 2); }
+                .storage-toggle:selected { -fx-background-color: linear-gradient(to right, #ff8a00, #f04e23); -fx-border-color: #ffe1ba; -fx-text-fill: #ffffff; }
+                .storage-toggle:hover { -fx-border-color: #18d8e8; }
+                .web-option-check { -fx-text-fill: #ffffff; -fx-padding: 8px 12px; }
+                .tab-pane { -fx-background-color: %s; }
+                .tab-pane .tab-header-area .tab-header-background { -fx-background-color: #06091f; }
+                .tab { -fx-background-color: #101936; -fx-border-color: #243b78; -fx-border-radius: 5px 5px 0 0; -fx-background-radius: 5px 5px 0 0; }
+                .tab:selected { -fx-background-color: linear-gradient(to right, #1d3579, #40248c); -fx-border-color: #18d8e8; }
+                .tab .tab-label { -fx-text-fill: #c8d7ff; -fx-font-weight: 700; }
+                .tab:selected .tab-label { -fx-text-fill: #ffffff; }
+                .text-field, .password-field, .text-area, .combo-box-base, .spinner, .table-view, .tree-view { -fx-background-color: #f8fbff; -fx-text-fill: #111827; -fx-control-inner-background: #f8fbff; -fx-border-color: #57b7ff; -fx-border-radius: 5px; -fx-background-radius: 5px; }
+                .text-area .content { -fx-background-color: #f8fbff; }
+                .text-input { -fx-text-fill: #111827; -fx-prompt-text-fill: #60708f; }
+                .combo-box .list-cell, .choice-box .label { -fx-text-fill: #111827; }
+                .combo-box-popup .list-view { -fx-background-color: #ffffff; -fx-border-color: #57b7ff; }
+                .combo-box-popup .list-cell { -fx-text-fill: #111827; -fx-background-color: #ffffff; }
+                .combo-box-popup .list-cell:hover, .combo-box-popup .list-cell:selected { -fx-background-color: #e8f4ff; -fx-text-fill: #101936; }
+                .table-view .column-header-background, .table-view .column-header { -fx-background-color: #101936; }
+                .table-view .column-header .label { -fx-text-fill: #ffffff; -fx-font-weight: 800; }
+                .table-row-cell { -fx-background-color: #ffffff; -fx-text-fill: #111827; }
+                .table-row-cell:odd { -fx-background-color: #eef5ff; }
+                .table-row-cell:selected { -fx-background-color: #c9e8ff; }
+                .table-cell { -fx-text-fill: #111827; -fx-border-color: #d5e6ff; }
+                .tree-cell { -fx-background-color: #f8fbff; -fx-text-fill: #111827; }
+                .tree-cell:selected { -fx-background-color: #c9e8ff; -fx-text-fill: #101936; }
+                .progress-bar .track { -fx-background-color: #18234b; }
+                .progress-bar .bar { -fx-background-color: linear-gradient(to right, #2f7cff, #8b4df6, #18d8e8); }
+                """.formatted(APP_BACKGROUND, TEXT_PRIMARY, TEXT_MUTED, PANEL_SURFACE, PANEL_BACKGROUND,
+                PANEL_BACKGROUND, PANEL_SURFACE, APP_BACKGROUND, APP_BACKGROUND, PANEL_SURFACE,
+                APP_BACKGROUND).replace("\n", "%0A").replace(" ", "%20").replace("#", "%23");
+    }
+
+    private record EmbeddedHermesLaunch(String containerName, Path aiAgentPath, List<String> dockerArgs) {
+    }
+
+    private static class EmbeddedPtyTtyConnector implements TtyConnector {
+        private final PtyProcess process;
+        private final Reader reader;
+        private final java.io.OutputStream outputStream;
+        private final java.nio.charset.Charset charset;
+        private final List<String> command;
+        private final Consumer<String> outputConsumer;
+
+        EmbeddedPtyTtyConnector(PtyProcess process, java.nio.charset.Charset charset, List<String> command) {
+            this(process, charset, command, null);
+        }
+
+        EmbeddedPtyTtyConnector(PtyProcess process, java.nio.charset.Charset charset, List<String> command,
+                                Consumer<String> outputConsumer) {
+            this.process = process;
+            this.charset = charset;
+            this.command = command == null ? List.of() : List.copyOf(command);
+            this.outputConsumer = outputConsumer;
+            this.reader = new InputStreamReader(process.getInputStream(), charset);
+            this.outputStream = process.getOutputStream();
+        }
+
+        @Override
+        public int read(char[] buffer, int offset, int length) throws IOException {
+            int count = reader.read(buffer, offset, length);
+            if (count > 0 && outputConsumer != null) {
+                outputConsumer.accept(new String(buffer, offset, count));
+            }
+            return count;
+        }
+
+        @Override
+        public void write(byte[] bytes) throws IOException {
+            outputStream.write(bytes);
+            outputStream.flush();
+        }
+
+        @Override
+        public void write(String string) throws IOException {
+            write((string == null ? "" : string).getBytes(charset));
+        }
+
+        @Override
+        public boolean isConnected() {
+            return process.isAlive();
+        }
+
+        @Override
+        public void resize(TermSize termSize) {
+            if (termSize == null) {
+                return;
+            }
+            process.setWinSize(new WinSize(termSize.getColumns(), termSize.getRows()));
+        }
+
+        @Override
+        public int waitFor() throws InterruptedException {
+            return process.waitFor();
+        }
+
+        @Override
+        public boolean ready() throws IOException {
+            return reader.ready();
+        }
+
+        @Override
+        public String getName() {
+            return command.isEmpty() ? "Hermes CLI" : String.join(" ", command);
+        }
+
+        @Override
+        public void close() {
+            try {
+                reader.close();
+            } catch (Exception ignored) {
+            }
+            try {
+                outputStream.close();
+            } catch (Exception ignored) {
+            }
+            if (process.isAlive()) {
+                process.destroy();
+            }
+        }
+
+        @Override
+        public boolean init(Questioner questioner) {
+            return true;
+        }
     }
 
     public static void main(String[] args) {

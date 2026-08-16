@@ -30,6 +30,8 @@ public class DbValidationService {
 
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
     private static final Pattern DB_COLUMN_ROW_PATTERN = Pattern.compile("^(.+)\\[(\\d+)]$");
+    private static final Pattern ROOT_ARRAY_API_FIELD_PATTERN =
+            Pattern.compile("^\\$?\\[(\\d+)](?:\\.(.*))?$");
 
     public void testConnection(DbConnectionConfig config) throws Exception {
         try (Connection ignored = openConnection(config)) {
@@ -282,7 +284,8 @@ public class DbValidationService {
         }
 
         String apiField = rule.apiField.trim();
-        Object expected = resolveExpectedValue(apiField, responseJson, variables);
+        String rowRelativeApiField = normalizeApiFieldForRow(apiField);
+        Object expected = resolveExpectedValue(rowRelativeApiField, responseJson, variables);
         Object actual = findColumnValue(dbRow, rule.dbColumn.trim());
         String operator = rule.operator == null || rule.operator.isBlank() ? "=" : rule.operator.trim();
         boolean passed = compare(expected, actual, operator);
@@ -295,6 +298,22 @@ public class DbValidationService {
         result.passed = passed;
         result.message = passed ? buildPassMessage(operator, expected, actual) : buildFailMessage(operator, expected, actual);
         return result;
+    }
+
+    /**
+     * DB validation compares API and DB result sets row by row. Once a root JSON array has
+     * been split into response items, an imported absolute path such as "$[0].isbn" must be
+     * evaluated as "isbn" against the current item. Keeping the original path on the result
+     * preserves useful diagnostics while avoiding a second array lookup on a JSONObject.
+     */
+    private String normalizeApiFieldForRow(String apiField) {
+        String normalized = apiField == null ? "" : apiField.trim();
+        Matcher matcher = ROOT_ARRAY_API_FIELD_PATTERN.matcher(normalized);
+        if (!matcher.matches()) {
+            return normalized;
+        }
+        String remainingPath = matcher.group(2);
+        return remainingPath == null || remainingPath.isBlank() ? "$" : remainingPath;
     }
 
     private Object resolveExpectedValue(String apiField, Object responseJson, Map<String, String> variables) {

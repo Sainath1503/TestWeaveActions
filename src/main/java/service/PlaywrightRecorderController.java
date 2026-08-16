@@ -374,6 +374,10 @@ public class PlaywrightRecorderController {
             Browser runBrowser = runPlaywright.chromium().launch(options);
             BrowserContext runContext = runBrowser.newContext(new Browser.NewContextOptions().setViewportSize(1280, 800));
             Page runPage = runContext.newPage();
+            int webTimeoutMs = configuredWebTimeoutMs();
+            runPage.setDefaultTimeout(webTimeoutMs);
+            runPage.setDefaultNavigationTimeout(webTimeoutMs);
+            System.out.println("[VeyraAI][Web] Browser ready; default step timeout is " + webTimeoutMs + " ms.");
             List<String> consoleMessages = new CopyOnWriteArrayList<>();
             List<String> networkFailures = new CopyOnWriteArrayList<>();
             captureBrowserDiagnostics(runPage, consoleMessages, networkFailures);
@@ -388,14 +392,21 @@ public class PlaywrightRecorderController {
             Path screenshotDir = Path.of("target", "web-test-screenshots");
             Files.createDirectories(screenshotDir);
 
-            for (WebTestStep step : testCase.steps) {
+            for (int stepIndex = 0; stepIndex < testCase.steps.size(); stepIndex++) {
+                WebTestStep step = testCase.steps.get(stepIndex);
                 if (webTestStopRequested) {
                     report.stopped = true;
                     break;
                 }
+                String stepLabel = safe(step.stepName).isBlank() ? safe(step.action) : safe(step.stepName);
+                System.out.println("[VeyraAI][Web] START  " + (stepIndex + 1) + "/" + testCase.steps.size()
+                        + " " + stepLabel);
                 WebTestExecutionResult result = executeStep(runPage, step, screenshotDir, report,
                         consoleMessages, networkFailures);
                 report.results.add(result);
+                System.out.println("[VeyraAI][Web] FINISH " + (stepIndex + 1) + "/" + testCase.steps.size()
+                        + " " + stepLabel + " -> " + (result.passed ? "Passed" : "Failed")
+                        + " (" + result.durationMs + " ms)");
                 if (webTestStopRequested) {
                     report.stopped = true;
                     break;
@@ -419,6 +430,15 @@ public class PlaywrightRecorderController {
         report.failed = report.total - report.passed;
         report.totalDurationMs = System.currentTimeMillis() - suiteStart;
         return report;
+    }
+
+    private int configuredWebTimeoutMs() {
+        String configured = System.getProperty("testweave.web.timeout.ms", "30000");
+        try {
+            return Math.max(1000, Math.min(120000, Integer.parseInt(configured.trim())));
+        } catch (Exception ignored) {
+            return 30000;
+        }
     }
 
     public void stopRunningWebTest() {

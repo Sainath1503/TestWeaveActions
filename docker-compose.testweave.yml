@@ -1,8 +1,8 @@
 services:
   testweave:
-    image: mcr.microsoft.com/playwright/java:v1.58.0-noble
-    init: true
-    ipc: host
+    build:
+      context: .
+      dockerfile: Dockerfile.testweave
     working_dir: /workspace
     environment:
       SUITE_FILE: ${SUITE_FILE:-testweave/test-suite.xlsx}
@@ -13,22 +13,32 @@ services:
       GITHUB_ACTIONS: ${GITHUB_ACTIONS:-false}
     volumes:
       - .:/workspace
+      - maven-cache:/root/.m2
+      - playwright-cache:/root/.cache/ms-playwright
     command:
       - /bin/bash
       - -lc
       - |
         set -euo pipefail
-        test -d target/classes
-        test -d target/dependency
-        echo "Starting VeyraAI suite runner (dependencies and browsers are ready)."
+        rm -rf target
+        echo "Building the VeyraAI suite runner."
+        mvn -q -DskipTests -DskipCodexBundle=true package
+        jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
+        echo "Installing Chromium and its required Linux dependencies."
+        java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
+        echo "Starting VeyraAI suite execution."
         java \
           -Dtestweave.http.timeout.ms="$${TESTWEAVE_HTTP_TIMEOUT_MS}" \
           -Dtestweave.web.timeout.ms="$${TESTWEAVE_WEB_TIMEOUT_MS}" \
           -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \
           -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \
           -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \
-          -cp "target/classes:target/dependency/*" ui.TestWeaveCliRunner \
+          -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
           --suite "$${SUITE_FILE}" \
           --parallel "$${TESTWEAVE_PARALLEL}" \
           --threads "$${TESTWEAVE_THREADS}" \
           --report target/testweave-report
+
+volumes:
+  maven-cache:
+  playwright-cache:

@@ -31,6 +31,7 @@ import agenticai.testplanning.TestPlanningResponseValidator;
 import agenticai.testplanning.TestWorkbookMcpServer;
 import agenticai.testplanning.WorkspaceTerminalMcpServer;
 import compare.JsonComparator;
+import service.TestSuiteHtmlReportRenderer;
 import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
@@ -14656,6 +14657,20 @@ public class ApiValidatorFxApp extends Application {
     }
 
     private String buildTestSuiteReportHtml(Path workbookPath, List<TestSuiteStepResult> results) {
+        List<TestSuiteHtmlReportRenderer.Step> reportSteps = results.stream().map(result -> {
+            List<TestSuiteHtmlReportRenderer.Validation> validations = result.validations.stream()
+                    .map(validation -> new TestSuiteHtmlReportRenderer.Validation(
+                            validation.field, validation.validation, validation.expected, validation.actual,
+                            validation.passed, validation.message))
+                    .toList();
+            return new TestSuiteHtmlReportRenderer.Step(result.suite, result.testCase, result.stepName,
+                    result.type, result.status, result.passed, validations);
+        }).toList();
+        String source = workbookPath == null ? "" : workbookPath.toAbsolutePath().toString();
+        return TestSuiteHtmlReportRenderer.render(source, reportSteps);
+    }
+
+    private String buildLegacyTestSuiteReportHtml(Path workbookPath, List<TestSuiteStepResult> results) {
         long passed = results.stream().filter(result -> result.passed).count();
         long failed = results.size() - passed;
         long total = results.size();

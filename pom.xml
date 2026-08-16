@@ -4,6 +4,11 @@
     <artifactId>api-validator</artifactId>
     <version>1.0-SNAPSHOT</version>
 
+    <properties>
+        <!-- Desktop builds bundle Codex; headless CI runner builds opt out. -->
+        <skipCodexBundle>false</skipCodexBundle>
+    </properties>
+
     <repositories>
         <repository>
             <id>jetbrains-intellij-dependencies</id>
@@ -185,6 +190,7 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipCodexBundle}</skip>
                             <executable>node</executable>
                             <arguments>
                                 <argument>scripts/bundle-codex-cli.mjs</argument>
@@ -206,6 +212,7 @@
                             <goal>copy-resources</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipCodexBundle}</skip>
                             <outputDirectory>${project.build.outputDirectory}/bundled-tools/codex-cli</outputDirectory>
                             <resources>
                                 <resource>

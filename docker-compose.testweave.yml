@@ -20,7 +20,7 @@ services:
       - |
         set -euo pipefail
         rm -rf target
-        mvn -q -DskipTests package
+        mvn -q -DskipTests -DskipCodexBundle=true package
         jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
         java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
         java \

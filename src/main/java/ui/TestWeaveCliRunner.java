@@ -29,7 +29,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.concurrent.ExecutorService;
@@ -49,11 +48,12 @@ public class TestWeaveCliRunner {
 
     private final ApiService apiService = new ApiService();
     private final JsonComparator comparator = new JsonComparator();
-    private final DbValidationService dbValidationService = new DbValidationService();
-    private final PerformanceTestService performanceTestService = new PerformanceTestService();
-    private final PlaywrightRecorderController playwrightRecorderController = new PlaywrightRecorderController();
-    private final AtomicBoolean failed = new AtomicBoolean(false);
-    private Path suitePath;
+	    private final DbValidationService dbValidationService = new DbValidationService();
+	    private final PerformanceTestService performanceTestService = new PerformanceTestService();
+	    private final PlaywrightRecorderController playwrightRecorderController = new PlaywrightRecorderController();
+	    private final AtomicBoolean failed = new AtomicBoolean(false);
+	    private final Map<String, String> savedVariables = new LinkedHashMap<>();
+	    private Path suitePath;
 
     public static void main(String[] args) throws Exception {
         configureCiLogging();
@@ -84,7 +84,7 @@ public class TestWeaveCliRunner {
             writeReports(reportDir, results);
             printSummary(results);
             if (failed.get()) {
-                throw new IllegalStateException("One or more TestWeave steps failed.");
+                throw new IllegalStateException("One or more VeyraAI steps failed.");
             }
         } catch (Exception e) {
             if (!Files.exists(reportDir.resolve("testweave-results.json"))) {
@@ -129,7 +129,8 @@ public class TestWeaveCliRunner {
                 ApiResponse response = apiService.sendRequest(buildRequest(row));
                 boolean passed = response.statusCode < 400;
                 if (hasValidationColumns(row)) {
-                    Map<String, String> variables = new LinkedHashMap<>();
+                    Map<String, String> variables = runnerVariablesSnapshot();
+                    captureRunnerVariables(row, response.rawBody, variables);
                     runApiFieldValidation(row, response.rawBody, variables, result);
                     runJsonCompare(row, response.rawBody, result);
                     runDbValidation(row, response.rawBody, variables, result);
@@ -140,6 +141,17 @@ public class TestWeaveCliRunner {
                 }
                 result.put("Status", passed ? "Passed" : "Failed");
                 result.put("Message", "HTTP " + response.statusCode + ", duration: " + response.timeMs + " ms");
+                failed.compareAndSet(false, !passed);
+            } else if (hasValidationColumns(row)) {
+                Map<String, String> variables = runnerVariablesSnapshot();
+                runDbValidation(row, "", variables, result);
+                boolean passed = validationsPassed(result) && !validationsFor(result).isEmpty();
+                if (validationsFor(result).isEmpty()) {
+                    addValidation(result, "DB Validation", "Execution failed", "", "", false,
+                            "Validation columns were present, but no executable DB validation was configured.");
+                }
+                result.put("Status", passed ? "Passed" : "Failed");
+                result.put("Message", passed ? "DB validations passed." : "DB validations failed.");
                 failed.compareAndSet(false, !passed);
             } else {
                 result.put("Status", "Passed");
@@ -181,22 +193,69 @@ public class TestWeaveCliRunner {
         if (steps == null || steps.isEmpty()) {
             throw new IllegalArgumentException("WEB_TEST step does not contain recorded web steps.");
         }
+        Map<String, String> runVariables = runnerVariablesSnapshot();
         for (int i = 0; i < steps.length(); i++) {
             JSONObject item = steps.optJSONObject(i);
             if (item == null) {
                 continue;
             }
             WebTestStep step = new WebTestStep();
+            step.stepName = item.optString("stepName");
             step.action = item.optString("action");
-            step.selector = resolveVariables(item.optString("selector"));
-            step.value = "Get Text".equalsIgnoreCase(step.action)
-                    ? item.optString("value")
-                    : resolveVariables(item.optString("value"));
-            step.note = item.optString("note");
+            if ("Flow Variable".equalsIgnoreCase(step.action)) {
+                String name = normalizeWebVariableName(firstNonBlank(item.optString("flowVariableName"),
+                        item.optString("selector"), item.optString("note")));
+                String value = resolveRunnerVariables(item.optString("value"), runVariables);
+                if (!name.isBlank()) runVariables.put(name, value);
+                step.selector = "";
+                step.value = value;
+                step.note = name;
+            } else {
+                step.selector = resolveRunnerVariables(item.optString("selector"), runVariables);
+                if ("Get Text".equalsIgnoreCase(step.action)) {
+                    configureCliGetTextExpectation(step, item.optString("value"), runVariables);
+                } else {
+                    step.value = resolveRunnerVariables(item.optString("value"), runVariables);
+                }
+                step.note = resolveRunnerVariables(item.optString("note"), runVariables);
+            }
             step.suggested = item.optBoolean("suggested");
             testCase.steps.add(step);
         }
         return testCase;
+    }
+
+    private void configureCliGetTextExpectation(WebTestStep step, String rawValue,
+                                                Map<String, String> runVariables) {
+        String expression = nullToBlank(rawValue).trim();
+        String referenced = webExpectedVariableName(expression);
+        String plain = normalizeWebVariableName(expression);
+        String variableName = !referenced.isBlank() ? referenced : runVariables.containsKey(plain) ? plain : "";
+        step.value = expression;
+        step.expectedVariableName = variableName;
+        if (variableName.isBlank()) {
+            step.expectedVariablePresent = true;
+            step.expectedVariableValue = resolveRunnerVariables(expression, runVariables);
+        } else {
+            step.expectedVariablePresent = runVariables.containsKey(variableName);
+            step.expectedVariableValue = step.expectedVariablePresent ? runVariables.getOrDefault(variableName, "") : "";
+        }
+    }
+
+    private String webExpectedVariableName(String expression) {
+        String value = nullToBlank(expression).trim();
+        if (value.startsWith("${") && value.endsWith("}")) return normalizeWebVariableName(value.substring(2, value.length() - 1));
+        if (value.startsWith("{{") && value.endsWith("}}")) return normalizeWebVariableName(value.substring(2, value.length() - 2));
+        return "";
+    }
+
+    private String normalizeWebVariableName(String value) {
+        return nullToBlank(value).trim().replaceAll("[^A-Za-z0-9_.-]", "_");
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values != null) for (String value : values) if (value != null && !value.isBlank()) return value;
+        return "";
     }
 
     private boolean webHeadless(Map<String, String> row) {
@@ -255,6 +314,45 @@ public class TestWeaveCliRunner {
                 || !row.getOrDefault("DB_QUERY", "").isBlank()
                 || !row.getOrDefault("API_DB_VALIDATION", "").isBlank()
                 || !row.getOrDefault("DB_COLUMN_VALIDATION", "").isBlank();
+    }
+
+    private Map<String, String> runnerVariablesSnapshot() {
+        synchronized (savedVariables) {
+            return new LinkedHashMap<>(savedVariables);
+        }
+    }
+
+    private void captureRunnerVariables(Map<String, String> row, String responseBody, Map<String, String> variables) {
+        String captureText = row.getOrDefault("Captured Variables", "");
+        if (captureText.isBlank() || responseBody == null || responseBody.isBlank()) {
+            return;
+        }
+        Object responseJson = new JSONTokener(responseBody).nextValue();
+        Map<String, String> captured = new LinkedHashMap<>();
+        for (String capture : captureText.split(";")) {
+            int equals = capture.indexOf('=');
+            if (equals <= 0 || equals == capture.length() - 1) {
+                continue;
+            }
+            String name = capture.substring(0, equals).trim();
+            String path = capture.substring(equals + 1).trim();
+            if (name.isBlank() || path.isBlank()) {
+                continue;
+            }
+            try {
+                Object actual = extractJsonPathValue(responseJson, path);
+                String value = actual == null || actual == JSONObject.NULL ? "" : String.valueOf(actual);
+                variables.put(name, value);
+                captured.put(name, value);
+            } catch (Exception ignored) {
+                // Optional captures should not hide the actual step validation result.
+            }
+        }
+        if (!captured.isEmpty()) {
+            synchronized (savedVariables) {
+                savedVariables.putAll(captured);
+            }
+        }
     }
 
     private void runApiFieldValidation(Map<String, String> row, String responseBody,
@@ -417,9 +515,21 @@ public class TestWeaveCliRunner {
 
     private List<Map<String, String>> readRows(Path workbookPath) throws Exception {
         Map<String, byte[]> entries = readWorkbookEntries(workbookPath);
-        String sheetXml = new String(Objects.requireNonNull(entries.get("xl/worksheets/sheet1.xml"),
-                "Workbook is missing xl/worksheets/sheet1.xml"), StandardCharsets.UTF_8);
         List<String> sharedStrings = readSharedStrings(entries);
+        for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+            if (!entry.getKey().matches("xl/worksheets/sheet\\d+\\.xml")) {
+                continue;
+            }
+            List<Map<String, String>> rows = rowsFromSheet(
+                    new String(entry.getValue(), StandardCharsets.UTF_8), sharedStrings);
+            if (!rows.isEmpty()) {
+                return rows;
+            }
+        }
+        return List.of();
+    }
+
+    private List<Map<String, String>> rowsFromSheet(String sheetXml, List<String> sharedStrings) {
         List<List<String>> sheetRows = readSheetRows(sheetXml, sharedStrings);
         List<String> header = null;
         List<Map<String, String>> rows = new ArrayList<>();
@@ -797,7 +907,10 @@ public class TestWeaveCliRunner {
             errors.add("expected null");
         }
         if (!typeRule.isBlank() && !"Skip".equals(typeRule) && !typeRule.equals(actualType)) {
-            if (!("number".equals(typeRule) && "integer".equals(actualType))) {
+            String expectedType = typeRule.toLowerCase();
+            String normalizedActualType = actualType == null ? "" : actualType.toLowerCase();
+            if (!expectedType.equals(normalizedActualType)
+                    && !("number".equals(expectedType) && "integer".equals(normalizedActualType))) {
                 errors.add("expected " + typeRule);
             }
         }
@@ -857,22 +970,24 @@ public class TestWeaveCliRunner {
     }
 
     private boolean dbTypeMatches(String expectedType, String actualType, String actualValue) {
-        if (expectedType.equals(actualType)) {
+        String expected = expectedType == null ? "" : expectedType.toLowerCase();
+        String actual = actualType == null ? "" : actualType.toLowerCase();
+        if (expected.equals(actual)) {
             return true;
         }
-        if ("number".equals(expectedType) && ("integer".equals(actualType) || "decimal".equals(actualType))) {
+        if ("number".equals(expected) && ("integer".equals(actual) || "decimal".equals(actual))) {
             return true;
         }
-        if ("datetime".equals(expectedType) && "timestamp".equals(actualType)) {
+        if ("datetime".equals(expected) && "timestamp".equals(actual)) {
             return true;
         }
-        if ("timestamp".equals(expectedType) && "datetime".equals(actualType)) {
+        if ("timestamp".equals(expected) && "datetime".equals(actual)) {
             return true;
         }
-        if ("uuid".equals(expectedType)) {
+        if ("uuid".equals(expected)) {
             return actualValue.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
         }
-        if ("json".equals(expectedType)) {
+        if ("json".equals(expected)) {
             String trimmed = actualValue.trim();
             try {
                 if (trimmed.startsWith("{")) {
@@ -940,7 +1055,7 @@ public class TestWeaveCliRunner {
                 <html>
                 <head>
                 <meta charset="utf-8">
-                <title>TestWeave GitHub Actions Report</title>
+                <title>VeyraAI GitHub Actions Report</title>
                 <style>
                 body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fb;color:#0f172a}
                 header{background:#10233f;color:#fff;padding:24px 32px}
@@ -961,7 +1076,7 @@ public class TestWeaveCliRunner {
                 </head>
                 <body>
                 """);
-        html.append("<header><h1>TestWeave GitHub Actions Report</h1><div class='sub'>Generated ")
+        html.append("<header><h1>VeyraAI GitHub Actions Report</h1><div class='sub'>Generated ")
                 .append(escapeHtml(LocalDateTime.now().toString()))
                 .append("</div></header><main>");
         html.append("<section class='summary'>")
@@ -1111,7 +1226,7 @@ public class TestWeaveCliRunner {
     private void printSummary(List<Map<String, String>> results) {
         long passed = results.stream().filter(result -> "Passed".equalsIgnoreCase(result.getOrDefault("Status", ""))).count();
         long failedCount = results.stream().filter(result -> "Failed".equalsIgnoreCase(result.getOrDefault("Status", ""))).count();
-        System.out.println("TestWeave summary: " + passed + " passed, " + failedCount + " failed, " + results.size() + " total.");
+        System.out.println("VeyraAI summary: " + passed + " passed, " + failedCount + " failed, " + results.size() + " total.");
         results.stream()
                 .filter(result -> "Failed".equalsIgnoreCase(result.getOrDefault("Status", "")))
                 .forEach(result -> System.out.println("FAILED: " + result.getOrDefault("Test Case", "")

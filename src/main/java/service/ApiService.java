@@ -5,27 +5,36 @@ import io.restassured.http.Cookie;
 import io.restassured.response.Response;
 import io.restassured.config.HttpClientConfig;
 import io.restassured.config.RestAssuredConfig;
+import io.restassured.config.SSLConfig;
+import io.restassured.specification.ProxySpecification;
 import model.ApiRequest;
+import model.ApiRequestBodyPart;
 import model.ApiResponse;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
+import java.net.URI;
+import java.net.http.HttpHeaders;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 public class ApiService {
 
+    private final CookieManager cookieManager = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+
     public ApiResponse sendRequest(ApiRequest request) {
         int timeoutMs = httpTimeoutMs();
-        RestAssuredConfig config = RestAssured.config().httpClient(
-                HttpClientConfig.httpClientConfig()
-                        .setParam("http.connection.timeout", timeoutMs)
-                        .setParam("http.socket.timeout", timeoutMs)
-                        .setParam("http.connection-manager.timeout", (long) timeoutMs)
-        );
+        RestAssuredConfig config = requestConfig(request, timeoutMs);
 
         io.restassured.specification.RequestSpecification req = RestAssured.given()
                 .config(config)
                 .header("User-Agent", "API-Validator-Tool/1.0");
+
+        applyProxy(request, req);
 
         if (request.headers != null && !request.headers.isEmpty()) {
             req.headers(request.headers);
@@ -35,7 +44,33 @@ public class ApiService {
             req.header("Authorization", "Bearer " + request.token);
         }
 
-        if (request.body != null && !request.body.isBlank()
+        applyCookies(request, req);
+
+        if ("formdata".equalsIgnoreCase(request.bodyMode) && request.multipartParts != null && !request.multipartParts.isEmpty()) {
+            for (ApiRequestBodyPart part : request.multipartParts) {
+                if (part == null || part.name == null || part.name.isBlank()) {
+                    continue;
+                }
+                if (part.file) {
+                    File file = part.filePath == null ? null : Path.of(part.filePath).toFile();
+                    if (file != null && file.isFile()) {
+                        if (part.contentType == null || part.contentType.isBlank()) {
+                            req.multiPart(part.name, file);
+                        } else {
+                            req.multiPart(part.name, file, part.contentType);
+                        }
+                    }
+                } else {
+                    req.multiPart(part.name, part.value == null ? "" : part.value);
+                }
+            }
+        } else if ("binary".equalsIgnoreCase(request.bodyMode) && request.binaryFilePath != null && !request.binaryFilePath.isBlank()) {
+            try {
+                req.body(Files.readAllBytes(Path.of(request.binaryFilePath)));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Unable to read binary request body: " + request.binaryFilePath, e);
+            }
+        } else if (request.body != null && !request.body.isBlank()
                 && !"GET".equalsIgnoreCase(request.method)
                 && !"DELETE".equalsIgnoreCase(request.method)) {
             req.body(request.body);
@@ -59,6 +94,8 @@ public class ApiService {
                 response = req.get(request.url);
         }
 
+        storeCookies(request, response);
+
         ApiResponse apiResponse = new ApiResponse();
         apiResponse.statusCode = response.statusCode();
         apiResponse.statusLine = response.statusCode() + " " + response.statusLine().replaceFirst("HTTP/\\S+\\s+", "");
@@ -69,6 +106,91 @@ public class ApiService {
         apiResponse.cookiesText = buildCookiesText(response);
         apiResponse.sizeBytes = apiResponse.rawBody.getBytes().length;
         return apiResponse;
+    }
+
+    private RestAssuredConfig requestConfig(ApiRequest request, int timeoutMs) {
+        RestAssuredConfig config = RestAssured.config().httpClient(
+                HttpClientConfig.httpClientConfig()
+                        .setParam("http.connection.timeout", timeoutMs)
+                        .setParam("http.socket.timeout", timeoutMs)
+                        .setParam("http.connection-manager.timeout", (long) timeoutMs)
+        );
+
+        SSLConfig ssl = SSLConfig.sslConfig();
+        boolean sslConfigured = false;
+        if (request != null && request.sslVerificationDisabled) {
+            ssl = ssl.relaxedHTTPSValidation().allowAllHostnames();
+            sslConfigured = true;
+        }
+        if (request != null && request.trustStorePath != null && !request.trustStorePath.isBlank()) {
+            ssl = ssl.trustStore(new File(request.trustStorePath), nullToBlank(request.trustStorePassword));
+            sslConfigured = true;
+        }
+        if (request != null && request.keyStorePath != null && !request.keyStorePath.isBlank()) {
+            ssl = ssl.keyStore(new File(request.keyStorePath), nullToBlank(request.keyStorePassword));
+            sslConfigured = true;
+        }
+        return sslConfigured ? config.sslConfig(ssl) : config;
+    }
+
+    private void applyProxy(ApiRequest request, io.restassured.specification.RequestSpecification req) {
+        if (request == null || !request.proxyEnabled || request.proxyHost == null || request.proxyHost.isBlank()
+                || request.proxyPort <= 0) {
+            return;
+        }
+        ProxySpecification proxy = new ProxySpecification(request.proxyHost.trim(), request.proxyPort,
+                firstNonBlank(request.proxyScheme, "http").trim());
+        if (request.proxyUsername != null && !request.proxyUsername.isBlank()) {
+            proxy = proxy.withAuth(request.proxyUsername, nullToBlank(request.proxyPassword));
+        }
+        req.proxy(proxy);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private String nullToBlank(String value) {
+        return value == null ? "" : value;
+    }
+
+    private void applyCookies(ApiRequest request, io.restassured.specification.RequestSpecification req) {
+        try {
+            Map<String, java.util.List<String>> cookieHeaders = cookieManager.get(URI.create(request.url), Map.of());
+            for (Map.Entry<String, java.util.List<String>> entry : cookieHeaders.entrySet()) {
+                for (String value : entry.getValue()) {
+                    if (value != null && !value.isBlank()) {
+                        req.header(entry.getKey(), value);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Cookie handling should never block a request that is otherwise valid.
+        }
+    }
+
+    private void storeCookies(ApiRequest request, Response response) {
+        try {
+            Map<String, java.util.List<String>> headers = response.getHeaders().asList().stream()
+                    .filter(header -> "Set-Cookie".equalsIgnoreCase(header.getName())
+                            || "Set-Cookie2".equalsIgnoreCase(header.getName()))
+                    .collect(java.util.stream.Collectors.groupingBy(
+                            header -> header.getName(),
+                            java.util.stream.Collectors.mapping(io.restassured.http.Header::getValue, java.util.stream.Collectors.toList())));
+            if (!headers.isEmpty()) {
+                cookieManager.put(URI.create(request.url), headers);
+            }
+        } catch (Exception ignored) {
+            // The response remains valid even if cookie persistence fails.
+        }
     }
 
     private int httpTimeoutMs() {

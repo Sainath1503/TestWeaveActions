@@ -42,12 +42,17 @@ public class PerformanceTestService {
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     public PerformanceTestResult runLoadTest(ApiRequest request, int threads, int iterationsPerThread) throws Exception {
+        return runLoadTest(request, threads, iterationsPerThread, Path.of("target", "performance-reports"));
+    }
+
+    public PerformanceTestResult runLoadTest(ApiRequest request, int threads, int iterationsPerThread,
+                                             Path reportsRoot) throws Exception {
         validate(request, threads, iterationsPerThread);
 
         String method = request.method.trim().toUpperCase();
         String reportName = "load-test-" + REPORT_NAME_FORMAT.format(LocalDateTime.now())
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
-        Path reportsRoot = Path.of("target", "performance-reports");
+        reportsRoot = reportsRoot.toAbsolutePath().normalize();
         Files.createDirectories(reportsRoot);
 
         Path reportDirectory = reportsRoot.resolve(reportName);

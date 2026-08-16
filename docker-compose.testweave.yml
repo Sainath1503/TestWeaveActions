@@ -1,39 +1,34 @@
 services:
   testweave:
-    build:
-      context: .
-      dockerfile: Dockerfile.testweave
+    image: mcr.microsoft.com/playwright/java:v1.58.0-noble
+    init: true
+    ipc: host
     working_dir: /workspace
     environment:
       SUITE_FILE: ${SUITE_FILE:-testweave/test-suite.xlsx}
       TESTWEAVE_PARALLEL: ${TESTWEAVE_PARALLEL:-false}
       TESTWEAVE_THREADS: ${TESTWEAVE_THREADS:-1}
-      TESTWEAVE_HTTP_TIMEOUT_MS: ${TESTWEAVE_HTTP_TIMEOUT_MS:-60000}
+      TESTWEAVE_HTTP_TIMEOUT_MS: ${TESTWEAVE_HTTP_TIMEOUT_MS:-30000}
+      TESTWEAVE_WEB_TIMEOUT_MS: ${TESTWEAVE_WEB_TIMEOUT_MS:-15000}
       GITHUB_ACTIONS: ${GITHUB_ACTIONS:-false}
     volumes:
       - .:/workspace
-      - maven-cache:/root/.m2
-      - playwright-cache:/root/.cache/ms-playwright
     command:
       - /bin/bash
       - -lc
       - |
         set -euo pipefail
-        rm -rf target
-        mvn -q -DskipTests -DskipCodexBundle=true package
-        jar tf target/api-validator-1.0-SNAPSHOT.jar | grep 'META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat'
-        java -cp target/api-validator-1.0-SNAPSHOT.jar com.microsoft.playwright.CLI install --with-deps chromium
+        test -d target/classes
+        test -d target/dependency
+        echo "Starting VeyraAI suite runner (dependencies and browsers are ready)."
         java \
           -Dtestweave.http.timeout.ms="$${TESTWEAVE_HTTP_TIMEOUT_MS}" \
+          -Dtestweave.web.timeout.ms="$${TESTWEAVE_WEB_TIMEOUT_MS}" \
           -Dlog4j2.loggerContextFactory=org.apache.logging.log4j.simple.SimpleLoggerContextFactory \
           -Dorg.apache.logging.log4j.simplelog.StatusLogger.level=OFF \
           -Dorg.apache.logging.log4j.simplelog.defaultLevel=error \
-          -cp target/api-validator-1.0-SNAPSHOT.jar ui.TestWeaveCliRunner \
+          -cp "target/classes:target/dependency/*" ui.TestWeaveCliRunner \
           --suite "$${SUITE_FILE}" \
           --parallel "$${TESTWEAVE_PARALLEL}" \
           --threads "$${TESTWEAVE_THREADS}" \
           --report target/testweave-report
-
-volumes:
-  maven-cache:
-  playwright-cache:

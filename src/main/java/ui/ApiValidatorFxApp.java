@@ -9556,24 +9556,10 @@ public class ApiValidatorFxApp extends Application {
                     timeout-minutes: 30
                     steps:
                       - uses: actions/checkout@v4
-                      - name: Set up Java with Maven cache
-                        uses: actions/setup-java@v4
-                        with:
-                          distribution: temurin
-                          java-version: '17'
-                          cache: maven
-                          cache-dependency-path: pom.xml
                       - name: Check VeyraAI suite file
                         run: |
                           test -f "${{ inputs.suite_file }}"
                           ls -l "${{ inputs.suite_file }}"
-                      - name: Compile VeyraAI runner
-                        run: >-
-                          mvn --batch-mode --no-transfer-progress
-                          -DskipTests -DskipCodexBundle=true
-                          compile dependency:copy-dependencies
-                          -DincludeScope=runtime
-                          -DoutputDirectory=target/dependency
                       - name: Run VeyraAI suite in Docker Compose
                         env:
                           SUITE_FILE: ${{ inputs.suite_file }}
@@ -9583,7 +9569,7 @@ public class ApiValidatorFxApp extends Application {
                           TESTWEAVE_WEB_TIMEOUT_MS: '15000'
                         run: |
                           trap 'docker compose -f docker-compose.testweave.yml down --remove-orphans' EXIT
-                          docker compose -f docker-compose.testweave.yml up --abort-on-container-exit --exit-code-from testweave
+                          docker compose -f docker-compose.testweave.yml up --build --abort-on-container-exit --exit-code-from testweave
                       - name: Upload VeyraAI report
                         if: always()
                         uses: actions/upload-artifact@v4
